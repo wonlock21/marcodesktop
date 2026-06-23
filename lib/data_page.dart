@@ -1,6 +1,7 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:http/http.dart' as http;
+import 'admin_mode.dart';
 
 class DataPage extends StatefulWidget {
   final String site;
@@ -17,6 +18,10 @@ class _DataPageState extends State<DataPage> {
   @override
   void initState() {
     super.initState();
+    // GEÇİCİ admin/demo modu: cihaz yokken rapor için örnek QTR verisi bas.
+    if (kAdminMode && widget.site.isEmpty) {
+      pinData = ["512", "498", "873", "61", "44", "905", "517", "488"];
+    }
     _fetchData();
   }
 

@@ -113,6 +113,30 @@ class AgvSensorModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ── GEÇİCİ: Admin/demo modu için örnek veri ──────────────────────────
+  /// TODO(kaldır): Admin modu kaldırılınca bu metot da silinmeli.
+  /// Rapor ekran görüntüleri için gerçekçi örnek değerler basar.
+  void loadDemoData() {
+    sicaklik = "36.5";
+    voltage  = "24.6";
+    amper    = "1.8";
+    sonQR    = "QA2.1";
+    rfid     = "RF-0427";
+    currX    = 3.2;
+    currY    = 2.1;
+    currYaw  = 0.45;
+    robotDurum   = kRobotDurumYukluHareket;
+    gorevDurum   = "A2 → B3 yük taşınıyor";
+    liftAcik     = true;
+    anlikHiz     = 0.85;
+    bataryaYuzde = 78.0;
+    plcDurum     = "bağlı";
+    plcSonMesaj  = "Kapı açıldı, geçebilirsin";
+    qrKonum      = "x:0.12, y:-0.05, z:0.80";
+    _updateChargingStatus();
+    notifyListeners();
+  }
+
   // ── İç yardımcı ──────────────────────────────────────────────────────
 
   void _updateChargingStatus() {

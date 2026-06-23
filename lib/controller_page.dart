@@ -1,4 +1,5 @@
 ﻿import 'dart:async';
+import 'admin_mode.dart';
 import 'data_model.dart';
 import 'data_page.dart';
 import 'models/agv_sensor_model.dart';
@@ -46,6 +47,12 @@ class _ControllerPageState extends State<ControllerPage> {
     parameterModel = Provider.of<ParameterModel>(context, listen: false);
     Provider.of<DataModel>(context, listen: false).loadDataPoints();
     parameterModel.loadParameters();
+    // GEÇİCİ admin/demo modu: cihaz yokken rapor için örnek veri bas.
+    if (kAdminMode) {
+      isConnected = true;
+      nextQR = "QB3.1";
+      _agvModel.loadDemoData();
+    }
     startConnectionCheck();
     _poseTimer = Timer.periodic(const Duration(milliseconds: 200), (_) async {
       final result = await AgvService.fetchPose(_site,
@@ -145,6 +152,8 @@ class _ControllerPageState extends State<ControllerPage> {
   }
 
   void startConnectionCheck() {
+    // GEÇİCİ admin/demo modu: gerçek bağlantı kontrolünü atla, "bağlı" göster.
+    if (kAdminMode) return;
     _connectionTimer?.cancel();
     _connectionTimer =
         Timer.periodic(const Duration(seconds: 1), (timer) async {
@@ -159,7 +168,7 @@ class _ControllerPageState extends State<ControllerPage> {
       AgvService.startSendingData(_site, command, duration);
 
   Future<void> _navigateToScenarioPage(List<DataPoint> dataPoints) async {
-    if (dataPoints.isEmpty){
+    if (dataPoints.isEmpty && !kAdminMode){
       return;
     }
     else {
@@ -178,7 +187,7 @@ class _ControllerPageState extends State<ControllerPage> {
       }
   }
   Future<void> _navigateToDataPage(String site) async {
-    if (site.isEmpty) return;
+    if (site.isEmpty && !kAdminMode) return;
     await Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => DataPage(site: site)),
