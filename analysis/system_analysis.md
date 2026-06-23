@@ -450,29 +450,186 @@ Tipik anti-pattern örnekleri:
 
 ---
 
-## Güncel Genel Skor Kartı (Haziran 2026)
+## Güncel Genel Skor Kartı — Faz 3 Sonrası (Haziran 2026)
 
-| Kategori | Başlangıç | Güncel | Değişim | Açıklama |
+| Kategori | Başlangıç | Faz 3 Sonu | Değişim | Açıklama |
 |---|---|---|---|---|
-| Haberleşme & Threading | 🔴 2/10 | 🟡 6/10 | ▲ +4 | Kritik timer sızıntıları ve dispose sorunları giderildi; `_tick()` UI thread sorunu ve `Future.delayed` anti-pattern kaldı |
-| State Management | 🟠 4/10 | 🟢 8/10 | ▲ +4 | `AgvSensorModel` eklendi, global state kaldırıldı, `context.watch` kullanıldı; yalnızca `loadParameters` çift çağrı küçük sorun olarak kaldı |
-| Desktop Responsive | 🔴 2/10 | 🔴 2/10 | — | screenutil kapsam dışı; overflow riskleri, AppBar Spacer ve hardcoded değerler dokunulmadı |
-| Clean Code | 🟠 3/10 | 🟢 9/10 | ▲ +6 | 8 ölü paket silindi, god file bölündü, dead code temizlendi, `flutter analyze` 0 sorun; 4 ufak kullanılmayan değişken kaldı |
+| Haberleşme & Threading | 🔴 2/10 | 🟡 6/10 | ▲ +4 | Kritik timer sızıntıları giderildi; `_tick()` UI thread sorunu ve `Future.delayed` anti-pattern kaldı |
+| State Management | 🟠 4/10 | 🟢 8/10 | ▲ +4 | `AgvSensorModel` eklendi, global state kaldırıldı; küçük `loadParameters` sorunu kaldı |
+| Desktop Responsive | 🔴 2/10 | 🔴 2/10 | — | Kapsam dışı |
+| Clean Code | 🟠 3/10 | 🟢 9/10 | ▲ +6 | God file bölündü, dead code temizlendi; 4 kullanılmayan değişken kaldı |
 
-### Genel Ortalama
+---
 
-| | Başlangıç | Güncel |
-|---|---|---|
-| **Ortalama Skor** | **2.75 / 10** | **6.25 / 10** |
+## Güncel Genel Skor Kartı — Faz 5–7 Sonrası (Haziran 2026)
 
-### Kalan Açık Maddeler (screenutil hariç)
+> Faz 5 (2026 Şartname Adaptasyonu), Faz 6 (UI Thread İzolasyonu), Faz 7 (Sequential Polling) tamamlandı. `flutter analyze` → **0 sorun**.
+
+### Yapılan / Yapılmayan — Faz 5–7
+
+| # | Bulgu | Önceki Durum | Güncel Durum |
+|---|---|---|---|
+| 1.4 | `_tick()` UI thread'de ağır işler | ❌ Kaldı | ✅ `compute()` ile Isolate'e taşındı (Faz 6) |
+| 1.5 | `startSendingData` busy loop | ✅ Kısmen | ✅ `Timer.periodic + Completer` non-blocking (Faz 7.2) |
+| 1.7 | `await Future.delayed` anti-pattern | ❌ Kaldı | ✅ Polling'den tamamen kaldırıldı (Faz 7.1) |
+| 2.3 | `loadParameters()` çift çağrı | ❌ Kaldı | ✅ Zaten Faz 1.8'de düzeltilmişti (teyit edildi) |
+| 4.4 | `actionTime`, `bas`, `bit`, `qrVeri` ölü değişkenler | ❌ Kaldı | ✅ Silindi (Faz 5.3) |
+| ★ | `AgvSensorModel` 2026 şartname alanları | ❌ Yok | ✅ 8 yeni alan + 6 update metodu eklendi (Faz 5.1) |
+| ★ | `AgvService.fetchTelemetri()` | ❌ Yok | ✅ JSON sözleşmesi tanımlandı (Faz 5.2) |
+| ★ | Sequential polling pattern | ❌ Timer.periodic çakışması | ✅ `_runNextPoll()` + fallback (Faz 7.1) |
+
+### Güncel Skor Tablosu
+
+| Kategori | Başlangıç | Faz 3 | Faz 5–7 | Toplam Değişim |
+|---|---|---|---|---|
+| Haberleşme & Threading | 🔴 2/10 | 🟡 6/10 | 🟢 **8.5/10** | ▲ +6.5 |
+| State Management | 🟠 4/10 | 🟢 8/10 | 🟢 **9/10** | ▲ +5 |
+| Desktop Responsive | 🔴 2/10 | 🔴 2/10 | 🔴 **2/10** | — (kapsam dışı) |
+| Clean Code | 🟠 3/10 | 🟢 9/10 | 🟢 **9.5/10** | ▲ +6.5 |
+
+| | Başlangıç | Faz 3 | Faz 5–7 |
+|---|---|---|---|
+| **Ortalama Skor** | **2.75 / 10** | **6.25 / 10** | **7.25 / 10** |
+
+### Kalan Teknik Borç (screenutil hariç, kod kalitesi)
 
 | Öncelik | Madde | Dosya |
 |---|---|---|
-| 🟠 Orta | `_tick()` metodu UI thread'de ağır I/O | `widgets/live_map.dart` |
 | 🟠 Orta | Overflow riskleri (`Row` + `SizedBox`, `Flexible` eksik) | `controller_page`, `data_page`, `vehicle_3d_page` |
-| 🟡 Düşük | `loadParameters()` iki kez çağrılıyor | `controller_page.dart:52` |
-| 🟡 Düşük | `AppBar actions` içinde `Spacer` (dar pencerede taşma) | `controller_page.dart:147+` |
-| 🟡 Düşük | 4 kullanılmayan alan: `actionTime`, `bas`, `bit`, `qrVeri` | `controller_page.dart:29–35` |
-| 🟡 Düşük | `await Future.delayed` anti-pattern (polling timer'larında) | `controller_page.dart:64–84` |
+| 🟡 Düşük | `AppBar actions` içinde `Spacer` (dar pencerede taşma) | `controller_page.dart` |
 | 🟡 Düşük | `kPixelsPerMeter` sabit, pencere boyutuna duyarsız | `widgets/live_map.dart` |
+| 🟡 Düşük | AppBar butonları, PIN kartları, harita Draggable'ları DRY ihlali | `controller_page`, `data_page`, `map_page` |
+
+---
+
+## 2026 Teknofest Şartnamesine Göre İyileştirme Önerileri
+
+> Şartname puanlama tablosu (Tablo 4) baz alınarak hazırlanmıştır. **Puan riski** ile işaretlenenler yarışmada doğrudan puanı etkiler.
+
+### 🔴 KRİTİK — Puan Kaybı Riski Yüksek
+
+#### Ö-1: GCS Arayüzünde Zorunlu Bilgilerin Gösterilmesi (±24 puan)
+> Şartname: *"Kullanıcı arayüzünde gösterilemeyen her bir bilgi için -4 puan"* (Tablo 4)
+> Şartname: *"Kullanıcı arayüzünün olması ve tanımlı tüm bilgilerin gösterilebilmesi +20 puan"*
+
+`AgvSensorModel`'e Faz 5'te tüm alanlar eklendi. Ancak bu alanları **ekranda gösteren widget'lar henüz yok.** Aşağıdaki 6 bilgi şartname gereği görünür olmalı:
+
+| Zorunlu Bilgi | Model Alanı | Ekranda Var mı? | Risk |
+|---|---|---|---|
+| Robot durumu (8 durum: idle, görev, yük, kapı...) | `robotDurum` | ❌ Yok | -4 puan |
+| Görev durum bilgisi | `gorevDurum` | ❌ Yok | -4 puan |
+| Okunan QR kod | `sonQR` | ⚠️ Kısmen (data_page'de) | — |
+| QR pozisyonu (kameraya göre) | `qrKonum` | ❌ Yok | -4 puan |
+| Fabrika otomasyon haberleşme durumu | `plcDurum` | ❌ Yok | -4 puan |
+| Alınan/gönderilen PLC mesajları | `plcSonMesaj` | ❌ Yok | -4 puan |
+| Anlık hız (m/s) | `anlikHiz` | ❌ Yok | -4 puan |
+| Batarya seviyesi (%) | `bataryaYuzde` | ❌ Yok | -4 puan |
+| Lift/fork durumu | `liftAcik` | ❌ Yok | -4 puan |
+
+**Tahmini puan kaybı: -32 puan** (8 eksik bilgi × -4) eğer hiçbiri gösterilmezse.
+
+**Öneri:** Mevcut controller_page'deki sensör kartlarının yanına bir "Görev Paneli" bileşeni ekle. Layout'a dokunmadan yeni bir `Card` veya ayrı bir görev durumu sayfası olabilir.
+
+---
+
+#### Ö-2: Robot Tarafında `/telemetri` Endpoint'i Implement Edilmeli
+> GCS tarafı hazır (Faz 5.2 + Faz 7). Robot (Raspberry Pi / Flask) tarafında bu endpoint yoksa yeni model alanları hiç veri almaz.
+
+**Yapılacak (robot tarafı — Flutter değil):**
+```python
+# Python Flask / FastAPI örneği
+@app.get('/telemetri')
+def telemetri():
+    return {
+        "durum":    robot.durum,        # "idle" | "gorevIsleniyor" | ...
+        "gorev":    robot.gorev_aciklama,
+        "hiz":      robot.anlik_hiz,    # m/s (float)
+        "batarya":  robot.batarya_yuzde, # 0–100
+        "lift":     robot.lift_acik,    # bool
+        "plcDurum": plc.baglanti_durumu,
+        "plcMesaj": plc.son_mesaj,
+        "qrKonum":  kamera.qr_pozisyon, # "x:0.12,y:-0.05,z:0.80"
+        "x": pose.x, "y": pose.y, "yaw": pose.yaw,
+        "sicaklik": sensor.sicaklik,
+        "voltaj": sensor.voltaj,
+        "akim": sensor.akim,
+        "qr": qr.son_okunan,
+        "rfid": rfid.son_okunan
+    }
+```
+
+---
+
+### 🟠 ÖNEMLİ — Yarışma Puanına Doğrudan Katkı
+
+#### Ö-3: Fabrika Otomasyon (PLC) Haberleşme (+20 puan + kapı geçişi +20 puan)
+> Şartname: Robot q5 QR noktasına geldiğinde PLC'ye kapı açma isteği gönderir; PLC "geçebilirsin" bildirince geçer.
+
+- GCS, `plcDurum` ve `plcSonMesaj` alanlarını `AgvSensorModel`'den izleyebilir (hazır).
+- GCS'de PLC iletişim geçmişini gösteren küçük bir log/liste paneli eklenebilir.
+- PLC haberleşme protokolü (şartname gereği ayrıca iletilecek) entegrasyonu robot tarafında yapılır; GCS yalnızca durumu görüntüler.
+
+#### Ö-4: Otomatik Şarj Kabiliyeti (+5 bonus puan)
+> Şartname: Batarya < %20 → şarj istasyonuna git.
+
+- `bataryaYuzde` field hazır (Faz 5.1).
+- GCS'de batarya çubuğu: yeşil → sarı → kırmızı (< %20 = uyarı) göstergesi eklenebilir.
+- Robot tarafında bu mantık zaten implement edilmeli; GCS yalnızca durumu gösterir.
+
+#### Ö-5: Görev Durum İzleme — Süre Yönetimi (+1 / -1 dakika başına)
+> Şartname: 30 dakikada tamamlama baz. Erken bitiren +1/dk, geç kalan -1/dk.
+
+- `TimerPage` widget'ı zaten mevcut (elapsed time gösteriyor).
+- Görev başlangıç zamanı ve görev durumu (`gorevDurum`) birleştirilerek kalan süre gösterimi yapılabilir.
+- `robotDurum == "baslangicaDon"` (görev tamamlandı) algılandığında timer otomatik durmalı.
+
+---
+
+### 🟡 TAVSİYE EDİLEN — Yarışma Deneyimini İyileştirir
+
+#### Ö-6: Robot Durum Göstergesi — Görsel Durum Makinesi
+> Şartname §3.1.1 madde 10a–h: 8 durum tanımlı.
+
+GCS'de 8 durumu renkli/ikonlu bir durum göstergesiyle sunmak hem jüri izlenimi hem de operatör kolaylığı sağlar:
+
+```
+🟢 IDLE         → Göreve hazır
+🔵 Görev alındı → İşleniyor...
+🟡 Yüksüz      → A2'ye gidiyor
+🟤 Yüklü       → B3'e taşıyor
+🟣 Kapı bekleniyor
+🔵 Başlangıca dönüyor
+🔴 HATA
+🚨 ACİL STOP
+```
+
+#### Ö-7: Bağlantı Kalitesi + Polling Zamanı Gösterge
+- Mevcut `isConnected` bool göstergesi var.
+- Buna ek olarak son başarılı polling zamanı (`DateTime.now()`) göstermek bağlantı gecikmesini operatöre görünür kılar.
+- Yarışma WiFi ortamında latency önemli; GCS'de son güncelleme zamanı "2s önce" gibi gösterilebilir.
+
+#### Ö-8: Senaryo Sayfası — Rota Optimizasyonu Entegrasyonu (+20 puan)
+> Şartname: PLC'den gelen alma/bırakma noktaları → robot en uygun rotayı hesaplar.
+
+- Mevcut `ScenarioPage` (`scenerio_page.dart`) rota tanımlamaya yarıyor.
+- PLC'den gelen alma/bırakma noktaları (`gorevDurum` alanı veya ayrı bir alan) `ScenarioPage`'e aktarılarak otomatik rota önerisi yapılabilir.
+
+#### Ö-9: Acil Stop Butonu Görünürlüğü
+> Şartname (Hareket-Kabiliyet Videosu §6.1.3): *"Araçlarda bulunacak acil durdurma butonunun çalıştığının gösterilmesi beklenmektedir."*
+
+- GCS'deki mevcut kontrol butonlarına ek olarak belirgin bir "ACİL STOP" butonu (`robotDurum == acilStop` tetikler) eklenebilir.
+- Bu hem video için gerekli hem de jüri değerlendirmesinde olumlu izlenim bırakır.
+
+---
+
+### Özet — Öncelikli Aksiyon Listesi
+
+| # | Aksiyon | Etki | Taraf |
+|---|---|---|---|
+| 1 | Robot `/telemetri` endpoint'i implement et | ★★★ Tüm yeni alanlar çalışır | Robot (Python) |
+| 2 | GCS'de zorunlu 8 bilgiyi göster (Ö-1) | ★★★ +20 puan, -32 puan riskini önler | GCS (Flutter) |
+| 3 | Robot durum göstergesi (Ö-6) | ★★ Jüri izlenimi + operatör kolaylığı | GCS (Flutter) |
+| 4 | PLC haberleşme log paneli (Ö-3) | ★★ +20 puan kapı geçişi + haberleşme | GCS (Flutter) |
+| 5 | Batarya % göstergesi + uyarı (Ö-4) | ★★ +5 bonus puan (otomatik şarj) | GCS (Flutter) |
+| 6 | Acil stop butonu (Ö-9) | ★★ Video + jüri gereksinimi | GCS (Flutter) |
+| 7 | Görev timer entegrasyonu (Ö-5) | ★ Süre yönetimi | GCS (Flutter) |

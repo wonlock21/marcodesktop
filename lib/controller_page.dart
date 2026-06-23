@@ -56,18 +56,77 @@ class _ControllerPageState extends State<ControllerPage> {
         _agvModel.updatePose(result.$1, result.$2, result.$3);
       }
     });
-    _dataPollTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
-      await Future.delayed(const Duration(milliseconds: 100));
-      if (!mounted) return;
+    _startPolling();
+  }
+
+  /// Telemetri polling döngüsünü başlatır.
+  void _startPolling() {
+    _runNextPoll();
+  }
+
+  /// Sequential polling: önceki döngü tamamlandıktan 1s sonra yenisi başlar.
+  /// Timer.periodic yerine kullanılır — örtüşen async callback riski yok.
+  Future<void> _runNextPoll() async {
+    if (!mounted) return;
+
+    // /telemetri endpoint'i varsa tek istekte tüm veriyi al
+    final tel = await AgvService.fetchTelemetri(_site);
+
+    if (tel != null && mounted) {
+      final durum = tel['durum'];
+      if (durum is String) _agvModel.updateRobotDurum(durum);
+
+      final gorev = tel['gorev'];
+      if (gorev is String) _agvModel.updateGorev(gorev);
+
+      final lift = tel['lift'];
+      final hiz  = (tel['hiz']  as num?)?.toDouble();
+      if (lift is bool) _agvModel.updateLift(acik: lift, hiz: hiz);
+
+      final batarya = (tel['batarya'] as num?)?.toDouble();
+      if (batarya != null) _agvModel.updateBatarya(batarya);
+
+      final plcDurum = tel['plcDurum'];
+      final plcMesaj = tel['plcMesaj'] as String? ?? '';
+      if (plcDurum is String) _agvModel.updatePlc(durum: plcDurum, mesaj: plcMesaj);
+
+      final qrKonum = tel['qrKonum'];
+      if (qrKonum is String && qrKonum.isNotEmpty) _agvModel.updateQrKonum(qrKonum);
+
+      // Konum (opsiyonel — /pose timer'ı öncelikli, telemetri varsa override)
+      final tx = (tel['x'] as num?)?.toDouble();
+      final ty = (tel['y'] as num?)?.toDouble();
+      final tyaw = (tel['yaw'] as num?)?.toDouble();
+      if (tx != null && ty != null && mounted) {
+        _agvModel.updatePose(tx, ty, tyaw ?? _agvModel.currYaw);
+      }
+
+      // Sensör (opsiyonel)
+      final sicaklik = tel['sicaklik'] as String?;
+      final voltaj   = tel['voltaj']   as String?;
+      final akim     = tel['akim']     as String?;
+      if (sicaklik != null && voltaj != null && akim != null && mounted) {
+        _agvModel.updateSensor(
+          sicaklik: sicaklik,
+          voltage: voltaj,
+          amper: akim,
+        );
+      }
+
+      // QR (opsiyonel)
+      final qr   = tel['qr']   as String?;
+      final rfid = tel['rfid'] as String?;
+      if (qr   != null && mounted) _agvModel.updateQR(qr);
+      if (rfid != null && mounted) _agvModel.updateRfid(rfid);
+    } else if (_site.isNotEmpty && mounted) {
+      // Fallback: /telemetri yoksa eski endpoint'ler (sıralı, delay yok)
       imageCache.clearLiveImages();
 
       final qr = await AgvService.fetchQRData(_site);
       if (qr != null && mounted) _agvModel.updateQR(qr);
-      await Future.delayed(const Duration(milliseconds: 10));
 
       final rfidVal = await AgvService.fetchRfid(_site);
       if (rfidVal != null && mounted) _agvModel.updateRfid(rfidVal);
-      await Future.delayed(const Duration(milliseconds: 10));
 
       final sensorData = await AgvService.fetchSensorData(_site);
       if (sensorData != null && mounted) {
@@ -77,8 +136,12 @@ class _ControllerPageState extends State<ControllerPage> {
           amper: sensorData.amper,
         );
       }
-      await Future.delayed(const Duration(milliseconds: 10));
-    });
+    }
+
+    // Önceki döngü bitti; 1s sonra bir sonraki başlasın
+    if (mounted) {
+      _dataPollTimer = Timer(const Duration(seconds: 1), _runNextPoll);
+    }
   }
 
   void startConnectionCheck() {

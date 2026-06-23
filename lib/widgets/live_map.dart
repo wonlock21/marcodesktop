@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
@@ -9,6 +9,134 @@ const Offset kOriginPx = Offset(120.0, 260.0);
 const double kPixelsPerMeter = 20.0;
 const double kHeadingOffset = 7.6;
 const double kIconSize = 24.0;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Isolate-uyumlu top-level tipler ve fonksiyonlar
+// (compute() çağrıları için — sınıf dışı, closure değil)
+// ═══════════════════════════════════════════════════════════════════════
+
+/// `compute()` çağrısına gönderilecek veri paketi.
+/// Yalnızca Isolate'e gönderilebilir (sendable) tipler içerir.
+class _ParseInput {
+  final Uint8List bodyBytes;
+  final String contentType;
+  const _ParseInput(this.bodyBytes, this.contentType);
+}
+
+/// Ayrı Isolate'te çalışan ağır parse fonksiyonu.
+/// HTTP isteği YAPAMAZ — yalnızca CPU işlemi.
+///
+/// Kapsadığı durumlar:
+///   1. Doğrudan binary image (JPEG/PNG/WebP magic bytes ile sniff)
+///   2. application/json → "data"/"image" key'i altında base64
+///   3. text/html → inline data:image/... URL (ek HTTP isteği gerektirmez)
+///   4. Ham base64 string (tüm body)
+///
+/// HTML içinde <img src="..."> durumu ek HTTP isteği gerektirdiğinden
+/// bu fonksiyon null döndürür; _tick() ana Isolate'te fallback çalıştırır.
+Uint8List? _parseResponseInIsolate(_ParseInput input) {
+  final bytes = input.bodyBytes;
+  final ct    = input.contentType;
+
+  // 1) Content-Type'a göre doğrudan binary
+  if (ct.startsWith('image/') && bytes.isNotEmpty) {
+    return _sniffOrPassthrough(bytes);
+  }
+
+  // 2) Magic-byte sniff (Content-Type güvenilmez sunucularda)
+  final sniffed = _sniffBinaryStatic(bytes);
+  if (sniffed != null) return sniffed;
+
+  // 3) JSON içinde base64
+  if (ct.contains('application/json')) {
+    try {
+      final obj = jsonDecode(utf8.decode(bytes));
+      if (obj is Map) {
+        final b64 = (obj['data'] as String?) ?? (obj['image'] as String? ?? '');
+        if (b64.isNotEmpty) return base64Decode(_stripPrefixStatic(b64));
+      }
+    } catch (_) {}
+  }
+
+  // 4) HTML — yalnızca inline data: URL (ek HTTP gerektirmez)
+  if (ct.contains('text/html')) {
+    final html = _lossyString(bytes);
+    final m = RegExp(
+      r'data:image/[^;]+;base64,([A-Za-z0-9+/=\r\n]+)',
+      caseSensitive: false,
+    ).firstMatch(html);
+    if (m != null) {
+      try {
+        final clean = m.group(1)!.replaceAll(RegExp(r'\s'), '');
+        return base64Decode(clean);
+      } catch (_) {}
+    }
+    // <img src="..."> fallback → null döndür, _tick() ek HTTP yapacak
+    return null;
+  }
+
+  // 5) Ham base64 string
+  final bodyStr = _lossyString(bytes).trim();
+  if (_looksLikeBase64Static(bodyStr)) {
+    try {
+      return base64Decode(_stripPrefixStatic(bodyStr));
+    } catch (_) {}
+  }
+
+  return null;
+}
+
+// ─── Yardımcı top-level fonksiyonlar ──────────────────────────────────
+
+Uint8List? _sniffOrPassthrough(Uint8List data) =>
+    _sniffBinaryStatic(data) ?? data;
+
+Uint8List? _sniffBinaryStatic(Uint8List data) {
+  if (data.length < 12) return null;
+  // JPEG
+  if (data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF) return data;
+  // PNG
+  const pngSig = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+  if (List.generate(8, (i) => data[i] == pngSig[i]).every((ok) => ok)) {
+    return data;
+  }
+  // WebP (RIFF....WEBP)
+  bool match(int offset, List<int> sig) {
+    if (data.length < offset + sig.length) return false;
+    for (var i = 0; i < sig.length; i++) {
+      if (data[offset + i] != sig[i]) return false;
+    }
+    return true;
+  }
+  const riff = [0x52, 0x49, 0x46, 0x46];
+  const webp = [0x57, 0x45, 0x42, 0x50];
+  if (match(0, riff) && match(8, webp)) return data;
+  return null;
+}
+
+String _lossyString(Uint8List data) {
+  try {
+    return utf8.decode(data);
+  } catch (_) {
+    return const AsciiDecoder(allowInvalid: true).convert(data);
+  }
+}
+
+bool _looksLikeBase64Static(String s) {
+  final cleaned = _stripPrefixStatic(s)
+      .replaceAll('\n', '')
+      .replaceAll('\r', '');
+  if (cleaned.length < 16) return false;
+  return RegExp(r'^[A-Za-z0-9+/=]+$')
+      .hasMatch(cleaned.substring(0, cleaned.length.clamp(0, 256)));
+}
+
+String _stripPrefixStatic(String s) {
+  final i = s.indexOf(',');
+  return s.startsWith('data:') && i != -1 ? s.substring(i + 1) : s;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 
 class Pose {
   final double x, y, yaw;
@@ -84,84 +212,42 @@ class _LiveMapFixedUrlState extends State<LiveMapFixedUrl> {
     if (_fetching || widget.site.isEmpty) return;
     _fetching = true;
     try {
-      final resp =
-          await http.get(Uri.parse(_url)).timeout(widget.timeout);
+      final resp = await http.get(Uri.parse(_url)).timeout(widget.timeout);
 
       if (resp.statusCode == 200) {
-        Uint8List? bytes;
-        final headers =
-            resp.headers.map((k, v) => MapEntry(k.toLowerCase(), v));
-        final ct = (headers['content-type'] ?? '').toLowerCase();
+        final ct = (resp.headers['content-type'] ?? '').toLowerCase();
 
-        if (ct.startsWith('image/')) {
-          if (resp.bodyBytes.isNotEmpty) bytes = resp.bodyBytes;
-        }
+        // ── Ağır parse → ayrı Isolate ─────────────────────────────────
+        Uint8List? bytes = await compute(
+          _parseResponseInIsolate,
+          _ParseInput(resp.bodyBytes, ct),
+        );
+        // ──────────────────────────────────────────────────────────────
 
-        bytes ??= _sniffBinaryImage(resp.bodyBytes);
-
-        if (bytes == null && ct.contains('application/json')) {
-          final obj = jsonDecode(utf8.decode(resp.bodyBytes));
-          if (obj is Map) {
-            final String b64 =
-                (obj['data'] as String?) ?? (obj['image'] as String? ?? '');
-            if (b64.isNotEmpty) bytes = base64Decode(_stripDataUrlPrefix(b64));
-          }
-        }
-
+        // HTML→<img src> fallback: ek HTTP isteği ana Isolate'te yapılır,
+        // ardından gelen bytes yine compute() ile parse edilir.
         if (bytes == null && ct.contains('text/html')) {
-          final html = _tryDecodeUtf8Lossy(resp.bodyBytes);
-          final dataUrl = _extractDataImageUrl(html);
-          if (dataUrl != null) {
-            bytes = base64Decode(_stripDataUrlPrefix(dataUrl));
-          } else {
-            final imgSrc = _extractFirstImgSrc(html);
-            if (imgSrc != null) {
-              final resolved = _resolveUrl(Uri.parse(_url), imgSrc);
-              _debug('HTML içinden img src bulundu: $resolved');
-              final imgResp =
-                  await http.get(resolved).timeout(widget.timeout);
-              if (imgResp.statusCode == 200) {
-                final ct2 =
-                    (imgResp.headers['content-type'] ?? '').toLowerCase();
-                if (ct2.startsWith('image/')) {
-                  if (imgResp.bodyBytes.isNotEmpty) bytes = imgResp.bodyBytes;
-                }
-                bytes ??= _sniffBinaryImage(imgResp.bodyBytes);
-                if (bytes == null && ct2.contains('application/json')) {
-                  final obj2 = jsonDecode(utf8.decode(imgResp.bodyBytes));
-                  if (obj2 is Map) {
-                    final String b64 = (obj2['data'] as String?) ??
-                        (obj2['image'] as String? ?? '');
-                    if (b64.isNotEmpty) {
-                      bytes = base64Decode(_stripDataUrlPrefix(b64));
-                    }
-                  }
-                }
-                if (bytes == null) {
-                  final bodyStr2 =
-                      _tryDecodeUtf8Lossy(imgResp.bodyBytes).trim();
-                  if (_looksLikeBase64(bodyStr2)) {
-                    bytes = base64Decode(_stripDataUrlPrefix(bodyStr2));
-                  }
-                }
-              } else {
-                _debug('img src HTTP ${imgResp.statusCode}');
-              }
+          final html = _lossyString(resp.bodyBytes);
+          final imgSrc = _extractFirstImgSrc(html);
+          if (imgSrc != null) {
+            _debug('HTML img src bulundu: $imgSrc');
+            final resolved = _resolveUrl(Uri.parse(_url), imgSrc);
+            final imgResp =
+                await http.get(resolved).timeout(widget.timeout);
+            if (imgResp.statusCode == 200) {
+              final ct2 =
+                  (imgResp.headers['content-type'] ?? '').toLowerCase();
+              bytes = await compute(
+                _parseResponseInIsolate,
+                _ParseInput(imgResp.bodyBytes, ct2),
+              );
             } else {
-              _debug(
-                  'HTML geldi ama IMG tag bulunamadı. Head: ${html.substring(0, html.length.clamp(0, 200))}');
+              _debug('img src HTTP ${imgResp.statusCode}');
             }
-          }
-        }
-
-        if (bytes == null) {
-          final bodyStr = _tryDecodeUtf8Lossy(resp.bodyBytes).trim();
-          if (_looksLikeBase64(bodyStr)) {
-            try {
-              bytes = base64Decode(_stripDataUrlPrefix(bodyStr));
-            } catch (e) {
-              _debug('Base64 decode hatası: $e');
-            }
+          } else {
+            _debug(
+                'HTML geldi ama IMG tag bulunamadı. '
+                'Head: ${html.substring(0, html.length.clamp(0, 200))}');
           }
         }
 
@@ -173,7 +259,8 @@ class _LiveMapFixedUrlState extends State<LiveMapFixedUrl> {
           });
         } else {
           _noteError(
-              '200 aldı ama görüntü çözülemedi (ct="$ct", len=${resp.bodyBytes.length}).');
+              '200 aldı ama görüntü çözülemedi (ct="$ct", '
+              'len=${resp.bodyBytes.length}).');
         }
       } else {
         _noteError('HTTP ${resp.statusCode} – ${resp.reasonPhrase ?? ''}');
@@ -185,16 +272,12 @@ class _LiveMapFixedUrlState extends State<LiveMapFixedUrl> {
     }
   }
 
-  String? _extractFirstImgSrc(String html) {
-    final r = RegExp(r'''<img[^>]+src=["']([^"']+)["']''', caseSensitive: false);
-    return r.firstMatch(html)?.group(1);
-  }
+  // ─── HTML fallback yardımcıları (ana Isolate'te kalır) ───────────────
 
-  String? _extractDataImageUrl(String html) {
-    final r = RegExp(
-        r'data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+\/=\r\n]+',
-        caseSensitive: false);
-    return r.firstMatch(html)?.group(0);
+  String? _extractFirstImgSrc(String html) {
+    final r =
+        RegExp(r'''<img[^>]+src=["']([^"']+)["']''', caseSensitive: false);
+    return r.firstMatch(html)?.group(1);
   }
 
   Uri _resolveUrl(Uri base, String href) {
@@ -204,7 +287,8 @@ class _LiveMapFixedUrlState extends State<LiveMapFixedUrl> {
     if (href.startsWith('//')) return Uri.parse('${base.scheme}:$href');
     if (href.startsWith('/')) {
       return Uri.parse(
-          '${base.scheme}://${base.host}${base.hasPort ? ':${base.port}' : ''}$href');
+          '${base.scheme}://${base.host}'
+          '${base.hasPort ? ':${base.port}' : ''}$href');
     }
     final b = base.toString();
     final withoutFile =
@@ -212,55 +296,7 @@ class _LiveMapFixedUrlState extends State<LiveMapFixedUrl> {
     return Uri.parse('$withoutFile$href');
   }
 
-  Uint8List? _sniffBinaryImage(Uint8List data) {
-    if (data.length < 12) return null;
-    if (data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF) return data;
-    const png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
-    if (List.generate(8, (i) => data[i] == png[i]).every((ok) => ok)) {
-      return data;
-    }
-    final riff = utf8.encode('RIFF');
-    final webp = utf8.encode('WEBP');
-    if (_startsWith(data, riff) && _containsAt(data, webp, 8)) return data;
-    return null;
-  }
-
-  bool _startsWith(Uint8List d, List<int> sig) {
-    if (d.length < sig.length) return false;
-    for (var i = 0; i < sig.length; i++) {
-      if (d[i] != sig[i]) return false;
-    }
-    return true;
-  }
-
-  bool _containsAt(Uint8List d, List<int> sig, int offset) {
-    if (d.length < offset + sig.length) return false;
-    for (var i = 0; i < sig.length; i++) {
-      if (d[offset + i] != sig[i]) return false;
-    }
-    return true;
-  }
-
-  String _stripDataUrlPrefix(String s) {
-    final i = s.indexOf(',');
-    return s.startsWith('data:') && i != -1 ? s.substring(i + 1) : s;
-  }
-
-  String _tryDecodeUtf8Lossy(Uint8List data) {
-    try {
-      return utf8.decode(data);
-    } catch (_) {
-      return const AsciiDecoder(allowInvalid: true).convert(data);
-    }
-  }
-
-  bool _looksLikeBase64(String s) {
-    final cleaned =
-        _stripDataUrlPrefix(s).replaceAll('\n', '').replaceAll('\r', '');
-    if (cleaned.length < 16) return false;
-    return RegExp(r'^[A-Za-z0-9+/=]+$')
-        .hasMatch(cleaned.substring(0, cleaned.length.clamp(0, 256)));
-  }
+  // ─── Genel yardımcılar ────────────────────────────────────────────────
 
   void _stop() {
     _timer?.cancel();

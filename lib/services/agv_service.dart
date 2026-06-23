@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
@@ -115,13 +116,23 @@ class AgvService {
     return null;
   }
 
+  /// Belirtilen komutu süre boyunca 50ms aralıklarla fire-and-forget gönderir.
+  /// Polling döngüsünü veya UI thread'i BLOKLAMAZ.
   static Future<void> startSendingData(
-      String site, String command, Duration duration) async {
-    final endTime =
+      String site, String command, Duration duration) {
+    if (site.isEmpty) return Future.value();
+    final endMs =
         DateTime.now().millisecondsSinceEpoch + duration.inMilliseconds;
-    while (DateTime.now().millisecondsSinceEpoch < endTime) {
-      await veriBas(site, command);
-      await Future.delayed(const Duration(milliseconds: 50));
-    }
+    final completer = Completer<void>();
+    Timer? t;
+    t = Timer.periodic(const Duration(milliseconds: 50), (_) {
+      if (DateTime.now().millisecondsSinceEpoch >= endMs) {
+        t?.cancel();
+        if (!completer.isCompleted) completer.complete();
+        return;
+      }
+      veriBas(site, command); // fire-and-forget — await yok
+    });
+    return completer.future;
   }
 }

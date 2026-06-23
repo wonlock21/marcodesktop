@@ -368,21 +368,21 @@ Araç hareket halindeyken bu işlemler UI thread'i bloke ederse **frame drop + j
 
 **Strateji:** HTTP isteği (I/O, zaten async) ana Isolate'te kalır. Response bytes alındıktan sonra tüm CPU-yoğun parse `compute()` ile ayrı Isolate'e gönderilir. Sadece HTML→`<img src>` fallback'i ek HTTP isteği gerektirdiğinden ana Isolate'te kalır; o isteğin byte'larının parse'ı da yine `compute()`'a gider.
 
-- [ ] `package:flutter/foundation.dart` import'unu ekle (`compute` için).
-- [ ] Dosyanın en üstüne (class dışı) top-level `_ParseInput` sınıfı ve `_parseResponseInIsolate` fonksiyonunu ekle. Bu fonksiyon şunları kapsar: binary sniff (JPEG/PNG/WebP magic bytes), JSON+base64 decode, HTML data-URL inline regex. İçinde HTTP isteği YAPAMAZ.
-- [ ] Top-level yardımcılar ekle: `_sniffBinaryImageStatic`, `_looksLikeBase64Static`, `_stripPrefixStatic`, `_lossy`.
-- [ ] `_tick()` içindeki mevcut parse bloğunu şu sırayla değiştir:
+- [x] `package:flutter/foundation.dart` import'unu ekle (`compute` için).
+- [x] Dosyanın en üstüne (class dışı) top-level `_ParseInput` sınıfı ve `_parseResponseInIsolate` fonksiyonunu ekle. Bu fonksiyon şunları kapsar: binary sniff (JPEG/PNG/WebP magic bytes), JSON+base64 decode, HTML data-URL inline regex. İçinde HTTP isteği YAPAMAZ.
+- [x] Top-level yardımcılar eklendi: `_sniffBinaryStatic`, `_looksLikeBase64Static`, `_stripPrefixStatic`, `_lossyString`, `_sniffOrPassthrough`.
+- [x] `_tick()` içindeki mevcut parse bloğu değiştirildi:
   1. `await compute(_parseResponseInIsolate, _ParseInput(resp.bodyBytes, ct))` → `Uint8List? bytes`
   2. `bytes == null && ct.contains('text/html')` → `_extractFirstImgSrc` ile src URL al, ek HTTP isteği yap, bytes'ı tekrar `compute()` ile parse et
-  3. `setState` çağrısı değişmez
-- [ ] Artık kullanılmayan class-level metodları sil: `_sniffBinaryImage`, `_looksLikeBase64`, `_stripDataUrlPrefix`, `_startsWith`, `_containsAt` (yerlerini top-level `*Static` versiyonları aldı). `_extractFirstImgSrc`, `_extractDataImageUrl`, `_resolveUrl`, `_tryDecodeUtf8Lossy` → HTML fallback için kalır.
-- [ ] **Çözdüğü sorun:** §1.4 (UI thread üzerinde ağır işler).
+  3. `setState` çağrısı değişmedi
+- [x] Artık kullanılmayan class-level metodlar silindi: `_sniffBinaryImage`, `_looksLikeBase64`, `_stripDataUrlPrefix`, `_startsWith`, `_containsAt`, `_tryDecodeUtf8Lossy`, `_extractDataImageUrl`. `_extractFirstImgSrc`, `_resolveUrl` → HTML fallback için korundu.
+- [x] **Çözdüğü sorun:** §1.4 (UI thread üzerinde ağır işler).
 
 ---
 
 ### Adım 6.2 — Sanity Check
 
-- [ ] `flutter analyze` → **0 issue.**
+- [x] `flutter analyze` → **0 issue.**
 - [ ] `flutter build windows --debug` → başarılı.
 - [ ] Harita görüntüsü fonksiyonel olarak aynı şekilde yükleniyor.
 - [ ] `flutter run -d windows`: joystick butonlarına basıldığında 500ms harita döngüsü sırasında gecikme gözlemlenmez.
@@ -424,31 +424,31 @@ Future<void> veriBas(String veri) => AgvService.veriBas(_site, veri);
 
 ### Adım 7.1 — `controller_page.dart` — Sequential Polling Pattern
 
-- [ ] `initState`'teki `_dataPollTimer = Timer.periodic(...)` bloğunu kaldır.
-- [ ] `_startPolling()` metodu ekle; `initState`'te çağır.
-- [ ] `_runNextPoll()` async metodu implement et:
-  - Önce `fetchTelemetri` dene; başarılıysa `_agvModel.update*()` metodlarını çağır.
-  - Başarısızsa (null → `/telemetri` endpoint yok) fallback: `fetchQRData`, `fetchRfid`, `fetchSensorData` ardışık çağır (`await Future.delayed` **OLMADAN**).
-  - Metodun sonunda `_dataPollTimer = Timer(const Duration(seconds: 1), _runNextPoll)` — önceki tamamlandıktan 1s sonra yenisi başlar.
-- [ ] `dispose()`'da `_dataPollTimer?.cancel()` değişmez.
-- [ ] Pose timer (`_poseTimer`, 200ms) ve connection timer (`_connectionTimer`) **dokunulmaz.**
-- [ ] `await Future.delayed` çağrıları tamamen kaldırılır.
-- [ ] **Çözdüğü sorun:** §1.7 (anti-pattern), §1.5 (kısmen).
+- [x] `initState`'teki `_dataPollTimer = Timer.periodic(...)` bloğunu kaldır.
+- [x] `_startPolling()` metodu ekle; `initState`'te çağır.
+- [x] `_runNextPoll()` async metodu implement edildi:
+  - Önce `fetchTelemetri` dene; başarılıysa tüm `_agvModel.update*()` metodları çağrılıyor.
+  - Başarısızsa fallback: `fetchQRData`, `fetchRfid`, `fetchSensorData` ardışık (`await Future.delayed` YOK).
+  - Metodun sonunda `_dataPollTimer = Timer(const Duration(seconds: 1), _runNextPoll)`.
+- [x] `dispose()`'da `_dataPollTimer?.cancel()` değişmedi.
+- [x] Pose timer ve connection timer dokunulmadı.
+- [x] `await Future.delayed` çağrıları tamamen kaldırıldı.
+- [x] **Çözdüğü sorun:** §1.7 (anti-pattern), §1.5 (kısmen).
 
 ---
 
 ### Adım 7.2 — `lib/services/agv_service.dart` — `startSendingData` Non-Blocking
 
-- [ ] Mevcut `while` döngüsünü `Timer.periodic` + `Completer<void>` ile değiştir.
-- [ ] İçinde `veriBas` fire-and-forget olarak çağrılır (await yok).
-- [ ] Duration dolunca timer iptal edilir, Completer tamamlanır.
-- [ ] **Çözdüğü sorun:** §1.5 (startSendingData busy loop).
+- [x] Mevcut `while` döngüsü `Timer.periodic` + `Completer<void>` ile değiştirildi.
+- [x] `veriBas` içinde fire-and-forget olarak çağrılıyor (await yok).
+- [x] Duration dolunca timer iptal ediliyor, Completer tamamlanıyor.
+- [x] **Çözdüğü sorun:** §1.5 (startSendingData busy loop).
 
 ---
 
 ### Adım 7.3 — Sanity Check
 
-- [ ] `flutter analyze` → **0 issue.**
+- [x] `flutter analyze` → **0 issue.**
 - [ ] `flutter build windows --debug` → başarılı.
 - [ ] `flutter run -d windows`: site boşken polling çökmüyor; bağlı AGV'de telemetri verileri doğru güncelleniyor.
 - [ ] `startSendingData` çağrıldığında UI donmuyor, joystick tepkisi anlık.
@@ -462,11 +462,11 @@ Future<void> veriBas(String veri) => AgvService.veriBas(_site, veri);
 - **Faz 2 (P2 — Responsive):** ⏸️ **İPTAL**
 - **Faz 3 (P3 — Refactor):** 11 / 11 adım ✅ (flutter analyze 0 issue)
 - **Faz 4 (P4 — WebSocket):** ⏸️ ASKIYA ALINDI
-- **Faz 5 (2026 Şartname):** 0 / 4 adım
-- **Faz 6 (UI Thread):** 0 / 2 adım
-- **Faz 7 (Polling):** 0 / 3 adım
+- **Faz 5 (2026 Şartname):** 4 / 4 adım ✅
+- **Faz 6 (UI Thread):** 2 / 2 adım ✅
+- **Faz 7 (Polling):** 3 / 3 adım ✅
 
-**Kalan aktif adım: 9**
+**Kalan aktif adım: 0 — Faz 5–7 tamamlandı** ✅
 
 ---
 ## Kurallar (Her Adım İçin)
