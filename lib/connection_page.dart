@@ -66,12 +66,6 @@ class _ConnectionPageState extends State<ConnectionPage> {
                   Navigator.pop(context, _ipAddress);
                 },
               )
-              /*ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(context, _ipAddress);
-                },
-                child: const Text("Bağlan"),
-              ),*/
             ],
           ),
         ),
@@ -86,7 +80,7 @@ class ConnectButton extends StatefulWidget {
   final VoidCallback onPressed;
   final String text;
   @override
-  _ConnectButtonState createState() => _ConnectButtonState();
+  State<ConnectButton> createState() => _ConnectButtonState();
 }
 
 class _ConnectButtonState extends State<ConnectButton> {
@@ -97,12 +91,6 @@ class _ConnectButtonState extends State<ConnectButton> {
       isOn = !isOn;
     });
 
-    // Reset to initial state after 1 millisecond
-    /*Future.delayed(const Duration(milliseconds: 300), () {
-      setState(() {
-        isOn = false;
-      });
-    });*/
   }
 
   @override

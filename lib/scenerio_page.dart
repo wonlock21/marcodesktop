@@ -1,6 +1,6 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:http/http.dart' as http;
+import 'services/agv_service.dart';
 import 'data_model.dart';
 
 class ScenarioPage extends StatefulWidget {
@@ -28,9 +28,8 @@ class _ScenarioPageState extends State<ScenarioPage> {
   ];
 
   final List<String> _selected = [];
-  String Arota = "";
+  String arota = "";
   bool senaryoIsDone = false;
-  String _data = '';
 
   // QR eşleme
   final Map<String, String> _qrMap = const {
@@ -53,7 +52,7 @@ class _ScenarioPageState extends State<ScenarioPage> {
     setState(() => _selected.removeLast());
   }
 
-  void _returnData() => Navigator.pop(context, Arota);
+  void _returnData() => Navigator.pop(context, arota);
 
   // Chip’te CS için kullanıcı dostu isim göster
   String _displayName(String code) {
@@ -78,22 +77,7 @@ class _ScenarioPageState extends State<ScenarioPage> {
     return ""; // TODO
   }
 
-  // Server’a bas
-  Future<void> veriBas(String veri) async {
-    try {
-      final uri = Uri.parse("${widget.site}/$veri");
-      final response = await http.get(uri);
-      if (response.statusCode == 200) {
-        if (!mounted) return;
-        setState(() => _data = response.body);
-      } else {
-        throw Exception('Veri basılamadı: ${response.reasonPhrase}');
-      }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _data = 'Hata: $e');
-    }
-  }
+  Future<void> veriBas(String veri) => AgvService.veriBas(widget.site, veri);
 
   // Senaryo üret + bas + çık
   Future<void> _buildScenarioAndSend() async {
@@ -123,16 +107,15 @@ class _ScenarioPageState extends State<ScenarioPage> {
 
     setState(() {
       senaryoIsDone = true;
-      Arota = parts.join('/');
-      print(Arota);
+      arota = parts.join('/');
     });
 
-    if (Arota.isNotEmpty) {
-      await veriBas("v$Arota");
+    if (arota.isNotEmpty) {
+      await veriBas("v$arota");
     }
 
     if (mounted) {
-      Navigator.pop(context, Arota);
+      Navigator.pop(context, arota);
     }
   }
 
@@ -235,7 +218,7 @@ class _ScenarioPageState extends State<ScenarioPage> {
                     SizedBox(height: 50.h),
                     Expanded(
                       child: Text(
-                        Arota.isNotEmpty ? "v$Arota" : "Senaryo Oluşmadı",
+                        arota.isNotEmpty ? "v$arota" : "Senaryo Oluşmadı",
                         textAlign: TextAlign.center,
                         style: TextStyle(color: Colors.blueAccent, fontSize: 4.7.sp),
                       ),

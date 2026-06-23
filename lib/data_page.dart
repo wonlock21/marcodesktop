@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:http/http.dart' as http;
 
@@ -27,16 +27,17 @@ class _DataPageState extends State<DataPage> {
           .get(Uri.parse('${widget.site}/qtr'));
 
       if (response.statusCode == 200) {
+        if (!mounted) return;
         setState(() {
           pinData = response.body.split("/");
-         // print(pinData);
         });
-      } 
+      }
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         pinData = ["-", "-", "-", "-", "-", "-", "-", "-"];
       });
-      print('Bir hata oluştu: $e');
+      debugPrint('Bir hata oluştu: $e');
     }
   }
 }
@@ -85,7 +86,7 @@ class _DataPageState extends State<DataPage> {
                         border: Border.all(width: 0.5.w, color: Colors.blueAccent),
                       ),
                       child: Center(
-                        child: pinData.isNotEmpty && pinData.length > 0
+                        child: pinData.isNotEmpty
                             ? Text(
                                 pinData[0],
                                 style: TextStyle(fontSize: 7.sp, color: Colors.white),
@@ -110,7 +111,7 @@ class _DataPageState extends State<DataPage> {
                         border: Border.all(width: 0.5.w, color: Colors.blueAccent)
                       ),
                       child: Center(
-                        child: pinData.isNotEmpty && pinData.length > 0
+                        child: pinData.isNotEmpty
                             ? Text(
                                 pinData[1],
                                 style: TextStyle(fontSize: 7.sp, color: Colors.white),
@@ -135,7 +136,7 @@ class _DataPageState extends State<DataPage> {
                         border: Border.all(width: 0.5.w, color: Colors.blueAccent)
                       ),
                       child: Center(
-                        child: pinData.isNotEmpty && pinData.length > 0
+                        child: pinData.isNotEmpty
                             ? Text(
                                 pinData[2],
                                 style: TextStyle(fontSize: 7.sp, color: Colors.white),

@@ -1,14 +1,14 @@
-import 'parameter_model.dart';
+﻿import 'parameter_model.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:http/http.dart' as http;
+import 'services/agv_service.dart';
 import 'package:provider/provider.dart';
 
 class ParameterPage extends StatefulWidget {
   const ParameterPage({super.key});
 
   @override
-  _ParameterPageState createState() => _ParameterPageState();
+  State<ParameterPage> createState() => _ParameterPageState();
 }
 
 class _ParameterPageState extends State<ParameterPage> {
@@ -46,7 +46,6 @@ class _ParameterPageState extends State<ParameterPage> {
   String liftd = '';
   String lifts = '';
 
-  String _data = 'Veri yükleniyor...';
   String _site = '';
   
   @override
@@ -56,6 +55,7 @@ void initState() {
   
   Future.microtask(() async {
       await parameterModel.loadParameters();
+      if (!mounted) return;
       setState(() {
         hizSure = parameterModel.hizSure;
         hizIvme = parameterModel.hizIvme;
@@ -77,7 +77,6 @@ void initState() {
         raspiPIDkontrolI = parameterModel.raspiPIDkontrolI;
         raspiPIDkontrolD = parameterModel.raspiPIDkontrolD;
       });
-      print(hizSure);
     });
   }
 
@@ -85,22 +84,7 @@ void initState() {
   void dispose(){
     super.dispose();
   }
-  Future<void> veriBas(String veri) async {
-    try {
-      var response = await http.get(Uri.parse("${_site}/${veri}"));
-      if (response.statusCode == 200) {
-        setState(() {
-          _data = response.body;
-        });
-      } else {
-        throw Exception('Veri basılamadı: ${response.reasonPhrase}');
-      }
-    } catch (e) {
-      setState(() {
-        _data = 'Hata: $e';
-      });
-    }
-  }
+  Future<void> veriBas(String veri) => AgvService.veriBas(_site, veri);
 
   @override
   Widget build(BuildContext context) {
@@ -160,7 +144,7 @@ void initState() {
                               await Future.delayed(const Duration(milliseconds: 200));
                               veriBas("k13${hizSure.substring(2,3)}");
                               
-                              parameterModel.updateSpeed(hizSure);
+                              parameterModel.updateParam('hizSure', hizSure);
                             },
                           ),
                         ),
@@ -200,7 +184,7 @@ void initState() {
                               await Future.delayed(const Duration(milliseconds: 100));
                               veriBas("k42${hizIvme.substring(2,3)}");
 
-                              parameterModel.saveParameters();
+                              parameterModel.updateParam('hizIvme', hizIvme);
                             },
                           ),
                         ),
@@ -243,8 +227,8 @@ void initState() {
                               
                               await Future.delayed(const Duration(milliseconds: 100));
                               veriBas("k16${donusHizi.substring(2,3)}");
-                            
-                              parameterModel.saveParameters();
+
+                              parameterModel.updateParam('donusHizi', donusHizi);
                             },
                           ),
                         ),
@@ -283,8 +267,8 @@ void initState() {
                               
                               await Future.delayed(const Duration(milliseconds: 100));
                               veriBas("k45${qrHizi.substring(2,3)}");
-                            
-                              parameterModel.saveParameters();
+
+                              parameterModel.updateParam('qrHizi', qrHizi);
                             },
                           ),
                         ),
@@ -317,7 +301,7 @@ void initState() {
                               setState(() {
                                 katsayiHiz = value.trim();
                                 veriBas("k20${katsayiHiz.substring(0,1)}");
-                                parameterModel.saveParameters();
+                                parameterModel.updateParam('katsayiHiz', katsayiHiz);
                               });
                             },
                           ),
@@ -357,8 +341,8 @@ void initState() {
                               
                               await Future.delayed(const Duration(milliseconds: 100));
                               veriBas("k19${donusBasHiz.substring(2,3)}");
-                              
-                              parameterModel.saveParameters();
+
+                              parameterModel.updateParam('donusBasHiz', donusBasHiz);
                             },
                           ),
                         ),
@@ -400,8 +384,8 @@ void initState() {
                               
                               await Future.delayed(const Duration(milliseconds: 100));
                               veriBas("k23${donusOnceSure.substring(2,3)}");
-                              
-                              parameterModel.saveParameters();
+
+                              parameterModel.updateParam('donusOnceSure', donusOnceSure);
                             },
                           ),
                         ),
@@ -440,8 +424,8 @@ void initState() {
                               
                               await Future.delayed(const Duration(milliseconds: 100));
                               veriBas("k26${liftOnceSure.substring(2,3)}");
-                            
-                              parameterModel.saveParameters();
+
+                              parameterModel.updateParam('liftOnceSure', liftOnceSure);
                             },
                           ),
                         ),
@@ -479,7 +463,7 @@ void initState() {
                                 await Future.delayed(const Duration(milliseconds: 100));
                                 veriBas("k29${qrAraSure.substring(2,3)}");
 
-                                parameterModel.updateqrAraSure(value);
+                                parameterModel.updateParam('qrAraSure', value);
                               });
                             },
                           ),
@@ -674,7 +658,7 @@ void initState() {
                               setState(() {
                                 manuelHizL = value.trim();
                                 veriBas("ML$manuelHizL");
-                                parameterModel.updateManuelHizL(manuelHizL);
+                                parameterModel.updateParam('manuelHizL', manuelHizL);
                               });
                             },
                           ),
@@ -705,7 +689,7 @@ void initState() {
                               setState(() {
                                 manuelHizR = value.trim();
                                 veriBas("MR$manuelHizR");
-                                parameterModel.updateManuelHizR(manuelHizR);
+                                parameterModel.updateParam('manuelHizR', manuelHizR);
                               });
                             },
                           ),
@@ -740,7 +724,7 @@ void initState() {
                               setState(() {
                                 otonomHizL = value.trim();
                                 veriBas("OL$otonomHizL");
-                                parameterModel.updateOtonomHizL(otonomHizL);
+                                parameterModel.updateParam('otonomHizL', otonomHizL);
                               });
                             },
                           ),
@@ -771,7 +755,7 @@ void initState() {
                               setState(() {
                                 otonomHizR = value.trim();
                                 veriBas("OR$otonomHizR");
-                                parameterModel.updateOtonomHizR(otonomHizR);
+                                parameterModel.updateParam('otonomHizR', otonomHizR);
                               });
                             },
                           ),
@@ -807,7 +791,7 @@ void initState() {
                               setState(() {
                                 arduinoPIDkontrolP = value.trim();
                                 veriBas("MKP$arduinoPIDkontrolP");
-                                parameterModel.updateArduinoP(arduinoPIDkontrolP);
+                                parameterModel.updateParam('arduinoPIDkontrolP', arduinoPIDkontrolP);
                               });
                             },
                           ),
@@ -836,7 +820,7 @@ void initState() {
                               setState(() {
                                 arduinoPIDkontrolI = value.trim();
                                 veriBas("MKI$arduinoPIDkontrolI");
-                                parameterModel.updateArduinoI(arduinoPIDkontrolI);
+                                parameterModel.updateParam('arduinoPIDkontrolI', arduinoPIDkontrolI);
                               });
                             },
                           ),
@@ -866,7 +850,7 @@ void initState() {
                               setState(() {
                                 arduinoPIDkontrolD = value.trim();
                                 veriBas("MKD$arduinoPIDkontrolD");
-                                parameterModel.updateArduinoD(arduinoPIDkontrolD);
+                                parameterModel.updateParam('arduinoPIDkontrolD', arduinoPIDkontrolD);
                               });
                               // Asenkron işlemleri başlat
                               
@@ -904,7 +888,7 @@ void initState() {
                               setState(() {
                                 raspiPIDkontrolP = value.trim();
                                 veriBas("OKP$raspiPIDkontrolP");
-                                parameterModel.updateRaspiP(raspiPIDkontrolP);
+                                parameterModel.updateParam('raspiPIDkontrolP', raspiPIDkontrolP);
                               });
                             },
                           ),
@@ -933,7 +917,7 @@ void initState() {
                               setState(() {
                                 raspiPIDkontrolI = value.trim();
                                 veriBas("OKI$raspiPIDkontrolI");
-                                parameterModel.updateRaspiI(raspiPIDkontrolI);
+                                parameterModel.updateParam('raspiPIDkontrolI', raspiPIDkontrolI);
                               });
                             },
                           ),
@@ -963,7 +947,7 @@ void initState() {
                               setState(() {
                                 raspiPIDkontrolD = value.trim();
                                 veriBas("OKD$raspiPIDkontrolD");
-                                parameterModel.updateRaspiD(raspiPIDkontrolD);
+                                parameterModel.updateParam('raspiPIDkontrolD', raspiPIDkontrolD);
                               });
                             },
                           ),
@@ -999,7 +983,7 @@ void initState() {
                               setState(() async{
                                 dur = value.trim();
                                 veriBas("DUR$dur");
-                                parameterModel.updateDur(dur);
+                                parameterModel.updateParam('dur', dur);
                               });
                             },
                           ),
@@ -1030,7 +1014,7 @@ void initState() {
                               setState(() {
                                 sol = value.trim();
                                 veriBas("SOL$sol");
-                                parameterModel.updateSol(sol);
+                                parameterModel.updateParam('sol', sol);
                               });
                             },
                           ),
@@ -1062,7 +1046,7 @@ void initState() {
                               setState(() {
                                 sag = value.trim();
                                 veriBas("SAG$sag");
-                                parameterModel.updateSag(sag);
+                                parameterModel.updateParam('sag', sag);
                               });
                             },
                           ),
@@ -1093,7 +1077,7 @@ void initState() {
                               setState(() {
                                 ileri = value.trim();
                                 veriBas("ILERI$ileri");
-                                parameterModel.updateIleri(ileri);
+                                parameterModel.updateParam('ileri', ileri);
                               });
                             },
                           ),
@@ -1124,7 +1108,7 @@ void initState() {
                               setState(() {
                                 geri = value.trim();
                                 veriBas("GERI$geri");
-                                parameterModel.updateGeri(geri);
+                                parameterModel.updateParam('geri', geri);
                               });
                             },
                           ),
@@ -1160,7 +1144,7 @@ void initState() {
                               setState(() {
                                 liftu = value.trim();
                                 veriBas("LFTU$liftu");
-                                parameterModel.updateLiftU(liftu);
+                                parameterModel.updateParam('liftu', liftu);
                               });
                             },
                           ),
@@ -1189,7 +1173,7 @@ void initState() {
                               setState(() {
                                 liftd = value.trim();
                                 veriBas("LFTD$liftd");
-                                parameterModel.updateLiftD(liftd);
+                                parameterModel.updateParam('liftd', liftd);
                               });
                             },
                           ),
@@ -1219,7 +1203,7 @@ void initState() {
                               setState(() {
                                 lifts = value.trim();
                                 veriBas("LFTS$lifts");
-                                parameterModel.updateLifts(lifts);
+                                parameterModel.updateParam('lifts', lifts);
                               });
                             
                             },

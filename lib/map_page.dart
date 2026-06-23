@@ -1,4 +1,4 @@
-import 'data_model.dart';
+﻿import 'data_model.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'dart:math' as math;
@@ -72,33 +72,19 @@ var horizontalToBottomRoad = Transform.rotate(
       angle: 3 * math.pi / 2, 
       child: verticalToLeftRoad,
     );
-/*var oneWayRoadWidgets = [
-      verticalRoad,
-      horizontalRoad,
-    ];
-
-var twoWayRoadWidgets = [
-      topToLeftRoad,
-      topToRightRoad,
-      bottomToRightRoad,
-      bottomToLeftRoad,
-];
-
-var threeWayRoadWidgets = [
-      verticalToLeftRoad,
-      horizontalToTopRoad,
-      verticalToRightRoad,
-      horizontalToBottomRoad
-];*/
 
 class MapPage extends StatefulWidget {
   const MapPage({super.key});
 
   @override
-  _MapPageState createState() => _MapPageState();
+  State<MapPage> createState() => _MapPageState();
 }
 
 class _MapPageState extends State<MapPage> {
+  // eskiden top-level global olan değişkenler — artık instance field
+  int incrementThing = -1;
+  List<DataPoint> dataPoints = [];
+  List<DataPoint> lastDataPoints = [];
 
   late List<Widget> gridWidgets;
   int qrCount = 0;
@@ -182,13 +168,6 @@ class _MapPageState extends State<MapPage> {
       horizontalToBottomRoad
     ];
     incrementThing = -1;
-    /*gridWidgets = List.generate(493, (index) => DragTargetContainer(
-      index: index,
-      incrementQRCount: incrementQRCount,
-      incrementChargeStationCount : incrementChargeStationCount,
-      getNextCargoAreaName: getNextCargoAreaName,
-      )
-    );*/
     dataPoints = List.empty(growable: true);
   }
 
@@ -264,8 +243,9 @@ class _MapPageState extends State<MapPage> {
         ],
       );
     }
-    else
-      return const ColoredBox(color: Colors.red,);
+    else {
+      return const ColoredBox(color: Colors.red);
+    }
     
   }
   @override
@@ -334,6 +314,7 @@ class _MapPageState extends State<MapPage> {
                   }
                   return DragTargetContainer(
                     index: index,
+                    dataPoints: dataPoints,
                     incrementQRCount: incrementQRCount,
                     incrementChargeStationCount: incrementChargeStationCount,
                     getNextCargoAreaName: getNextCargoAreaName,
@@ -673,7 +654,7 @@ class _MapPageState extends State<MapPage> {
                               feedback: Container(
                                 width: 15.w,
                                 height: 50.h,
-                                color: Colors.blue.withOpacity(0.5),
+                                color: Colors.blue.withValues(alpha: 0.5),
                                 child: Center(child: Icon(Icons.qr_code, size: 6.sp,))
                               ),
                               childWhenDragging: Container(
@@ -702,7 +683,7 @@ class _MapPageState extends State<MapPage> {
                               feedback: Container(
                                 width: 15.w,
                                 height: 50.h,
-                                color: Colors.blue.withOpacity(0.5),
+                                color: Colors.blue.withValues(alpha: 0.5),
                                 child: Center(child: Icon(Icons.location_on, size: 6.w)),
                               ),
                               childWhenDragging: Container(
@@ -736,7 +717,7 @@ class _MapPageState extends State<MapPage> {
                               feedback: Container(
                                 width: 15.w,
                                 height: 50.h,
-                                color: Colors.blue.withOpacity(0.5),
+                                color: Colors.blue.withValues(alpha: 0.5),
                                 child: Center(child: Icon(Icons.archive_outlined, size: 6.w)),
                               ),
                               childWhenDragging: Container(
@@ -765,7 +746,7 @@ class _MapPageState extends State<MapPage> {
                               feedback: Container(
                                 width: 15.w,
                                 height: 50.h,
-                                color: Colors.blue.withOpacity(0.5),
+                                color: Colors.blue.withValues(alpha: 0.5),
                                 child: Center(child: Icon(Icons.battery_charging_full, size: 5.w)),
                               ),
                               childWhenDragging: Container(
@@ -796,13 +777,13 @@ class _MapPageState extends State<MapPage> {
                               feedback: Container(
                                 width: 8.w,
                                 height: 30.h,
-                                color: Colors.red.withOpacity(0.5),
+                                color: Colors.red.withValues(alpha: 0.5),
                                 child: Center(child: Icon(Icons.clear, size: 5.w)),
                               ),
                               childWhenDragging: Container(
                                 width: 8.w,
                                 height: 30.h,
-                                color: Color.fromARGB(255, 217, 144, 139),
+                                color: const Color.fromARGB(255, 217, 144, 139),
                                 child: Center(child: Icon(Icons.clear, size: 5.w)),
                               ), // Yapı türü
                               child: Container(
@@ -826,16 +807,12 @@ class _MapPageState extends State<MapPage> {
     );
   }
 }
-int incrementThing = -1;
-List<DataPoint> dataPoints = [];
-List<DataPoint> lastDataPoints = [];
-int qrDiff = 0;
-
 class DragTargetContainer extends StatefulWidget {
-  DragTargetContainer({
+  const DragTargetContainer({
     super.key,
     required this.child,
     required this.index,
+    required this.dataPoints,
     required this.incrementQRCount,
     required this.incrementChargeStationCount,
     required this.incrementStartCount,
@@ -843,12 +820,12 @@ class DragTargetContainer extends StatefulWidget {
     required this.decrementChargeStationCount,
     required this.decrementQRCount,
     required this.decrementStartCount,
-    required this.getExCargoAreaName
-    }
-  );
+    required this.getExCargoAreaName,
+  });
 
-  Widget child;
+  final Widget child;
   final int index;
+  final List<DataPoint> dataPoints;
   final Function incrementQRCount;
   final Function incrementChargeStationCount;
   final Function getNextCargoAreaName;
@@ -859,7 +836,7 @@ class DragTargetContainer extends StatefulWidget {
   final Function getExCargoAreaName;
 
   @override
-  _DragTargetContainerState createState() => _DragTargetContainerState();
+  State<DragTargetContainer> createState() => _DragTargetContainerState();
 }
 
 class _DragTargetContainerState extends State<DragTargetContainer> {
@@ -983,19 +960,19 @@ class _DragTargetContainerState extends State<DragTargetContainer> {
             calculatePosition(widget.index);
             if (receivedData.data['type'] == 'delete') {
               // İlgili konumdaki tüm elemanları silmek için listenin tersinden döngüye alın
-              for (int i = dataPoints.length - 1; i >= 0; i--) {
-                if ((dataPoints[i].x == xValue) && (dataPoints[i].y == yValue)) {
-                  if (dataPoints[i].type.contains("Q")) {
-                    int removedIndex = int.parse(dataPoints[i].type.substring(1));
+              for (int i = widget.dataPoints.length - 1; i >= 0; i--) {
+                if ((widget.dataPoints[i].x == xValue) && (widget.dataPoints[i].y == yValue)) {
+                  if (widget.dataPoints[i].type.contains("Q")) {
+                    int removedIndex = int.parse(widget.dataPoints[i].type.substring(1));
                     widget.decrementQRCount(removedIndex);
-                  } else if (dataPoints[i].type.contains("start")) {
+                  } else if (widget.dataPoints[i].type.contains("start")) {
                     widget.decrementStartCount();
-                  } else if (dataPoints[i].type.contains("charge")) {
+                  } else if (widget.dataPoints[i].type.contains("charge")) {
                     widget.decrementChargeStationCount();
-                  } else if (dataPoints[i].type.contains("cargo")) {
+                  } else if (widget.dataPoints[i].type.contains("cargo")) {
                     widget.getExCargoAreaName();
                   }
-                  dataPoints.removeAt(i); // Tersinden döngü ile güvenli silme
+                  widget.dataPoints.removeAt(i); // Tersinden döngü ile güvenli silme
                 }
               }
             }
@@ -1013,9 +990,9 @@ class _DragTargetContainerState extends State<DragTargetContainer> {
                receivedData.data['type'] != 'horizontalToTopRoad' &&
                receivedData.data['type'] != 'horizontalToBottomRoad'
               ){
-                dataPoints.add(DataPoint(type: ("Q$qrName"), x: xValue, y: yValue));
+                widget.dataPoints.add(DataPoint(type: ("Q$qrName"), x: xValue, y: yValue));
               }
-              dataPoints.add(DataPoint(type: (receivedData.data['type']+name), x: xValue, y: yValue));
+              widget.dataPoints.add(DataPoint(type: (receivedData.data['type']+name), x: xValue, y: yValue));
             }
               
           });
@@ -1024,7 +1001,7 @@ class _DragTargetContainerState extends State<DragTargetContainer> {
           return Container(
             width: 30.w,
             height: 50.h,
-            color: const Color.fromARGB(255, 75, 76, 75).withOpacity(1),
+            color: const Color.fromARGB(255, 75, 76, 75).withValues(alpha: 1.0),
             child: _child,
           );
         },
@@ -1039,7 +1016,7 @@ class ConnectButton extends StatefulWidget {
   final VoidCallback onPressed;
   final String text;
   @override
-  _ConnectButtonState createState() => _ConnectButtonState();
+  State<ConnectButton> createState() => _ConnectButtonState();
 }
 
 class _ConnectButtonState extends State<ConnectButton> {
@@ -1125,7 +1102,7 @@ class ResetButton extends StatefulWidget {
   final VoidCallback onPressed;
   final String text;
   @override
-  _ResetButtonState createState() => _ResetButtonState();
+  State<ResetButton> createState() => _ResetButtonState();
 }
 
 class _ResetButtonState extends State<ResetButton> {

@@ -392,7 +392,7 @@ Tipik anti-pattern örnekleri:
 
 ---
 
-## Genel Skor Kartı
+## Genel Skor Kartı (Başlangıç — Mayıs 2026)
 
 | Kategori | Skor | Açıklama |
 |---|---|---|
@@ -401,4 +401,78 @@ Tipik anti-pattern örnekleri:
 | Desktop Responsive | 🔴 2/10 | Mobil designSize, hardcoded px, overflow garantili |
 | Clean Code | 🟠 3/10 | 8 ölü dependency, 1984-satır god file, ölü kod blokları, kullanılmayan state |
 
-> **Sonuç:** Proje çalışır durumda olabilir, ama **kararsız, sızıntılı ve desktop için uygunsuz** durumda. Aşağıdaki `execution_plan.md` dosyasında dosya-bazlı, sıralı bir düzeltme yol haritası yer alıyor.
+> **Sonuç:** Proje çalışır durumda olabilir, ama **kararsız, sızıntılı ve desktop için uygunsuz** durumda.
+
+---
+
+## Faz 3 Sonrası Durum Raporu (Haziran 2026)
+
+> Faz 3.1–3.11 + Uyarı düzeltmeleri tamamlandı. `flutter analyze` → **0 sorun**.
+
+### Yapılan / Yapılmayan Özeti
+
+| # | Bulgu | Durum | Notlar |
+|---|---|---|---|
+| **1. Haberleşme & Threading** | | | |
+| 1.1 | WebSocket hiç kullanılmıyor | ⏭️ Mimari karar | HTTP polling AGV için yeterli kabul edildi |
+| 1.2 | Üstel Timer Sızıntısı (chargingCheck) | ✅ Düzeltildi | `chargingCheck` kaldırıldı; `AgvSensorModel` içine taşındı |
+| 1.3 | Kapatılmamış Timer'lar | ✅ Düzeltildi | 3 timer değişkene atandı, `dispose()` içinde iptal ediliyor; `super.dispose()` en sona alındı |
+| 1.4 | UI thread'de ağır işler (`_tick`) | ❌ Kaldı | `LiveMapFixedUrl._tick()` hâlâ base64/JSON decode UI thread'de yapıyor |
+| 1.5 | `startSendingData` busy loop | ✅ Kısmen | `AgvService`'e taşındı; loop mantığı aynı ama merkezi |
+| 1.6 | `dispose()` eksiklikleri | ✅ Düzeltildi | `_focusNode`, 3 timer, `TextEditingController` hepsi dispose ediliyor; `mounted` check'ler eklendi |
+| 1.7 | `await Future.delayed` anti-pattern | ❌ Kaldı | Polling timer'larında hâlâ var |
+| **2. State Management** | | | |
+| 2.1 | 3 farklı state yaklaşımı | ✅ İyileşti | GetX zaten kullanılmıyordu; `AgvSensorModel` eklendi; setState azaldı |
+| 2.2 | `Provider.of` / rebuild sorunu | ✅ Düzeltildi | `context.watch<>()` kullanımına geçildi |
+| 2.3 | `loadParameters()` iki kez çağrılıyor | ❌ Kaldı | `initState` hâlâ `parameterModel.loadParameters()` çağırıyor |
+| 2.4 | Bellek sızıntısı riskleri | ✅ Büyük ölçüde | Timer'lar, FocusNode, mounted check'ler tamamlandı |
+| 2.5 | Aşırı `setState` | ✅ Önemli ölçüde azaltıldı | Sensör verisi `AgvSensorModel`'a taşındı |
+| 2.6 | Global mutable state (`map_page`) | ✅ Düzeltildi | Top-level değişkenler instance field'a dönüştürüldü |
+| 2.7 | Kapatılmamış stream | ✅ Yok | Sorun baştan da yoktu |
+| **3. Desktop Responsive UI** | | | |
+| 3.1 | `screenutil` mobil designSize | ⏭️ Kapsam dışı | Kullanıcı talebiyle bu fazda ele alınmadı |
+| 3.2 | `3.sp / 4.sp` yazı boyutları | ⏭️ Kapsam dışı | screenutil'e bağlı |
+| 3.3 | Hardcoded px + sp karışımı | ❌ Kaldı | screenutil kapsam dışında ama karışık birim kullanımı devam ediyor |
+| 3.4 | Overflow riskli widget'lar | ❌ Kaldı | `Row`/`SizedBox` overflow riski, `Flexible`/`Expanded` eksik |
+| 3.5 | AppBar `Spacer` sorunu | ❌ Kaldı | 8 `Spacer`, dar pencerede butonlar kesiliyor |
+| 3.6 | `kPixelsPerMeter` sabit | ❌ Kaldı | Harita kalibrasyonu pencere boyutuna duyarsız |
+| **4. Clean Code** | | | |
+| 4.1 | `deneme.dart` ölü dosya | ✅ Silindi | Dosya kaldırıldı |
+| 4.2 | `LiveMapImage` ölü sınıf | ✅ Silindi | Yorum bloğu tamamen kaldırıldı |
+| 4.3 | Kullanılmayan import'lar | ✅ Düzeltildi | `web_socket_channel`, `path_provider`, `dart:ui`, `scheduler` vb. hepsi kaldırıldı |
+| 4.4 | Kullanılmayan state değişkenleri | ✅ Büyük ölçüde | Sensör alanları `AgvSensorModel`'a, `_data` silindi; `bas`, `bit`, `qrVeri`, `actionTime` hâlâ kalıyor |
+| 4.5 | Ölü dependency'ler (pubspec) | ✅ Düzeltildi | `dio`, `get`, `cupertino_icons`, `fluentui`, `font_awesome`, `web_socket_channel`, `path_provider`, `process_run` — hepsi kaldırıldı (8 → 4 paket) |
+| 4.6 | Gereksiz sarılmış widget'lar | ✅ Düzeltildi | `Center`, `Card(transparent)` zincirleri sadeleştirildi |
+| 4.7 | Dead code blokları | ✅ Düzeltildi | Tüm yorum blokları kaldırıldı |
+| 4.8 | DRY ihlalleri | ✅ Kısmen | `ParameterModel` birleştirildi, god file bölündü; AppBar butonları, PIN kartları, harita Draggable'ları hâlâ tekrar ediyor |
+| 4.9 | Stil sorunları | ✅ Büyük ölçüde | `print` → `debugPrint`, import temizliği, god file ayrıştırıldı |
+| 4.10 | PNG sniffer bug | ✅ Düzeltildi | `data.indexOf(b)` → `png[i]` olarak düzeltildi |
+
+---
+
+## Güncel Genel Skor Kartı (Haziran 2026)
+
+| Kategori | Başlangıç | Güncel | Değişim | Açıklama |
+|---|---|---|---|---|
+| Haberleşme & Threading | 🔴 2/10 | 🟡 6/10 | ▲ +4 | Kritik timer sızıntıları ve dispose sorunları giderildi; `_tick()` UI thread sorunu ve `Future.delayed` anti-pattern kaldı |
+| State Management | 🟠 4/10 | 🟢 8/10 | ▲ +4 | `AgvSensorModel` eklendi, global state kaldırıldı, `context.watch` kullanıldı; yalnızca `loadParameters` çift çağrı küçük sorun olarak kaldı |
+| Desktop Responsive | 🔴 2/10 | 🔴 2/10 | — | screenutil kapsam dışı; overflow riskleri, AppBar Spacer ve hardcoded değerler dokunulmadı |
+| Clean Code | 🟠 3/10 | 🟢 9/10 | ▲ +6 | 8 ölü paket silindi, god file bölündü, dead code temizlendi, `flutter analyze` 0 sorun; 4 ufak kullanılmayan değişken kaldı |
+
+### Genel Ortalama
+
+| | Başlangıç | Güncel |
+|---|---|---|
+| **Ortalama Skor** | **2.75 / 10** | **6.25 / 10** |
+
+### Kalan Açık Maddeler (screenutil hariç)
+
+| Öncelik | Madde | Dosya |
+|---|---|---|
+| 🟠 Orta | `_tick()` metodu UI thread'de ağır I/O | `widgets/live_map.dart` |
+| 🟠 Orta | Overflow riskleri (`Row` + `SizedBox`, `Flexible` eksik) | `controller_page`, `data_page`, `vehicle_3d_page` |
+| 🟡 Düşük | `loadParameters()` iki kez çağrılıyor | `controller_page.dart:52` |
+| 🟡 Düşük | `AppBar actions` içinde `Spacer` (dar pencerede taşma) | `controller_page.dart:147+` |
+| 🟡 Düşük | 4 kullanılmayan alan: `actionTime`, `bas`, `bit`, `qrVeri` | `controller_page.dart:29–35` |
+| 🟡 Düşük | `await Future.delayed` anti-pattern (polling timer'larında) | `controller_page.dart:64–84` |
+| 🟡 Düşük | `kPixelsPerMeter` sabit, pencere boyutuna duyarsız | `widgets/live_map.dart` |

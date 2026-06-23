@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class Vehicle3DPage extends StatefulWidget {
@@ -34,13 +34,10 @@ class _Vehicle3DPageState extends State<Vehicle3DPage> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 //3D Araç fotoğrafı için
-                Padding(
-                  padding: EdgeInsets.symmetric(vertical: 10.h,),
-                  child: SizedBox(
-                    width: 150.w,
-                    height: 500.h,
-                    child: Image.asset('assets/images/agv_vehicle.png',),
-                  ),
+                SizedBox(
+                  width: 150.w,
+                  height: 520.h,
+                  child: Image.asset('assets/images/agv_vehicle.png'),
                 )
               ],
             ),
@@ -77,28 +74,28 @@ class _Vehicle3DPageState extends State<Vehicle3DPage> {
                     ),
                 ),
                 SizedBox(height: 50.h,),
-                Row(
+                const Row(
                   children: [
                    PropertyCard(cardName: "Max Hız", value: "1.46 m/sn"),
                    PropertyCard(cardName: "Kapasite", value: "400 kg"),
                    PropertyCard(cardName: "Max Pil Süresi", value: "3 saat 20 dakika")
                   ],
                 ),
-                Row(
+                const Row(
                   children: [
                    PropertyCard(cardName: "Genişlik", value: "850 mm"),
                    PropertyCard(cardName: "Uzunluk", value: "950 mm"),
                    PropertyCard(cardName: "Yükseklik", value: "450 mm")
                   ],
                 ),
-                Row(
+                const Row(
                   children: [
                    PropertyCard(cardName: "Taban Yüksekliği", value: "30 mm"),
                    PropertyCard(cardName: "Lift Yüksekliği", value: "100 mm"),
                    PropertyCard(cardName: "Çekme Kapasitesi", value: "500 kg")
                   ],
                 ),
-                Row(
+                const Row(
                   children: [
                    PropertyCard(cardName: "Motor Gücü", value: "500W"),
                    PropertyCard(cardName: "Haberleşme Mesafesi", value: "70 m"),
@@ -115,12 +112,13 @@ class _Vehicle3DPageState extends State<Vehicle3DPage> {
   }
 }
 
-class PropertyCard extends StatefulWidget{
-  PropertyCard({super.key, required this.cardName, required this.value});
+class PropertyCard extends StatefulWidget {
+  const PropertyCard({super.key, required this.cardName, required this.value});
   final String cardName;
   final String value;
 
-  State<PropertyCard> createState(){
+  @override
+  State<PropertyCard> createState() {
     return _PropertyCardState();
   }
 }

@@ -4,6 +4,7 @@ import 'data_model.dart';
 import 'data_page.dart';
 import 'map_page.dart';
 import 'parameter.dart';
+import 'models/agv_sensor_model.dart';
 import 'parameter_model.dart';
 import 'qr_page.dart';
 import 'vehicle_3d_page.dart';
@@ -21,6 +22,7 @@ void main() {
       providers: [
         ChangeNotifierProvider(create: (_) => DataModel()),
         ChangeNotifierProvider(create: (_) => ParameterModel()),
+        ChangeNotifierProvider(create: (_) => AgvSensorModel()),
       ],
       child: const MyApp(),
     ),

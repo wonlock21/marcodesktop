@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 import 'data_model.dart';
@@ -15,7 +15,7 @@ class QRPage extends StatefulWidget {
 class _QRPageState extends State<QRPage>{
     
   void _showRenameDialog(BuildContext context, DataPoint qrPoint) {
-    final TextEditingController _controller = TextEditingController();
+    final TextEditingController controller = TextEditingController();
 
     showDialog(
       context: context,
@@ -25,7 +25,7 @@ class _QRPageState extends State<QRPage>{
           surfaceTintColor: Colors.white,
           title: Text('QR Kodu Yeniden Adlandır', style: TextStyle(fontSize: 6.sp)),
           content: TextField(
-            controller: _controller,
+            controller: controller,
             decoration: InputDecoration(hintText: "Yeni QR adı girin" , hintStyle: TextStyle(fontSize: 3.sp) ),
           ),
           actions: <Widget>[
@@ -37,9 +37,9 @@ class _QRPageState extends State<QRPage>{
             ),
             TextButton(
               onPressed: () {
-                if (_controller.text.isNotEmpty) {
+                if (controller.text.isNotEmpty) {
                   setState(() {
-                    qrPoint.type = _controller.text;
+                    qrPoint.type = controller.text;
                   });
                 }
                 Navigator.of(context).pop();
@@ -62,7 +62,7 @@ class _QRPageState extends State<QRPage>{
       if(dataPoints[i].type.contains("Q")){
         qrPoints.add(dataPoints[i]);
       }  
-    };
+    }
     
     for(int i = 0; i < qrPoints.length; i++){
       for(int k = 0; k < dataPoints.length; k++){
