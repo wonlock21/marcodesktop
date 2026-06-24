@@ -1,6 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+// ─── Renk sabitleri ────────────────────────────────────────────────────────
+const _bg      = Color(0xFF121212);
+const _panelBg = Color(0xFF1A1A1A);
+const _borderC = Color(0xFF333333);
+const _muted   = Color(0xFF9E9E9E);
+const _bright  = Color(0xFFE0E0E0);
+
 class ConnectionPage extends StatefulWidget {
   const ConnectionPage({super.key});
 
@@ -23,51 +30,88 @@ class _ConnectionPageState extends State<ConnectionPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: _bg,
       appBar: AppBar(
+        backgroundColor: _panelBg,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        bottom: PreferredSize(
+          preferredSize: Size.fromHeight(0.3.h),
+          child: Divider(height: 0.3.h, color: _borderC),
+        ),
         title: Text(
           "BAĞLANTI",
           style: TextStyle(
-              color: const Color.fromARGB(255, 255, 255, 255),
-              fontSize: 4.sp,
-              fontWeight: FontWeight.w600),
+            color: Colors.white,
+            fontSize: 4.sp,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.5,
+          ),
         ),
       ),
-      body: Center(
-        child: Container(
-          padding: EdgeInsets.symmetric(horizontal: 90.w, vertical: 16.h),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: _controller,
-                cursorColor: Colors.white54,
-                style: TextStyle(color: Colors.white, fontSize: 4.sp),
-                decoration: InputDecoration(
-                    filled: true,
-                    fillColor: Colors.black26,
-                    enabledBorder: OutlineInputBorder(
-                        borderSide: BorderSide(color: Colors.blue, width: 0.6.w)),
-                    focusedBorder: OutlineInputBorder(
-                        borderSide: BorderSide(
-                            color: const Color.fromARGB(255, 0, 140, 255),
-                            width: 0.9.w)),
-                    hintText: 'IP Adresi Girin',
-                    hintStyle: TextStyle(color: Colors.white, fontSize: 3.sp)),
-                onChanged: (value) {
-                  setState(() {
-                    _ipAddress = value;
-                  });
-                },
+      body: SingleChildScrollView(
+        padding: EdgeInsets.symmetric(horizontal: 30.w, vertical: 8.h),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(height: 6.h),
+            // IP giriş alanı
+            Text(
+              "SUNUCU ADRESİ",
+              style: TextStyle(
+                color: _muted,
+                fontSize: 3.sp,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.5,
               ),
-              SizedBox(height: 50.h),
-              ConnectButton(
-                text: "Bağlan",
-                onPressed:() {
-                  Navigator.pop(context, _ipAddress);
-                },
-              )
-            ],
-          ),
+            ),
+            SizedBox(height: 1.5.h),
+            TextField(
+              controller: _controller,
+              cursorColor: _bright,
+              style: TextStyle(
+                color: _bright,
+                fontSize: 4.sp,
+                fontFamily: 'monospace',
+              ),
+              decoration: InputDecoration(
+                filled: true,
+                fillColor: const Color(0xFF1E1E1E),
+                hintText: 'http://192.168.x.x:5000',
+                hintStyle: TextStyle(
+                  color: const Color(0xFF444444),
+                  fontSize: 3.5.sp,
+                  fontFamily: 'monospace',
+                ),
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 3.w, vertical: 2.h,
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderSide: BorderSide(color: _borderC, width: 0.5.w),
+                  borderRadius: BorderRadius.circular(4.r),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderSide: BorderSide(
+                    color: const Color(0xFF1565C0), width: 0.7.w,
+                  ),
+                  borderRadius: BorderRadius.circular(4.r),
+                ),
+              ),
+              onChanged: (value) {
+                setState(() {
+                  _ipAddress = value;
+                });
+              },
+            ),
+            SizedBox(height: 6.h),
+            // Bağlan butonu
+            ConnectButton(
+              text: "Bağlan",
+              onPressed: () {
+                Navigator.pop(context, _ipAddress);
+              },
+            ),
+          ],
         ),
       ),
     );
@@ -90,7 +134,6 @@ class _ConnectButtonState extends State<ConnectButton> {
     setState(() {
       isOn = !isOn;
     });
-
   }
 
   @override
@@ -101,52 +144,45 @@ class _ConnectButtonState extends State<ConnectButton> {
         widget.onPressed();
       },
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        height: 60.h,
-        width: 33.w,
+        duration: const Duration(milliseconds: 200),
+        height: 55.h,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(20.r),
-          color: Colors.grey[850],
-          boxShadow: [
-            BoxShadow(
-              color: isOn ? Colors.transparent : Colors.black54,
-              blurRadius: isOn ? 0 : 10,
-              spreadRadius: isOn ? 0 : 2,
-              offset: isOn ? const Offset(0, 0) : const Offset(0, 5),
-            ),
-          ],
+          color: isOn
+              ? const Color(0xFF1A2540)
+              : const Color(0xFF1E1E1E),
+          border: Border.all(
+            color: isOn
+                ? const Color(0xFF1565C0)
+                : _borderC,
+            width: 0.5.w,
+          ),
+          borderRadius: BorderRadius.circular(4.r),
         ),
         child: Center(
-          child: AnimatedContainer(
-            alignment: Alignment.center,
-            width: 75.w,
-            height: 65.h,
-            padding: EdgeInsets.symmetric(vertical: 14.h, horizontal: 6.w),
-            duration: const Duration(milliseconds: 300),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(15.r),
-              border: Border.all(
-                color: isOn ? Colors.grey : Colors.blue,
-                width: 0.7.w,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.link,
+                color: isOn
+                    ? const Color(0xFF42A5F5)
+                    : _muted,
+                size: 5.sp,
               ),
-            ),
-            child: AnimatedScale(
-              scale: isOn ? 0.85 : 1.0,
-              duration: const Duration(milliseconds: 300),
-              child: Row(
-                children: [
-                  Icon(Icons.link, color: isOn? Colors.grey : Colors.blue, size: 6.sp,),
-                  SizedBox(width: 1.w,),
-                  Text(widget.text,
-                      style: TextStyle(
-                        color: isOn ? Colors.grey : Colors.blue,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 3.sp,
-                      )
-                   ),
-                ],
+              SizedBox(width: 1.5.w),
+              Text(
+                widget.text.toUpperCase(),
+                style: TextStyle(
+                  color: isOn
+                      ? const Color(0xFF42A5F5)
+                      : _muted,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 4.sp,
+                  fontFamily: 'monospace',
+                  letterSpacing: 1,
+                ),
               ),
-            ),
+            ],
           ),
         ),
       ),

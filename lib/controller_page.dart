@@ -3,10 +3,14 @@ import 'admin_mode.dart';
 import 'data_model.dart';
 import 'data_page.dart';
 import 'models/agv_sensor_model.dart';
+import 'models/gcs_alarm_model.dart';
+import 'models/gcs_mission_model.dart';
 import 'parameter_model.dart';
 import 'scenerio_page.dart';
 import 'services/agv_service.dart';
 import 'widgets/control_buttons.dart';
+import 'models/gcs_map_model.dart';
+import 'widgets/gcs_map_view.dart';
 import 'widgets/live_map.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -35,6 +39,9 @@ class _ControllerPageState extends State<ControllerPage> {
   final FocusNode _focusNode = FocusNode();
   late ParameterModel parameterModel;
   late AgvSensorModel _agvModel;
+
+  // Orta alan sekme indeksi: 0=Harita 1=Kamera 2=LiDAR 3=3D
+  int _selectedWorkTab = 0;
 
   // Bağlantı paneli durumu ve IP giriş kontrolcüsü
   bool isConnectionPanelOpen = false;
@@ -209,7 +216,9 @@ class _ControllerPageState extends State<ControllerPage> {
 
   @override
   Widget build(BuildContext context) {
-    final agv = context.watch<AgvSensorModel>();
+    final agv        = context.watch<AgvSensorModel>();
+    final mission    = context.watch<GcsMissionModel>();
+    final alarms     = context.watch<GcsAlarmModel>();
     final dataPoints = context.watch<DataModel>().dataPoints;
 
     const Color bg      = Color(0xFF121212);
@@ -325,31 +334,17 @@ class _ControllerPageState extends State<ControllerPage> {
                           child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                        // Harita görüntüsü — AspectRatio ile sınırlandırıldı
+                        // ── Özet Bilgi Şeridi ─────────────────────
+                        _buildSummaryStrip(
+                          mission, alarms, agv,
+                          panelBg, borderC, muted, bright, success, danger,
+                        ),
+                        // ── Sekme çubuğu ──────────────────────────────
+                        _buildWorkTabBar(panelBg, borderC),
+                        // ── Sekme içeriği ──────────────────────────────
                         Expanded(
-                          child: Padding(
-                            padding: EdgeInsets.fromLTRB(2.w, 2.h, 2.w, 1.h),
-                            child: Center(
-                              child: AspectRatio(
-                                aspectRatio: 16 / 9,
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF0D0D0D),
-                                    border: Border.all(color: borderC, width: 0.5.w),
-                                    borderRadius: BorderRadius.circular(4.r),
-                                  ),
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(3.r),
-                                    child: LiveMapFixedUrl(
-                                      site: _site,
-                                      poseFn: () => Pose(agv.currX, agv.currY, agv.currYaw),
-                                      imagePath: "/get_image",
-                                      interval: const Duration(milliseconds: 500),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
+                          child: _buildWorkAreaContent(
+                            agv, panelBg, borderC, muted, bright,
                           ),
                         ),
                         // Alt buton şeridi — Expanded ile taşma önlendi
@@ -935,6 +930,116 @@ class _ControllerPageState extends State<ControllerPage> {
     );
   }
 
+  // ── Özet Bilgi Şeridi ──────────────────────────────────────────────────────
+  Widget _buildSummaryStrip(
+    GcsMissionModel mission,
+    GcsAlarmModel   alarms,
+    AgvSensorModel  agv,
+    Color panelBg, Color borderC,
+    Color muted,   Color bright,
+    Color success, Color danger,
+  ) {
+    String safe(String v) => (v.isEmpty || v == 'null') ? '--' : v;
+
+    final alarmColor = alarms.kritikAlarmVar
+        ? danger
+        : alarms.temiz
+            ? success
+            : const Color(0xFFFF9800);
+
+    final batColor = agv.bataryaYuzde < 20
+        ? danger
+        : agv.bataryaYuzde < 40
+            ? const Color(0xFFFF9800)
+            : success;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: panelBg,
+        border: Border(bottom: BorderSide(color: borderC, width: 0.3.w)),
+      ),
+      padding: EdgeInsets.symmetric(horizontal: 2.w, vertical: 1.5.h),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Kart 1: Görev ─────────────────────────────────────────────────
+          Expanded(child: _SummaryCard(
+            title: 'GÖREV',
+            borderC: borderC, muted: muted, bright: bright,
+            rows: [
+              _SRow('ID',    safe(mission.gorevId)),
+              _SRow('ALIM',  safe(mission.almaNoktasi)),
+              _SRow('BIRAK', safe(mission.birakNoktasi)),
+              _SRow('AŞAMA', mission.asama.etiket),
+              _SRow('SÜRE',  mission.gorevAktif ? mission.gorevSuresiFormatli : '--'),
+            ],
+          )),
+          SizedBox(width: 1.5.w),
+
+          // ── Kart 2: Otomasyon ─────────────────────────────────────────────
+          Expanded(child: _SummaryCard(
+            title: 'OTOMASYON',
+            borderC: borderC, muted: muted, bright: bright,
+            rows: [
+              _SRow('PLC',
+                  safe(agv.plcDurum),
+                  valueColor: agv.plcDurum == 'bağlı' ? success : danger),
+              _SRow('KAPI',
+                  mission.kapiIzni ? 'Açık' : 'Kapalı',
+                  valueColor: mission.kapiIzni ? success : muted),
+              _SRow('LİFT',
+                  agv.liftAcik ? 'Kaldırıldı' : 'İndirildi',
+                  valueColor: agv.liftAcik ? success : muted),
+              _SRow('MESAJ', safe(agv.plcSonMesaj), truncate: true),
+            ],
+          )),
+          SizedBox(width: 1.5.w),
+
+          // ── Kart 3: QR / Konum ────────────────────────────────────────────
+          Expanded(child: _SummaryCard(
+            title: 'QR / KONUM',
+            borderC: borderC, muted: muted, bright: bright,
+            rows: [
+              _SRow('SON QR', safe(agv.sonQR)),
+              _SRow('RFID',   safe(agv.rfid)),
+              _SRow('X / Y',
+                  'X:${agv.currX.toStringAsFixed(1)}  Y:${agv.currY.toStringAsFixed(1)}'),
+              _SRow('YÖN',
+                  '${(agv.currYaw * 57.2958).toStringAsFixed(0)}°'),
+            ],
+          )),
+          SizedBox(width: 1.5.w),
+
+          // ── Kart 4: Alarm / Güvenlik ──────────────────────────────────────
+          Expanded(child: _SummaryCard(
+            title: 'ALARM',
+            titleColor: alarmColor,
+            borderC: borderC, muted: muted, bright: bright,
+            rows: [
+              _SRow('DURUM',
+                  alarms.temiz ? 'Temiz' : '${alarms.aktifAlarmlar.length} Aktif',
+                  valueColor: alarms.temiz ? success : danger),
+              _SRow('ACİL STOP',
+                  alarms.isAktif(AlarmTur.acilStop) ? 'AKTİF' : 'Normal',
+                  valueColor: alarms.isAktif(AlarmTur.acilStop) ? danger : muted),
+              _SRow('BATARYA',
+                  agv.bataryaYuzde < 20
+                      ? 'DÜŞÜK ⚠'
+                      : '${agv.bataryaYuzde.toStringAsFixed(0)}%',
+                  valueColor: batColor),
+              _SRow('KRİTİK',
+                  alarms.kritikAlarmVar
+                      ? (alarms.enKritik?.etiket ?? 'Var')
+                      : 'Yok',
+                  valueColor: alarms.kritikAlarmVar ? danger : muted,
+                  truncate: true),
+            ],
+          )),
+        ],
+      ),
+    );
+  }
+
   Widget _sectionLabel(String title) => Padding(
     padding: EdgeInsets.only(bottom: 0.5.h),
     child: Text(
@@ -958,6 +1063,161 @@ class _ControllerPageState extends State<ControllerPage> {
     if (pct > 50) return const Color(0xFF43A047);
     if (pct > 20) return Colors.orange;
     return const Color(0xFFE53935);
+  }
+
+  // ── Orta alan sekme yapısı ────────────────────────────────────────────────
+
+  /// Sekme çubuğu — düz GCS stili.
+  Widget _buildWorkTabBar(Color panelBg, Color borderC) {
+    const tabs = ['HARİTA', 'KAMERA', 'LiDAR', '3D'];
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 1.w),
+      decoration: BoxDecoration(
+        color: panelBg,
+        border: Border(
+          bottom: BorderSide(color: borderC, width: 0.3.w),
+        ),
+      ),
+      child: Row(
+        children: List.generate(tabs.length, (i) {
+          final selected = _selectedWorkTab == i;
+          return GestureDetector(
+            onTap: () => setState(() => _selectedWorkTab = i),
+            child: Container(
+              padding: EdgeInsets.symmetric(horizontal: 2.5.w, vertical: 1.2.h),
+              decoration: BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(
+                    color: selected
+                        ? const Color(0xFF1565C0)
+                        : Colors.transparent,
+                    width: 1.5.h.clamp(1.5, 3.0),
+                  ),
+                ),
+              ),
+              child: Text(
+                tabs[i],
+                style: TextStyle(
+                  color: selected
+                      ? const Color(0xFF42A5F5)
+                      : const Color(0xFF616161),
+                  fontSize: 3.sp,
+                  fontFamily: 'monospace',
+                  fontWeight:
+                      selected ? FontWeight.bold : FontWeight.normal,
+                  letterSpacing: 0.8,
+                ),
+              ),
+            ),
+          );
+        }),
+      ),
+    );
+  }
+
+  /// Seçili sekmeye göre içerik döndürür.
+  Widget _buildWorkAreaContent(
+    AgvSensorModel agv,
+    Color panelBg,
+    Color borderC,
+    Color muted,
+    Color bright,
+  ) {
+    switch (_selectedWorkTab) {
+      // ── Harita ─────────────────────────────────────────────────────────
+      case 0:
+        final mapData = GcsMapData.mock(
+          robotX:   agv.currX,
+          robotY:   agv.currY,
+          robotYaw: agv.currYaw,
+        );
+        return GcsMapView(data: mapData);
+
+      // ── Kamera ─────────────────────────────────────────────────────────
+      case 1:
+        return Container(
+          color: const Color(0xFF0D0D0D),
+          child: ClipRect(
+            child: LiveMapFixedUrl(
+              site:      _site,
+              poseFn:    () => Pose(agv.currX, agv.currY, agv.currYaw),
+              imagePath: '/get_image',
+              interval:  const Duration(milliseconds: 500),
+            ),
+          ),
+        );
+
+      // ── LiDAR ──────────────────────────────────────────────────────────
+      case 2:
+        return _workAreaPlaceholder(
+          'LiDAR',
+          Icons.radar,
+          'LiDAR verisi bekleniyor...',
+          'Bu sekme ileride ROS 2 /scan konusuna bağlanacak.',
+          panelBg, borderC, muted,
+        );
+
+      // ── 3D ─────────────────────────────────────────────────────────────
+      case 3:
+        return _workAreaPlaceholder(
+          '3D',
+          Icons.view_in_ar_rounded,
+          '3D görünüm hazırlanıyor...',
+          'Robotun 3 boyutlu URDF modeli buraya yüklenecek.',
+          panelBg, borderC, muted,
+        );
+
+      default:
+        return const SizedBox.shrink();
+    }
+  }
+
+  /// Henüz uygulanmamış sekmeler için tutarlı placeholder widget'ı.
+  Widget _workAreaPlaceholder(
+    String title,
+    IconData icon,
+    String mainMsg,
+    String subMsg,
+    Color panelBg,
+    Color borderC,
+    Color muted,
+  ) {
+    return Container(
+      color: const Color(0xFF0D0D0D),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 12.w, color: const Color(0xFF2A2A2A)),
+            SizedBox(height: 2.h),
+            Text(
+              title,
+              style: TextStyle(
+                color: const Color(0xFF333333),
+                fontSize: 5.sp,
+                fontFamily: 'monospace',
+                letterSpacing: 2,
+              ),
+            ),
+            SizedBox(height: 1.h),
+            Text(
+              mainMsg,
+              style: TextStyle(color: muted, fontSize: 3.sp),
+            ),
+            SizedBox(height: 0.8.h),
+            Text(
+              subMsg,
+              style: TextStyle(
+                color: const Color(0xFF3A3A3A),
+                fontSize: 2.5.sp,
+                fontFamily: 'monospace',
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -1067,6 +1327,107 @@ class _GcsTelCard extends StatelessWidget {
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Özet şerit yardımcıları
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Özet kart içindeki tek bir satır için veri taşıyıcısı.
+class _SRow {
+  final String label;
+  final String value;
+  final Color? valueColor;
+  final bool   truncate;
+  const _SRow(this.label, this.value,
+      {this.valueColor, this.truncate = false});
+}
+
+/// 4-kart özet şeridinde kullanılan kompakt bilgi kartı.
+class _SummaryCard extends StatelessWidget {
+  final String      title;
+  final Color?      titleColor;
+  final List<_SRow> rows;
+  final Color       borderC;
+  final Color       muted;
+  final Color       bright;
+
+  const _SummaryCard({
+    required this.title,
+    this.titleColor,
+    required this.rows,
+    required this.borderC,
+    required this.muted,
+    required this.bright,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 1.5.w, vertical: 1.h),
+      decoration: BoxDecoration(
+        color: const Color(0xFF161616),
+        border: Border.all(color: borderC, width: 0.4.w),
+        borderRadius: BorderRadius.circular(4.r),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Kart başlığı
+          Text(
+            title,
+            style: TextStyle(
+              color: titleColor ?? const Color(0xFF9E9E9E),
+              fontSize: 2.5.sp,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 1.5,
+            ),
+          ),
+          SizedBox(height: 0.8.h),
+          // Satırlar
+          ...rows.map((r) => Padding(
+            padding: EdgeInsets.only(bottom: 0.5.h),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Etiket sütunu sabit genişlik
+                SizedBox(
+                  width: 15.w,
+                  child: Text(
+                    r.label,
+                    style: TextStyle(
+                      color: muted,
+                      fontSize: 2.4.sp,
+                      letterSpacing: 0.2,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                SizedBox(width: 1.w),
+                // Değer sütunu esnek
+                Expanded(
+                  child: Text(
+                    r.value,
+                    style: TextStyle(
+                      color: r.valueColor ?? bright,
+                      fontSize: 2.6.sp,
+                      fontFamily: 'monospace',
+                      fontWeight: FontWeight.bold,
+                    ),
+                    overflow: r.truncate
+                        ? TextOverflow.ellipsis
+                        : TextOverflow.clip,
+                    maxLines: r.truncate ? 1 : null,
+                  ),
+                ),
+              ],
+            ),
+          )),
         ],
       ),
     );

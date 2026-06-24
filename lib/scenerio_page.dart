@@ -3,6 +3,14 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'services/agv_service.dart';
 import 'data_model.dart';
 
+// ─── Renk sabitleri ────────────────────────────────────────────────────────
+const _bg      = Color(0xFF121212);
+const _panelBg = Color(0xFF1A1A1A);
+const _borderC = Color(0xFF333333);
+const _muted   = Color(0xFF9E9E9E);
+const _bright  = Color(0xFFE0E0E0);
+const _accent  = Color(0xFF42A5F5);
+
 class ScenarioPage extends StatefulWidget {
   final List<DataPoint> dataPoints; // kullanılmıyor
   final String site;                // SUNUCU adresi burada
@@ -21,22 +29,21 @@ class ScenarioPage extends StatefulWidget {
 
 class _ScenarioPageState extends State<ScenarioPage> {
   final List<String> _allPlaces = const [
-    'A1','A2','A3','A4',
-    'B1','B2','B3','B4',
-    'S1','S2',
-    'CS', // <-- Şarj istasyonu
+    'A1', 'A2', 'A3', 'A4',
+    'B1', 'B2', 'B3', 'B4',
+    'S1', 'S2',
+    'CS',
   ];
 
   final List<String> _selected = [];
   String arota = "";
   bool senaryoIsDone = false;
 
-  // QR eşleme
   final Map<String, String> _qrMap = const {
-    'A1':'QA1.1','A2':'QA2.1','A3':'QA3.1','A4':'QA4.1',
-    'B1':'QB1.1','B2':'QB2.1','B3':'QB3.1','B4':'QB4.1',
-    'S1':'S1.1','S2':'S2.1',
-    'CS':'CS1.1', // <-- Şarj istasyonu
+    'A1': 'QA1.1', 'A2': 'QA2.1', 'A3': 'QA3.1', 'A4': 'QA4.1',
+    'B1': 'QB1.1', 'B2': 'QB2.1', 'B3': 'QB3.1', 'B4': 'QB4.1',
+    'S1': 'S1.1',  'S2': 'S2.1',
+    'CS': 'CS1.1',
   };
 
   @override
@@ -54,47 +61,45 @@ class _ScenarioPageState extends State<ScenarioPage> {
 
   void _returnData() => Navigator.pop(context, arota);
 
-  // Chip’te CS için kullanıcı dostu isim göster
   String _displayName(String code) {
     if (code == 'CS') return 'Şarj İstasyonu';
     return code;
   }
 
   List<Widget> _buildChipList() => _selected.map((code) {
-    return Padding(
-      padding: EdgeInsets.symmetric(vertical: 10.h, horizontal: 3.w),
-      child: Chip(
-        label: Text(_displayName(code), style: TextStyle(color: Colors.white, fontSize: 3.sp)),
-        backgroundColor: const Color.fromARGB(255, 32, 32, 32),
-        side: BorderSide(width: 0.7.w, color: Colors.blue),
-        shape: const StadiumBorder(),
-      ),
-    );
-  }).toList();
+        return Padding(
+          padding: EdgeInsets.symmetric(vertical: 1.h, horizontal: 1.5.w),
+          child: Chip(
+            label: Text(
+              _displayName(code),
+              style: TextStyle(color: _bright, fontSize: 3.sp, fontFamily: 'monospace'),
+            ),
+            backgroundColor: _panelBg,
+            side: BorderSide(width: 0.5.w, color: _borderC),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4.r)),
+          ),
+        );
+      }).toList();
 
-  // İstersen gerçek yol hesabını burada kurarsın (şu an kullanılmıyor)
   String rotaOlustur(String from, String to) {
     return ""; // TODO
   }
 
   Future<void> veriBas(String veri) => AgvService.veriBas(widget.site, veri);
 
-  // Senaryo üret + bas + çık
   Future<void> _buildScenarioAndSend() async {
     if (_selected.isEmpty) return;
 
     final parts = <String>[];
 
-    // İlk seçim S* ise çıktıya eklemiyoruz (başlangıç kabul)
     int startIndex = 0;
     if (_selected.first.startsWith('S')) {
       startIndex = 1;
     }
 
-    // A/B: q-e-q-e..., S: .../null, CS: .../null
-    bool pickupNext = true; // ilk A/B işlemi q
+    bool pickupNext = true;
     for (int i = startIndex; i < _selected.length; i++) {
-      final p = _selected[i];
+      final p  = _selected[i];
       final qr = _qrMap[p] ?? p;
 
       if (p.startsWith('A') || p.startsWith('B')) {
@@ -122,10 +127,26 @@ class _ScenarioPageState extends State<ScenarioPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: _bg,
       appBar: AppBar(
-        title: Text('Senaryo', style: TextStyle(fontSize: 4.sp)),
+        backgroundColor: _panelBg,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        bottom: PreferredSize(
+          preferredSize: Size.fromHeight(0.3.h),
+          child: Divider(height: 0.3.h, color: _borderC),
+        ),
+        title: Text(
+          'SENARYO',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 4.sp,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.5,
+          ),
+        ),
         leading: IconButton(
-          icon: Icon(Icons.arrow_back, size: 7.sp),
+          icon: Icon(Icons.arrow_back, size: 7.sp, color: _muted),
           onPressed: () {
             if (senaryoIsDone) {
               _returnData();
@@ -135,100 +156,156 @@ class _ScenarioPageState extends State<ScenarioPage> {
           },
         ),
       ),
-      body: Center(
-        child: Padding(
-          padding: EdgeInsets.all(16.w),
-          child: Column(
-            children: [
-              Row(
+      body: Padding(
+        padding: EdgeInsets.all(4.w),
+        child: Column(
+          children: [
+            // ── Seçilen istasyonlar ─────────────────────────────────────
+            Container(
+              padding: EdgeInsets.symmetric(horizontal: 2.w, vertical: 1.5.h),
+              decoration: BoxDecoration(
+                color: _panelBg,
+                border: Border.all(color: _borderC, width: 0.5.w),
+                borderRadius: BorderRadius.circular(4.r),
+              ),
+              child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  SizedBox(width: 20.w),
-                  Expanded(child: Center(child: Wrap(spacing: 8.0.w, children: _buildChipList()))),
+                  Expanded(
+                    child: Wrap(
+                      spacing: 2.w,
+                      children: _buildChipList().isEmpty
+                          ? [
+                              Text(
+                                'İstasyon seçin...',
+                                style: TextStyle(color: const Color(0xFF444444), fontSize: 3.5.sp),
+                              ),
+                            ]
+                          : _buildChipList(),
+                    ),
+                  ),
                   IconButton(
                     onPressed: _undo,
-                    icon: Icon(Icons.undo, color: Colors.black, size: 7.sp),
+                    icon: Icon(Icons.undo, color: _muted, size: 6.sp),
+                    tooltip: 'Geri al',
                   ),
                 ],
               ),
-              SizedBox(height: 50.h),
+            ),
 
-              Expanded(
-                child: Wrap(
-                  spacing: 8.0.w,
-                  runSpacing: 8.0.w,
-                  children: _allPlaces.map((code) {
-                    final isCS = code == 'CS';
-                    final title = isCS ? 'Şarj İstasyonu' : code;
-                    final icon = isCS ? Icons.battery_charging_full : Icons.place_outlined;
+            SizedBox(height: 4.h),
 
-                    return SizedBox(
-                      width: 50.w,
-                      height: 100.h,
-                      child: ElevatedButton(
-                        onPressed: () => _addPlace(code),
-                        style: ElevatedButton.styleFrom(
-                          foregroundColor: Colors.blue,
-                          backgroundColor: const Color.fromARGB(255, 20, 20, 20),
-                          side: BorderSide(color: Colors.blue, width: 1.w),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10.r)),
+            // ── İstasyon seçim butonları ────────────────────────────────
+            Expanded(
+              child: Wrap(
+                spacing: 2.w,
+                runSpacing: 2.h,
+                children: _allPlaces.map((code) {
+                  final isCS   = code == 'CS';
+                  final title  = isCS ? 'Şarj\nİstasyonu' : code;
+                  final icon   = isCS ? Icons.battery_charging_full : Icons.place_outlined;
+
+                  return SizedBox(
+                    width: 50.w,
+                    height: 85.h,
+                    child: GestureDetector(
+                      onTap: () => _addPlace(code),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: _panelBg,
+                          border: Border.all(color: _borderC, width: 0.5.w),
+                          borderRadius: BorderRadius.circular(4.r),
                         ),
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(icon, color: Colors.blue, size: 7.sp),
-                            Text(title, textAlign: TextAlign.center,
-                              style: TextStyle(color: Colors.white, fontSize: isCS ? 3.5.sp : 4.sp),
+                            Icon(icon, color: _accent, size: 6.sp),
+                            SizedBox(height: 1.h),
+                            Text(
+                              title,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: _bright,
+                                fontSize: isCS ? 3.sp : 4.sp,
+                                fontFamily: 'monospace',
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ],
                         ),
                       ),
-                    );
-                  }).toList(),
-                ),
+                    ),
+                  );
+                }).toList(),
               ),
+            ),
 
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    SizedBox(height: 10.h),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        SizedBox(width: 10.w),
-                        SizedBox(
-                          width: 45.w,
-                          height: 60.h,
-                          child: ElevatedButton(
-                            onPressed: _selected.isNotEmpty ? _buildScenarioAndSend : null,
-                            style: ElevatedButton.styleFrom(
-                              foregroundColor: Colors.grey,
-                              backgroundColor: const Color.fromARGB(255, 20, 20, 20),
-                              side: BorderSide(color: Colors.grey, width: 0.4.w),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(60.r)),
-                            ),
-                            child: Center(
-                              child: Text("Senaryo Oluştur", style: TextStyle(color: Colors.white, fontSize: 3.sp)),
-                            ),
+            SizedBox(height: 4.h),
+
+            // ── Senaryo oluştur butonu ──────────────────────────────────
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                SizedBox(
+                  width: 60.w,
+                  height: 50.h,
+                  child: GestureDetector(
+                    onTap: _selected.isNotEmpty ? _buildScenarioAndSend : null,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: _selected.isNotEmpty
+                            ? const Color(0xFF1A2540)
+                            : _panelBg,
+                        border: Border.all(
+                          color: _selected.isNotEmpty
+                              ? const Color(0xFF1565C0)
+                              : _borderC,
+                          width: 0.5.w,
+                        ),
+                        borderRadius: BorderRadius.circular(4.r),
+                      ),
+                      child: Center(
+                        child: Text(
+                          "SENARYO OLUŞTUR",
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: _selected.isNotEmpty ? _accent : _muted,
+                            fontSize: 3.sp,
+                            fontFamily: 'monospace',
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 0.5,
                           ),
                         ),
-                      ],
-                    ),
-                    SizedBox(height: 50.h),
-                    Expanded(
-                      child: Text(
-                        arota.isNotEmpty ? "v$arota" : "Senaryo Oluşmadı",
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.blueAccent, fontSize: 4.7.sp),
                       ),
                     ),
-                  ],
+                  ),
+                ),
+              ],
+            ),
+
+            SizedBox(height: 3.h),
+
+            // ── Senaryo çıktısı ─────────────────────────────────────────
+            Container(
+              padding: EdgeInsets.symmetric(horizontal: 3.w, vertical: 2.h),
+              decoration: BoxDecoration(
+                color: _panelBg,
+                border: Border.all(color: _borderC, width: 0.5.w),
+                borderRadius: BorderRadius.circular(4.r),
+              ),
+              child: Text(
+                arota.isNotEmpty ? "v$arota" : "-- Senaryo Oluşmadı --",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: arota.isNotEmpty ? _accent : _muted,
+                  fontSize: 4.sp,
+                  fontFamily: 'monospace',
                 ),
               ),
-              SizedBox(height: 60.h),
-            ],
-          ),
+            ),
+
+            SizedBox(height: 4.h),
+          ],
         ),
       ),
     );
