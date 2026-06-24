@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 // Bağlantı alt sistemi durumu
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Her bağlantı kanalı için 3 katmanlı durum.
+/// Her bağlantı kanalı için durum.
 enum ConnDurum {
   /// Bağlantı kurulmamış / kapalı.
   cevrimdisi,
@@ -14,16 +14,22 @@ enum ConnDurum {
 
   /// Bağlantı aktif ve sağlıklı.
   bagli,
+
+  /// Bağlantı denemesi başarısız ya da bağlantı kesildi.
+  hata,
 }
 
 extension ConnDurumExt on ConnDurum {
   String get etiket => switch (this) {
-        ConnDurum.cevrimdisi => 'Çevrimdışı',
+        ConnDurum.cevrimdisi => 'Bağlı Değil',
         ConnDurum.baglaniyor => 'Bağlanıyor',
         ConnDurum.bagli      => 'Bağlı',
+        ConnDurum.hata       => 'Hata',
       };
 
   bool get aktif => this == ConnDurum.bagli;
+
+  bool get baglaniyorMu => this == ConnDurum.baglaniyor;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -122,6 +128,22 @@ class GcsConnectionModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ── Toplu kesme ──────────────────────────────────────────────────────────
+
+  /// Bağlantıyı keser: tüm kanalları `cevrimdisi` veya `hata` yapar.
+  ///
+  /// [hataMi] true → kanallar `hata` durumuna geçer (beklenmedik kopma).
+  /// [hataMi] false → normal kullanıcı kesme işlemi, `cevrimdisi` olur.
+  void baglantiyiKes({bool hataMi = false}) {
+    final yeniDurum = hataMi ? ConnDurum.hata : ConnDurum.cevrimdisi;
+    sistemBaglanti = yeniDurum;
+    robotBaglanti  = yeniDurum;
+    plcBaglanti    = yeniDurum;
+    stm32Baglanti  = yeniDurum;
+    bluetooth      = yeniDurum;
+    notifyListeners();
+  }
+
   // ── Kolaylık getter'ları ──────────────────────────────────────────────────
 
   /// Tüm temel kanallar bağlı mı?
@@ -131,8 +153,12 @@ class GcsConnectionModel extends ChangeNotifier {
   /// GCS bağlantı durumunu tek cümleyle özetler.
   String get ozet {
     if (tamamenBagli) { return 'Sistem Bağlı'; }
-    if (sistemBaglanti == ConnDurum.baglaniyor ||
-        robotBaglanti  == ConnDurum.baglaniyor) { return 'Bağlanıyor...'; }
-    return 'Bağlantı Yok';
+    if (sistemBaglanti.baglaniyorMu || robotBaglanti.baglaniyorMu) {
+      return 'Bağlanıyor...';
+    }
+    if (sistemBaglanti == ConnDurum.hata || robotBaglanti == ConnDurum.hata) {
+      return 'Hata';
+    }
+    return 'Bağlı Değil';
   }
 }
