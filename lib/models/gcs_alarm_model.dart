@@ -133,6 +133,10 @@ class GcsAlarmModel extends ChangeNotifier {
   bool get kritikAlarmVar =>
       _aktifAlarmlar.keys.any((t) => t.kritik);
 
+  /// Robot güvenli duruş modunda mı? (acil stop veya kritik alarm).
+  bool get guvenliDurusAktif =>
+      isAktif(AlarmTur.acilStop) || kritikAlarmVar;
+
   /// En yüksek öncelikli alarmı döner (acilStop > motor > diğerleri).
   AlarmTur? get enKritik {
     if (_aktifAlarmlar.isEmpty) return null;

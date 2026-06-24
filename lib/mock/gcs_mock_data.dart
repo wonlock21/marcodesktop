@@ -3,6 +3,7 @@
 import '../models/agv_sensor_model.dart';
 import '../models/gcs_alarm_model.dart';
 import '../models/gcs_connection_model.dart';
+import '../models/gcs_event_log_model.dart';
 import '../models/gcs_mission_model.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -33,6 +34,7 @@ abstract final class GcsMockData {
 
   static const bool   mockKapiIzni         = true;
   static const String mockOtomasyonMesaj   = 'Kapı açıldı, geçiş serbest';
+  static const String mockGonderilenMesaj  = 'GEÇİŞ_İZİN_İSTE';
   static const bool   mockLiftKaldirildi   = true;
 
   // ── Telemetri (AgvSensorModel senkron alanları) ──────────────────────────
@@ -53,6 +55,10 @@ abstract final class GcsMockData {
   static const String mockPlcDurum     = 'bağlı';
   static const String mockPlcSonMesaj  = 'Kapı açıldı, geçebilirsin';
   static const String mockQrKonum      = 'x:0.12, y:-0.05, z:0.80';
+  static const String mockQrDogrulama  = 'Geçerli';
+  static const String mockKonumDogrulama = 'Onaylandı';
+  static const String mockKonumHatasi  = '0.04 m';
+  static const String mockYonHatasi    = '2.1°';
 
   // ── Manuel güvenlik ──────────────────────────────────────────────────────
 
@@ -80,11 +86,13 @@ abstract final class GcsMockData {
     required GcsConnectionModel connModel,
     required GcsMissionModel   missionModel,
     required GcsAlarmModel     alarmModel,
+    GcsEventLogModel?          eventLogModel,
   }) {
     applyToAgv(agvModel);
     applyToConnection(connModel);
     applyToMission(missionModel);
     applyToAlarms(alarmModel);
+    eventLogModel?.demoYukle();
     print('[GcsMockData] Tüm mock veriler yüklendi. Senaryo: $mockGorevDurum');
   }
 
@@ -109,7 +117,11 @@ abstract final class GcsMockData {
       ..bataryaYuzde = mockBataryaYuzde
       ..plcDurum     = mockPlcDurum
       ..plcSonMesaj  = mockPlcSonMesaj
-      ..qrKonum      = mockQrKonum;
+      ..qrKonum      = mockQrKonum
+      ..qrDogrulama  = mockQrDogrulama
+      ..konumDogrulamaSonucu = mockKonumDogrulama
+      ..konumHatasi  = mockKonumHatasi
+      ..yonHatasi    = mockYonHatasi;
     // notifyListeners() AgvSensorModel.loadDemoData() içinde çağrılır;
     // burada doğrudan alan atanıyor, dışarıdan notify gerekirse loadDemoData() çağrılmalı.
   }
@@ -137,6 +149,7 @@ abstract final class GcsMockData {
       gorevSuresi:       mockSure,
       kapiIzni:          mockKapiIzni,
       sonOtomasyonMesaj: mockOtomasyonMesaj,
+      sonGonderilenMesaj: mockGonderilenMesaj,
       liftKaldirildi:    mockLiftKaldirildi,
     );
   }

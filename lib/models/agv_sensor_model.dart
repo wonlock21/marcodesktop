@@ -48,6 +48,18 @@ class AgvSensorModel extends ChangeNotifier {
   /// QR kodun kameraya göre pozisyonu (örn. "x:0.12,y:-0.05,z:0.80").
   String qrKonum = "";
 
+  /// QR doğrulama durumu (örn. "Geçerli", "Hatalı").
+  String qrDogrulama = "";
+
+  /// Konum doğrulama sonucu (örn. "Onaylandı", "Sapma").
+  String konumDogrulamaSonucu = "";
+
+  /// Konum hatası — metre cinsinden metin (örn. "0.04 m").
+  String konumHatasi = "";
+
+  /// Yön hatası — derece cinsinden metin (örn. "2.1°").
+  String yonHatasi = "";
+
   // ── Mevcut update metodları (imza değişmedi) ─────────────────────────
 
   void updateSensor({
@@ -133,6 +145,10 @@ class AgvSensorModel extends ChangeNotifier {
     plcDurum     = "bağlı";
     plcSonMesaj  = "Kapı açıldı, geçebilirsin";
     qrKonum      = "x:0.12, y:-0.05, z:0.80";
+    qrDogrulama  = "Geçerli";
+    konumDogrulamaSonucu = "Onaylandı";
+    konumHatasi  = "0.04 m";
+    yonHatasi    = "2.1°";
     _updateChargingStatus();
     notifyListeners();
   }

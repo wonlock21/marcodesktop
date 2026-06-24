@@ -4,7 +4,10 @@ import 'data_model.dart';
 import 'data_page.dart';
 import 'models/agv_sensor_model.dart';
 import 'models/gcs_alarm_model.dart';
+import 'models/gcs_connection_model.dart';
+import 'models/gcs_event_log_model.dart';
 import 'models/gcs_mission_model.dart';
+import 'mock/gcs_mock_data.dart';
 import 'parameter_model.dart';
 import 'scenerio_page.dart';
 import 'services/agv_service.dart';
@@ -16,7 +19,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
-import 'timer.dart';
 
 class ControllerPage extends StatefulWidget {
   const ControllerPage({super.key});
@@ -62,7 +64,13 @@ class _ControllerPageState extends State<ControllerPage> {
     if (kAdminMode) {
       isConnected = true;
       nextQR = "QB3.1";
-      _agvModel.loadDemoData();
+      GcsMockData.applyAll(
+        agvModel:      _agvModel,
+        connModel:     Provider.of<GcsConnectionModel>(context, listen: false),
+        missionModel:  Provider.of<GcsMissionModel>(context, listen: false),
+        alarmModel:    Provider.of<GcsAlarmModel>(context, listen: false),
+        eventLogModel: Provider.of<GcsEventLogModel>(context, listen: false),
+      );
     }
     startConnectionCheck();
     _poseTimer = Timer.periodic(const Duration(milliseconds: 200), (_) async {
@@ -219,6 +227,8 @@ class _ControllerPageState extends State<ControllerPage> {
     final agv        = context.watch<AgvSensorModel>();
     final mission    = context.watch<GcsMissionModel>();
     final alarms     = context.watch<GcsAlarmModel>();
+    final conn       = context.watch<GcsConnectionModel>();
+    final eventLog   = context.watch<GcsEventLogModel>();
     final dataPoints = context.watch<DataModel>().dataPoints;
 
     const Color bg      = Color(0xFF121212);
@@ -336,21 +346,29 @@ class _ControllerPageState extends State<ControllerPage> {
                           children: [
                         // ── Özet Bilgi Şeridi ─────────────────────
                         _buildSummaryStrip(
-                          mission, alarms, agv,
+                          mission, alarms, agv, conn,
                           panelBg, borderC, muted, bright, success, danger,
                         ),
                         // ── Sekme çubuğu ──────────────────────────────
                         _buildWorkTabBar(panelBg, borderC),
                         // ── Sekme içeriği ──────────────────────────────
                         Expanded(
+                          flex: 8,
                           child: _buildWorkAreaContent(
                             agv, panelBg, borderC, muted, bright,
                           ),
                         ),
-                        // Alt buton şeridi — Expanded ile taşma önlendi
+                        // ── Olay günlüğü ──────────────────────────────
+                        Flexible(
+                          flex: 2,
+                          child: _buildEventLogPanel(
+                            eventLog, panelBg, borderC, muted, bright,
+                          ),
+                        ),
+                        // Alt buton şeridi
                         Container(
                           color: panelBg,
-                          padding: EdgeInsets.symmetric(horizontal: 3.w, vertical: 1.5.h),
+                          padding: EdgeInsets.symmetric(horizontal: 3.w, vertical: 1.h),
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
@@ -421,39 +439,6 @@ class _ControllerPageState extends State<ControllerPage> {
                                   }
                                 },
                               )),
-                              SizedBox(width: 2.w),
-                              Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    "HIZ: $speed",
-                                    style: TextStyle(
-                                      color: bright,
-                                      fontSize: 3.sp,
-                                      fontFamily: 'monospace',
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  ExcludeSemantics(
-                                    child: SizedBox(
-                                      width: 40.w,
-                                      height: 18.h,
-                                      child: Slider(
-                                        value: speed.toDouble(),
-                                        divisions: 4,
-                                        min: 0.0,
-                                        max: 4,
-                                        activeColor: accent,
-                                        inactiveColor: borderC,
-                                        label: speed.toString(),
-                                        onChanged: (val) {
-                                          setState(() { speed = val.toInt(); });
-                                        },
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
                             ],
                           ),
                         ),
@@ -484,36 +469,48 @@ class _ControllerPageState extends State<ControllerPage> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            _statusRow(
+                              'ROBOT BAĞLANTISI',
+                              isConnected ? 'AKTİF' : 'PASİF',
+                              isConnected ? success : danger,
+                              muted, bright,
+                            ),
+                            SizedBox(height: 0.8.h),
+                            _statusRow(
+                              'MOD',
+                              kAdminMode && !isConnected
+                                  ? 'ADMIN / DEMO'
+                                  : (kAdminMode ? 'DEMO' : 'CANLI'),
+                              kAdminMode ? const Color(0xFFFF9800) : bright,
+                              muted, bright,
+                            ),
+                            SizedBox(height: 0.8.h),
+                            _statusRow(
+                              'ÇALIŞMA MODU',
+                              manuelOrOtonom,
+                              oto ? accent : bright,
+                              muted, bright,
+                            ),
+                            SizedBox(height: 0.8.h),
+                            _statusRow(
+                              'KOMUT GÖNDERİM',
+                              _komutDurumu(isConnected, conn.uzaktanKontrolAktif),
+                              _komutRenk(isConnected, conn.uzaktanKontrolAktif, success, muted, danger),
+                              muted, bright,
+                            ),
+                            SizedBox(height: 0.8.h),
                             Row(children: [
-                              _StatusDot(isConnected ? success : danger),
-                              SizedBox(width: 1.5.w),
-                              Text("BAĞLANTI",
-                                  style: TextStyle(color: muted, fontSize: 3.sp, letterSpacing: 0.5)),
-                              SizedBox(width: 1.5.w),
+                              _StatusDot(conn.plcBaglanti.aktif ? success : muted),
+                              SizedBox(width: 1.w),
                               Text(
-                                isConnected ? "AKTİF" : "PASİF",
+                                'PLC ${conn.plcBaglanti.etiket}',
                                 style: TextStyle(
-                                  color: isConnected ? success : danger,
-                                  fontSize: 3.sp,
+                                  color: muted,
+                                  fontSize: 2.4.sp,
                                   fontFamily: 'monospace',
-                                  fontWeight: FontWeight.bold,
                                 ),
                               ),
                             ]),
-                            SizedBox(height: 1.h),
-                            Text(
-                              "DURUM: ${agv.robotDurum.isEmpty ? '--' : agv.robotDurum}",
-                              style: TextStyle(
-                                  color: bright, fontSize: 3.sp, fontFamily: 'monospace'),
-                            ),
-                            if (agv.gorevDurum.isNotEmpty) ...[
-                              SizedBox(height: 0.5.h),
-                              Text(
-                                agv.gorevDurum,
-                                style: TextStyle(color: muted, fontSize: 2.8.sp),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
                           ],
                         ),
                       ),
@@ -557,22 +554,6 @@ class _ControllerPageState extends State<ControllerPage> {
                       IntrinsicHeight(
                         child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                           Expanded(child: _GcsTelCard(
-                            icon: Icons.settings_overscan, label: "RFID",
-                            value: safe(agv.rfid),
-                            panelBg: panelBg, borderC: borderC, bright: bright, muted: muted,
-                          )),
-                          SizedBox(width: 1.5.w),
-                          Expanded(child: _GcsTelCard(
-                            icon: Icons.qr_code_2, label: "SON QR",
-                            value: safe(agv.sonQR),
-                            panelBg: panelBg, borderC: borderC, bright: bright, muted: muted,
-                          )),
-                        ]),
-                      ),
-                      SizedBox(height: 1.5.h),
-                      IntrinsicHeight(
-                        child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                          Expanded(child: _GcsTelCard(
                             icon: Icons.speed, label: "HIZ",
                             value: "${agv.anlikHiz.toStringAsFixed(2)} m/s",
                             panelBg: panelBg, borderC: borderC, bright: bright, muted: muted,
@@ -597,14 +578,24 @@ class _ControllerPageState extends State<ControllerPage> {
                             children: [
                               Text("GÖREV SÜRESİ",
                                   style: TextStyle(color: muted, fontSize: 2.5.sp, letterSpacing: 0.5)),
-                              const TimerPage(),
+                              Text(
+                                mission.gorevAktif
+                                    ? mission.gorevSuresiFormatli
+                                    : '--',
+                                style: TextStyle(
+                                  color: bright,
+                                  fontSize: 3.5.sp,
+                                  fontFamily: 'monospace',
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                             ],
                           ),
                         ]),
                       ),
                       SizedBox(height: 2.h),
-                      // ── Otomasyon / PLC ───────────────────────────
-                      _sectionLabel("OTOMASYON"),
+                      // ── Mod ve Kontrol ────────────────────────────
+                      _sectionLabel("MOD VE KONTROL"),
                       SizedBox(height: 1.h),
                       Container(
                         padding: EdgeInsets.all(2.w),
@@ -612,110 +603,65 @@ class _ControllerPageState extends State<ControllerPage> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Row(children: [
-                              _StatusDot(agv.plcDurum == 'bağlı' ? success : danger),
-                              SizedBox(width: 1.5.w),
-                              Text(
-                                "PLC: ${agv.plcDurum.isEmpty ? '--' : agv.plcDurum}",
-                                style: TextStyle(color: muted, fontSize: 3.sp),
-                              ),
-                            ]),
-                            if (agv.plcSonMesaj.isNotEmpty) ...[
-                              SizedBox(height: 1.h),
-                              Text(
-                                agv.plcSonMesaj,
-                                style: TextStyle(
-                                    color: bright, fontSize: 3.sp, fontFamily: 'monospace'),
-                              ),
-                            ],
-                            SizedBox(height: 1.h),
-                            Row(children: [
-                              _StatusDot(agv.liftAcik ? success : borderC),
-                              SizedBox(width: 1.5.w),
-                              Text("LİFT: ", style: TextStyle(color: muted, fontSize: 3.sp)),
-                              Text(
-                                agv.liftAcik ? "AÇIK" : "KAPALI",
-                                style: TextStyle(
-                                  color: agv.liftAcik ? success : muted,
-                                  fontSize: 3.sp,
-                                  fontFamily: 'monospace',
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ]),
-                          ],
-                        ),
-                      ),
-                      SizedBox(height: 2.h),
-                      // ── Mod & QR ──────────────────────────────────
-                      _sectionLabel("MOD & QR"),
-                      SizedBox(height: 1.h),
-                      Container(
-                        padding: EdgeInsets.symmetric(horizontal: 2.w, vertical: 1.h),
-                        decoration: _flatBox(panelBg, borderC),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Text("MOD",
-                                    style: TextStyle(color: muted, fontSize: 2.5.sp, letterSpacing: 0.5)),
-                                Text(
-                                  manuelOrOtonom,
-                                  style: TextStyle(
-                                    color: oto ? accent : bright,
-                                    fontSize: 4.sp,
-                                    fontWeight: FontWeight.bold,
-                                    fontFamily: 'monospace',
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text("FİZİKSEL MOD",
+                                        style: TextStyle(color: muted, fontSize: 2.5.sp, letterSpacing: 0.5)),
+                                    Text(
+                                      conn.fizikselManuelMod ? 'Manuel' : 'Otomatik',
+                                      style: TextStyle(
+                                        color: conn.fizikselManuelMod ? bright : accent,
+                                        fontSize: 3.5.sp,
+                                        fontFamily: 'monospace',
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                ExcludeSemantics(
+                                  child: SizedBox(
+                                    width: 14.w,
+                                    height: 28.h,
+                                    child: FittedBox(
+                                      fit: BoxFit.fill,
+                                      child: Switch(
+                                        value: oto,
+                                        activeThumbColor: accent,
+                                        onChanged: (val) {
+                                          setState(() {
+                                            oto = val;
+                                            if (manuelOrOtonom == "Manuel") {
+                                              manuelOrOtonom = "Otonom";
+                                              startSendingData("k300", const Duration(milliseconds: 500));
+                                            } else {
+                                              manuelOrOtonom = "Manuel";
+                                              startSendingData("k310", const Duration(milliseconds: 500));
+                                            }
+                                          });
+                                        },
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ],
                             ),
-                            ExcludeSemantics(
-                              child: SizedBox(
-                                width: 14.w,
-                                height: 28.h,
-                                child: FittedBox(
-                                  fit: BoxFit.fill,
-                                  child: Switch(
-                                    value: oto,
-                                    activeThumbColor: accent,
-                                    onChanged: (val) {
-                                      setState(() {
-                                        oto = val;
-                                        if (manuelOrOtonom == "Manuel") {
-                                          manuelOrOtonom = "Otonom";
-                                          startSendingData("k300", const Duration(milliseconds: 500));
-                                        } else {
-                                          manuelOrOtonom = "Manuel";
-                                          startSendingData("k310", const Duration(milliseconds: 500));
-                                        }
-                                      });
-                                    },
-                                  ),
-                                ),
-                              ),
-                            ),
-                            Column(
-                              children: [
-                                QRButton(
-                                  onPressed: () { veriBas("k319"); },
-                                  shortcutKey: LogicalKeyboardKey.keyX,
-                                ),
-                                Text(
-                                  nextQR == 'null' ? '--' : nextQR,
-                                  style: TextStyle(
-                                      color: muted, fontSize: 3.sp, fontFamily: 'monospace'),
-                                ),
-                              ],
+                            SizedBox(height: 1.2.h),
+                            _statusRow(
+                              'UZAKTAN KONTROL',
+                              conn.uzaktanKontrolAktif ? 'Aktif' : 'Kilitli',
+                              conn.uzaktanKontrolAktif ? success : danger,
+                              muted, bright,
                             ),
                           ],
                         ),
                       ),
                       SizedBox(height: 2.h),
-                      // ── Hareket Kontrolleri ───────────────────────
-                      _sectionLabel("KONTROLLERİ"),
+                      // ── Manuel Kontroller ─────────────────────────
+                      _sectionLabel("MANUEL KONTROLLER"),
                       SizedBox(height: 1.h),
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -793,6 +739,39 @@ class _ControllerPageState extends State<ControllerPage> {
                             ),
                           ),
                         ],
+                      ),
+                      SizedBox(height: 1.5.h),
+                      Container(
+                        padding: EdgeInsets.symmetric(horizontal: 2.w, vertical: 1.h),
+                        decoration: _flatBox(panelBg, borderC),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "HIZ: $speed",
+                              style: TextStyle(
+                                color: bright,
+                                fontSize: 3.sp,
+                                fontFamily: 'monospace',
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            ExcludeSemantics(
+                              child: Slider(
+                                value: speed.toDouble(),
+                                divisions: 4,
+                                min: 0.0,
+                                max: 4,
+                                activeColor: accent,
+                                inactiveColor: borderC,
+                                label: speed.toString(),
+                                onChanged: (val) {
+                                  setState(() { speed = val.toInt(); });
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                       SizedBox(height: 3.h),
                     ],
@@ -935,6 +914,7 @@ class _ControllerPageState extends State<ControllerPage> {
     GcsMissionModel mission,
     GcsAlarmModel   alarms,
     AgvSensorModel  agv,
+    GcsConnectionModel conn,
     Color panelBg, Color borderC,
     Color muted,   Color bright,
     Color success, Color danger,
@@ -947,11 +927,13 @@ class _ControllerPageState extends State<ControllerPage> {
             ? success
             : const Color(0xFFFF9800);
 
-    final batColor = agv.bataryaYuzde < 20
-        ? danger
-        : agv.bataryaYuzde < 40
-            ? const Color(0xFFFF9800)
-            : success;
+    final rota = (mission.almaNoktasi.isNotEmpty || mission.birakNoktasi.isNotEmpty)
+        ? '${safe(mission.almaNoktasi)} → ${safe(mission.birakNoktasi)}'
+        : '--';
+
+    final plcEtiket = conn.plcBaglanti.aktif
+        ? 'Bağlı'
+        : (conn.plcBaglanti == ConnDurum.baglaniyor ? 'Bağlanıyor' : safe(agv.plcDurum));
 
     return Container(
       decoration: BoxDecoration(
@@ -962,71 +944,74 @@ class _ControllerPageState extends State<ControllerPage> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Kart 1: Görev ─────────────────────────────────────────────────
+          // ── Kart 1: Görev Özeti ───────────────────────────────────────────
           Expanded(child: _SummaryCard(
-            title: 'GÖREV',
+            title: 'GÖREV ÖZETİ',
             borderC: borderC, muted: muted, bright: bright,
             rows: [
               _SRow('ID',    safe(mission.gorevId)),
-              _SRow('ALIM',  safe(mission.almaNoktasi)),
-              _SRow('BIRAK', safe(mission.birakNoktasi)),
-              _SRow('AŞAMA', mission.asama.etiket),
+              _SRow('ROTA',  rota, truncate: true),
+              _SRow('AŞAMA', mission.asama.etiket, truncate: true),
+              _SRow('SONRAKİ', mission.asama.sonrakiAdim, truncate: true),
               _SRow('SÜRE',  mission.gorevAktif ? mission.gorevSuresiFormatli : '--'),
             ],
           )),
           SizedBox(width: 1.5.w),
 
-          // ── Kart 2: Otomasyon ─────────────────────────────────────────────
+          // ── Kart 2: Fabrika Otomasyon Özeti ───────────────────────────────
           Expanded(child: _SummaryCard(
-            title: 'OTOMASYON',
+            title: 'FABRİKA OTOMASYON',
             borderC: borderC, muted: muted, bright: bright,
             rows: [
               _SRow('PLC',
-                  safe(agv.plcDurum),
-                  valueColor: agv.plcDurum == 'bağlı' ? success : danger),
-              _SRow('KAPI',
-                  mission.kapiIzni ? 'Açık' : 'Kapalı',
+                  plcEtiket,
+                  valueColor: conn.plcBaglanti.aktif ? success : danger),
+              _SRow('KAPI İZNİ',
+                  mission.kapiIzni ? 'Serbest' : 'Kapalı',
                   valueColor: mission.kapiIzni ? success : muted),
-              _SRow('LİFT',
-                  agv.liftAcik ? 'Kaldırıldı' : 'İndirildi',
-                  valueColor: agv.liftAcik ? success : muted),
-              _SRow('MESAJ', safe(agv.plcSonMesaj), truncate: true),
+              _SRow('GELEN',
+                  safe(mission.sonOtomasyonMesaj.isNotEmpty
+                      ? mission.sonOtomasyonMesaj
+                      : agv.plcSonMesaj),
+                  truncate: true),
+              _SRow('GÖNDERİLEN', safe(mission.sonGonderilenMesaj), truncate: true),
             ],
           )),
           SizedBox(width: 1.5.w),
 
-          // ── Kart 3: QR / Konum ────────────────────────────────────────────
+          // ── Kart 3: Konum Doğrulama ───────────────────────────────────────
           Expanded(child: _SummaryCard(
-            title: 'QR / KONUM',
+            title: 'KONUM DOĞRULAMA',
             borderC: borderC, muted: muted, bright: bright,
             rows: [
               _SRow('SON QR', safe(agv.sonQR)),
-              _SRow('RFID',   safe(agv.rfid)),
-              _SRow('X / Y',
-                  'X:${agv.currX.toStringAsFixed(1)}  Y:${agv.currY.toStringAsFixed(1)}'),
-              _SRow('YÖN',
-                  '${(agv.currYaw * 57.2958).toStringAsFixed(0)}°'),
+              _SRow('QR DOĞR.',
+                  safe(agv.qrDogrulama),
+                  valueColor: agv.qrDogrulama == 'Geçerli' ? success : null),
+              _SRow('KONUM',
+                  safe(agv.konumDogrulamaSonucu),
+                  valueColor: agv.konumDogrulamaSonucu == 'Onaylandı' ? success : null),
+              _SRow('KON. HATA', safe(agv.konumHatasi)),
+              _SRow('YÖN HATA', safe(agv.yonHatasi)),
             ],
           )),
           SizedBox(width: 1.5.w),
 
-          // ── Kart 4: Alarm / Güvenlik ──────────────────────────────────────
+          // ── Kart 4: Güvenlik Özeti ────────────────────────────────────────
           Expanded(child: _SummaryCard(
-            title: 'ALARM',
+            title: 'GÜVENLİK',
             titleColor: alarmColor,
             borderC: borderC, muted: muted, bright: bright,
             rows: [
-              _SRow('DURUM',
-                  alarms.temiz ? 'Temiz' : '${alarms.aktifAlarmlar.length} Aktif',
-                  valueColor: alarms.temiz ? success : danger),
               _SRow('ACİL STOP',
                   alarms.isAktif(AlarmTur.acilStop) ? 'AKTİF' : 'Normal',
-                  valueColor: alarms.isAktif(AlarmTur.acilStop) ? danger : muted),
-              _SRow('BATARYA',
-                  agv.bataryaYuzde < 20
-                      ? 'DÜŞÜK ⚠'
-                      : '${agv.bataryaYuzde.toStringAsFixed(0)}%',
-                  valueColor: batColor),
+                  valueColor: alarms.isAktif(AlarmTur.acilStop) ? danger : success),
+              _SRow('ALARM',
+                  alarms.temiz ? 'Temiz' : '${alarms.aktifAlarmlar.length} Aktif',
+                  valueColor: alarms.temiz ? success : const Color(0xFFFF9800)),
+              _SRow('GÜV. DURUŞ',
+                  alarms.guvenliDurusAktif ? 'Aktif' : 'Normal',
+                  valueColor: alarms.guvenliDurusAktif ? danger : muted),
               _SRow('KRİTİK',
                   alarms.kritikAlarmVar
                       ? (alarms.enKritik?.etiket ?? 'Var')
@@ -1038,6 +1023,136 @@ class _ControllerPageState extends State<ControllerPage> {
         ],
       ),
     );
+  }
+
+  /// Olay günlüğü paneli — sol alt, buton şeridinin üstünde.
+  Widget _buildEventLogPanel(
+    GcsEventLogModel eventLog,
+    Color panelBg,
+    Color borderC,
+    Color muted,
+    Color bright,
+  ) {
+    final kayitlar = eventLog.kayitlar;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: panelBg,
+        border: Border(
+          top: BorderSide(color: borderC, width: 0.3.w),
+          bottom: BorderSide(color: borderC, width: 0.3.w),
+        ),
+      ),
+      padding: EdgeInsets.symmetric(horizontal: 2.w, vertical: 0.8.h),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'SİSTEM MESAJLARI / OLAY GÜNLÜĞÜ',
+            style: TextStyle(
+              color: muted,
+              fontSize: 2.3.sp,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 1.0,
+            ),
+          ),
+          SizedBox(height: 0.4.h),
+          Expanded(
+            child: kayitlar.isEmpty
+                ? Center(
+                    child: Text(
+                      'Henüz olay kaydı yok',
+                      style: TextStyle(color: muted, fontSize: 2.5.sp),
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: kayitlar.length,
+                    itemBuilder: (_, i) {
+                      final e = kayitlar[i];
+                      return Padding(
+                        padding: EdgeInsets.only(bottom: 0.4.h),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '[${e.zamanFormatli}]',
+                              style: TextStyle(
+                                color: const Color(0xFF616161),
+                                fontSize: 2.3.sp,
+                                fontFamily: 'monospace',
+                              ),
+                            ),
+                            SizedBox(width: 1.w),
+                            Expanded(
+                              child: Text(
+                                e.mesaj,
+                                style: TextStyle(
+                                  color: bright,
+                                  fontSize: 2.5.sp,
+                                  fontFamily: 'monospace',
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _statusRow(
+    String label,
+    String value,
+    Color valueColor,
+    Color muted,
+    Color bright,
+  ) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 22.w,
+          child: Text(
+            label,
+            style: TextStyle(color: muted, fontSize: 2.4.sp, letterSpacing: 0.3),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: TextStyle(
+              color: valueColor,
+              fontSize: 2.8.sp,
+              fontFamily: 'monospace',
+              fontWeight: FontWeight.bold,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _komutDurumu(bool connected, bool uzaktanAktif) {
+    if (kAdminMode) return 'Simülasyon';
+    if (!connected || !uzaktanAktif) return 'Pasif';
+    return 'Aktif';
+  }
+
+  Color _komutRenk(
+    bool connected,
+    bool uzaktanAktif,
+    Color success,
+    Color muted,
+    Color danger,
+  ) {
+    if (kAdminMode) return const Color(0xFFFF9800);
+    if (!connected || !uzaktanAktif) return danger;
+    return success;
   }
 
   Widget _sectionLabel(String title) => Padding(

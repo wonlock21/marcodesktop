@@ -43,6 +43,17 @@ extension GorevAsamaExt on GorevAsama {
       this != GorevAsama.bosta &&
       this != GorevAsama.tamamlandi &&
       this != GorevAsama.iptalEdildi;
+
+  /// Bir sonraki beklenen operasyon adımı (UI özeti için).
+  String get sonrakiAdim => switch (this) {
+        GorevAsama.bosta             => 'Görev bekleniyor',
+        GorevAsama.almayaGidiyor     => 'Alma noktasında yük al',
+        GorevAsama.yukAliniyor       => 'Bırakma noktasına git',
+        GorevAsama.birakmayadGidiyor => 'Bırakma noktasında yük bırak',
+        GorevAsama.yukBirakiliyor    => 'Başlangıca dön',
+        GorevAsama.tamamlandi        => 'Görev tamamlandı',
+        GorevAsama.iptalEdildi       => 'Operatör müdahalesi gerekli',
+      };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -81,6 +92,9 @@ class GcsMissionModel extends ChangeNotifier {
 
   /// Fabrika otomasyon sisteminden gelen son durum mesajı.
   String sonOtomasyonMesaj = '';
+
+  /// GCS → PLC/fabrika otomasyonuna gönderilen son mesaj.
+  String sonGonderilenMesaj = '';
 
   /// Lift (fork) mekanik durumu: `true` = kaldırılmış / yük var.
   bool liftKaldirildi = false;
@@ -133,6 +147,11 @@ class GcsMissionModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setSonGonderilenMesaj(String mesaj) {
+    sonGonderilenMesaj = mesaj;
+    notifyListeners();
+  }
+
   void setLiftDurum(bool kaldirildi) {
     liftKaldirildi = kaldirildi;
     notifyListeners();
@@ -162,6 +181,7 @@ class GcsMissionModel extends ChangeNotifier {
     Duration?   gorevSuresi,
     bool?       kapiIzni,
     String?     sonOtomasyonMesaj,
+    String?     sonGonderilenMesaj,
     bool?       liftKaldirildi,
   }) {
     if (gorevId            != null) this.gorevId            = gorevId;
@@ -171,6 +191,7 @@ class GcsMissionModel extends ChangeNotifier {
     if (gorevSuresi        != null) this.gorevSuresi        = gorevSuresi;
     if (kapiIzni           != null) this.kapiIzni           = kapiIzni;
     if (sonOtomasyonMesaj  != null) this.sonOtomasyonMesaj  = sonOtomasyonMesaj;
+    if (sonGonderilenMesaj != null) this.sonGonderilenMesaj = sonGonderilenMesaj;
     if (liftKaldirildi     != null) this.liftKaldirildi     = liftKaldirildi;
     notifyListeners();
   }

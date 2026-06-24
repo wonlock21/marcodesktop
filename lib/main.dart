@@ -7,6 +7,7 @@ import 'parameter.dart';
 import 'models/agv_sensor_model.dart';
 import 'models/gcs_connection_model.dart';
 import 'models/gcs_mission_model.dart';
+import 'models/gcs_event_log_model.dart';
 import 'models/gcs_alarm_model.dart';
 import 'parameter_model.dart';
 import 'qr_page.dart';
@@ -31,6 +32,7 @@ void main() {
         ChangeNotifierProvider(create: (_) => GcsConnectionModel()),
         ChangeNotifierProvider(create: (_) => GcsMissionModel()),
         ChangeNotifierProvider(create: (_) => GcsAlarmModel()),
+        ChangeNotifierProvider(create: (_) => GcsEventLogModel()),
       ],
       child: const MyApp(),
     ),
