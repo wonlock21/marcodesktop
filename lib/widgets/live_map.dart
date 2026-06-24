@@ -368,12 +368,16 @@ class _StatusPane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        const CircularProgressIndicator(),
-        const SizedBox(height: 8),
-        Text(text, style: const TextStyle(color: Colors.grey)),
-      ]),
+    // Opak arka plan: grid çizgilerinin metin üzerine binmesini önler.
+    return ColoredBox(
+      color: const Color(0xFF0D0D0D),
+      child: Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const CircularProgressIndicator(),
+          const SizedBox(height: 8),
+          Text(text, style: const TextStyle(color: Colors.grey)),
+        ]),
+      ),
     );
   }
 }

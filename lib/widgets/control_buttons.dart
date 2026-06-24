@@ -41,40 +41,25 @@ class _PowerButtonState extends State<PowerButton> {
         widget.onPressed();
       },
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        height: 150.h,
-        width: 80.w,
+        duration: const Duration(milliseconds: 200),
+        height: 55.h,
+        width: 55.w,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(20.r),
-          color: Colors.grey[800],
-          boxShadow: [
-            BoxShadow(
-              color: isOn ? Colors.transparent : Colors.black54,
-              blurRadius: isOn ? 0 : 10,
-              spreadRadius: isOn ? 0 : 4,
-              offset: isOn ? const Offset(0, 0) : const Offset(0, 5),
-            ),
-          ],
+          borderRadius: BorderRadius.circular(4.r),
+          color: isOn ? const Color(0xFF3A2020) : const Color(0xFF1A1A1A),
+          border: Border.all(
+            color: isOn ? const Color(0xFFE53935) : const Color(0xFF444444),
+            width: 0.5.w,
+          ),
         ),
         child: Center(
-          child: AnimatedContainer(
-            padding: EdgeInsets.symmetric(vertical: 18.h, horizontal: 25.w),
-            duration: const Duration(milliseconds: 300),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(20.r),
-              border: Border.all(
-                color: (isOn ? Colors.red : Colors.grey[700])!,
-                width: 1.w,
-              ),
-            ),
-            child: AnimatedScale(
-              scale: isOn ? 0.85 : 1.0,
-              duration: const Duration(milliseconds: 300),
-              child: Icon(
-                widget.icon,
-                color: isOn ? Colors.red : Colors.grey[600],
-                size: 20.sp,
-              ),
+          child: AnimatedScale(
+            scale: isOn ? 0.88 : 1.0,
+            duration: const Duration(milliseconds: 200),
+            child: Icon(
+              widget.icon,
+              color: isOn ? const Color(0xFFE53935) : const Color(0xFF9E9E9E),
+              size: 14.sp,
             ),
           ),
         ),
@@ -196,46 +181,28 @@ class _NormalButtonState extends State<NormalButton> {
           widget.onPressed();
         },
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 300),
-          height: 80.h,
-          width: 50.w,
+          duration: const Duration(milliseconds: 200),
+          height: 55.h,
+          width: double.infinity,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20.r),
-            color: Colors.grey[800],
-            boxShadow: [
-              BoxShadow(
-                color: isOn ? Colors.transparent : Colors.black54,
-                blurRadius: isOn ? 0 : 10,
-                spreadRadius: isOn ? 0 : 2,
-                offset: isOn ? const Offset(0, 0) : const Offset(0, 5),
-              ),
-            ],
+            borderRadius: BorderRadius.circular(4.r),
+            color: isOn ? const Color(0xFF1A2540) : const Color(0xFF1A1A1A),
+            border: Border.all(
+              color: isOn ? const Color(0xFF1565C0) : const Color(0xFF444444),
+              width: 0.5.w,
+            ),
           ),
           child: Center(
-            child: AnimatedContainer(
-              alignment: Alignment.center,
-              width: 45.w,
-              height: 65.h,
-              padding: EdgeInsets.symmetric(vertical: 14.h, horizontal: 6.w),
-              duration: const Duration(milliseconds: 300),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(20.r),
-                border: Border.all(
-                  color: (isOn ? Colors.blue : Colors.grey[700])!,
-                  width: 1.w,
-                ),
-              ),
-              child: AnimatedScale(
-                scale: isOn ? 0.85 : 1.0,
-                duration: const Duration(milliseconds: 300),
-                child: Text(
-                  widget.text,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: isOn ? Colors.blue : Colors.grey[600],
-                    fontWeight: FontWeight.bold,
-                    fontSize: 5.sp,
-                  ),
+            child: AnimatedScale(
+              scale: isOn ? 0.88 : 1.0,
+              duration: const Duration(milliseconds: 200),
+              child: Text(
+                widget.text,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: isOn ? const Color(0xFF42A5F5) : const Color(0xFF9E9E9E),
+                  fontWeight: FontWeight.bold,
+                  fontSize: 4.sp,
                 ),
               ),
             ),
@@ -326,38 +293,22 @@ class _ControlButtonState extends State<ControlButton> {
         onTapDown: (_) => _handlePress(),
         onTapUp: (_) => _handleRelease(),
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          padding: EdgeInsets.symmetric(horizontal: 5.w, vertical: 10.h),
+          duration: const Duration(milliseconds: 150),
+          padding: EdgeInsets.symmetric(horizontal: 4.w, vertical: 6.h),
           decoration: BoxDecoration(
             color: isPressed
-                ? const Color.fromARGB(255, 173, 173, 173)
-                : const Color.fromARGB(255, 121, 121, 121),
-            borderRadius: BorderRadius.circular(25.r),
-            boxShadow: isPressed
-                ? null
-                : [
-                    BoxShadow(
-                      color: const Color.fromARGB(255, 163, 163, 163),
-                      offset: const Offset(0, 5),
-                      blurRadius: 15.r,
-                    ),
-                    BoxShadow(
-                      color: const Color.fromARGB(255, 76, 76, 76),
-                      offset: const Offset(0, -2),
-                      blurRadius: 10.r,
-                    ),
-                  ],
-            gradient: const LinearGradient(
-              colors: [
-                Color.fromARGB(255, 107, 107, 107),
-                Color.fromARGB(255, 162, 162, 162),
-              ],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+                ? const Color(0xFF3A3A3A)
+                : const Color(0xFF242424),
+            borderRadius: BorderRadius.circular(4.r),
+            border: Border.all(
+              color: isPressed
+                  ? const Color(0xFF5E5E5E)
+                  : const Color(0xFF333333),
+              width: 0.5.w,
             ),
           ),
           child: Transform.scale(
-            scale: isPressed ? 0.96 : 1,
+            scale: isPressed ? 0.93 : 1.0,
             child: widget.child,
           ),
         ),
