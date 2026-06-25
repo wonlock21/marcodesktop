@@ -5,54 +5,117 @@ import 'package:flutter/foundation.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Bir görevin yaşam döngüsündeki aşamalar.
+///
+/// Kullanıcıya gösterilen Türkçe etiketler için [GorevAsamaExt.etiket] kullanın.
+/// İlerleme çubuğundaki sıra için [GorevAsamaExt.adimSirasi] kullanın.
 enum GorevAsama {
   /// Henüz görev planlanmamış / robot bekleme durumunda.
   bosta,
 
-  /// Alma noktasına hareket ediliyor.
-  almayaGidiyor,
+  /// Görev sisteme alındı, hazırlık aşamasında.
+  gorevAlindi,
+
+  /// Alma noktasına yüksüz hareket ediliyor.
+  yuksuzHareket,
 
   /// Alma noktasında yük alınıyor (lift aktif).
-  yukAliniyor,
+  yukAlma,
 
   /// Bırakma noktasına yüklü hareket.
-  birakmayadGidiyor,
+  yukluHareket,
+
+  /// Kapı geçişi için PLC/otomasyon izni bekleniyor.
+  kapiIzniBekleniyor,
 
   /// Bırakma noktasında yük indiriliyor.
-  yukBirakiliyor,
+  yukBirakma,
 
-  /// Görev başarıyla tamamlandı, robota geri dönüş.
+  /// Görev başarıyla tamamlandı.
   tamamlandi,
 
-  /// Görev hata veya acil stop ile kesildi.
+  /// Görev yazılım hatası ile kesildi.
+  hata,
+
+  /// Fiziksel veya yazılımsal acil durdurma aktif.
+  acilStop,
+
+  // ── Geriye dönük uyumluluk için eski isimler (deprecated) ─────────────────
+  /// @deprecated [yuksuzHareket] kullanın.
+  almayaGidiyor,
+  /// @deprecated [yukAlma] kullanın.
+  yukAliniyor,
+  /// @deprecated [yukluHareket] kullanın.
+  birakmayadGidiyor,
+  /// @deprecated [yukBirakma] kullanın.
+  yukBirakiliyor,
+  /// @deprecated [acilStop] veya [hata] kullanın.
   iptalEdildi,
 }
 
 extension GorevAsamaExt on GorevAsama {
   String get etiket => switch (this) {
-        GorevAsama.bosta            => 'Boşta',
-        GorevAsama.almayaGidiyor    => 'Alma Noktasına Gidiyor',
-        GorevAsama.yukAliniyor      => 'Yük Alınıyor',
-        GorevAsama.birakmayadGidiyor => 'Bırakma Noktasına Gidiyor',
-        GorevAsama.yukBirakiliyor   => 'Yük Bırakılıyor',
-        GorevAsama.tamamlandi       => 'Tamamlandı',
-        GorevAsama.iptalEdildi      => 'İptal Edildi',
+        GorevAsama.bosta               => 'Beklemede',
+        GorevAsama.gorevAlindi         => 'Görev Alındı',
+        GorevAsama.yuksuzHareket       => 'Yüksüz Hareket',
+        GorevAsama.yukAlma             => 'Yük Alma',
+        GorevAsama.yukluHareket        => 'Yüklü Hareket',
+        GorevAsama.kapiIzniBekleniyor  => 'Kapı İzni Bekleniyor',
+        GorevAsama.yukBirakma          => 'Yük Bırakma',
+        GorevAsama.tamamlandi          => 'Görev Tamamlandı',
+        GorevAsama.hata                => 'Hata',
+        GorevAsama.acilStop            => 'Acil Stop',
+        // Eski değerler → yeni etiketlere yönlendir
+        GorevAsama.almayaGidiyor       => 'Yüksüz Hareket',
+        GorevAsama.yukAliniyor         => 'Yük Alma',
+        GorevAsama.birakmayadGidiyor   => 'Yüklü Hareket',
+        GorevAsama.yukBirakiliyor      => 'Yük Bırakma',
+        GorevAsama.iptalEdildi         => 'İptal Edildi',
       };
 
   bool get aktif =>
       this != GorevAsama.bosta &&
       this != GorevAsama.tamamlandi &&
+      this != GorevAsama.hata &&
+      this != GorevAsama.acilStop &&
       this != GorevAsama.iptalEdildi;
+
+  bool get hataVeyaStop =>
+      this == GorevAsama.hata || this == GorevAsama.acilStop;
 
   /// Bir sonraki beklenen operasyon adımı (UI özeti için).
   String get sonrakiAdim => switch (this) {
-        GorevAsama.bosta             => 'Görev bekleniyor',
-        GorevAsama.almayaGidiyor     => 'Alma noktasında yük al',
-        GorevAsama.yukAliniyor       => 'Bırakma noktasına git',
-        GorevAsama.birakmayadGidiyor => 'Bırakma noktasında yük bırak',
-        GorevAsama.yukBirakiliyor    => 'Başlangıca dön',
-        GorevAsama.tamamlandi        => 'Görev tamamlandı',
-        GorevAsama.iptalEdildi       => 'Operatör müdahalesi gerekli',
+        GorevAsama.bosta               => 'Görev bekleniyor',
+        GorevAsama.gorevAlindi         => 'Yüksüz harekete geç',
+        GorevAsama.yuksuzHareket       => 'Alma noktasında yük al',
+        GorevAsama.yukAlma             => 'Yüklü harekete geç',
+        GorevAsama.yukluHareket        => 'Kapı iznini bekle',
+        GorevAsama.kapiIzniBekleniyor  => 'Geçiş izni alındıktan sonra ilerle',
+        GorevAsama.yukBirakma          => 'Yükü bırak ve başlangıca dön',
+        GorevAsama.tamamlandi          => 'Yeni görev bekleniyor',
+        GorevAsama.hata                => 'Operatör müdahalesi bekleniyor',
+        GorevAsama.acilStop            => 'Operatör müdahalesi bekleniyor',
+        // Eski değerler
+        GorevAsama.almayaGidiyor       => 'Alma noktasında yük al',
+        GorevAsama.yukAliniyor         => 'Bırakma noktasına git',
+        GorevAsama.birakmayadGidiyor   => 'Bırakma noktasında yük bırak',
+        GorevAsama.yukBirakiliyor      => 'Başlangıca dön',
+        GorevAsama.iptalEdildi         => 'Operatör müdahalesi gerekli',
+      };
+
+  /// İlerleme çubuğundaki index (0–6). -1 = hata/stop/bosta.
+  int get adimSirasi => switch (this) {
+        GorevAsama.gorevAlindi         => 0,
+        GorevAsama.yuksuzHareket       => 1,
+        GorevAsama.almayaGidiyor       => 1,
+        GorevAsama.yukAlma             => 2,
+        GorevAsama.yukAliniyor         => 2,
+        GorevAsama.yukluHareket        => 3,
+        GorevAsama.birakmayadGidiyor   => 3,
+        GorevAsama.kapiIzniBekleniyor  => 4,
+        GorevAsama.yukBirakma          => 5,
+        GorevAsama.yukBirakiliyor      => 5,
+        GorevAsama.tamamlandi          => 6,
+        _                              => -1,
       };
 }
 
@@ -129,9 +192,17 @@ class GcsMissionModel extends ChangeNotifier {
     }
   }
 
-  /// Aktif görevi sıfırlar.
-  void goreviBitir({bool iptal = false}) {
-    asama = iptal ? GorevAsama.iptalEdildi : GorevAsama.tamamlandi;
+  /// Aktif görevi sonlandırır.
+  ///
+  /// [hata] true → Hata durumu; [acilStop] true → Acil Stop; aksi → Tamamlandı.
+  void goreviBitir({bool hata = false, bool acilStop = false}) {
+    if (acilStop) {
+      asama = GorevAsama.acilStop;
+    } else if (hata) {
+      asama = GorevAsama.hata;
+    } else {
+      asama = GorevAsama.tamamlandi;
+    }
     notifyListeners();
   }
 

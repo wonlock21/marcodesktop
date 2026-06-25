@@ -33,7 +33,7 @@ class _ControllerPageState extends State<ControllerPage> {
   bool oto = false;
   bool lidarDurum = false;
   int speed = 0;
-  String manuelOrOtonom = "Manuel";
+  String manuelOrOtonom = "Otonom";
   String _site = '';
   bool isConnected = false;
   String nextQR = "null";
@@ -214,6 +214,25 @@ class _ControllerPageState extends State<ControllerPage> {
     startConnectionCheck();
   }
 
+  /// Yazılımsal güvenli durdurma — fiziksel acil stopun yerine geçmez.
+  ///
+  /// Görevi iptal eder, komutu pasife alır, olay günlüğüne kaydeder.
+  void _guvenliDurdur() {
+    // Görev durumunu acil stop olarak işaretle
+    final mission = Provider.of<GcsMissionModel>(context, listen: false);
+    final alarms  = Provider.of<GcsAlarmModel>(context, listen: false);
+    final log     = Provider.of<GcsEventLogModel>(context, listen: false);
+
+    mission.asamaGuncelle(GorevAsama.acilStop);
+    alarms.setAlarm(AlarmTur.acilStop,
+        mesaj: 'Yazılımsal güvenli durdurma komutu gönderildi');
+    log.ekle('Güvenli durdurma komutu gönderildi');
+
+    if (!kAdminMode) {
+      veriBas("k944"); // Dur komutu (hareket durdur)
+    }
+  }
+
   /// "Bağlantıyı Kes" butonuna basıldığında çağrılır.
   void _baglantiyiKes() {
     _connectionTimer?.cancel();
@@ -360,11 +379,11 @@ class _ControllerPageState extends State<ControllerPage> {
               label: "HARİTA",
               onTap: () => Navigator.pushNamed(context, 'map-page')),
           _NavBtn(
-              label: "QR LİSTE",
+              label: "QR LİSTESİ",
               onTap: () => Navigator.pushNamed(context, 'QR-page')),
           _NavBtn(label: "VERİLER", onTap: () => _navigateToDataPage(_site)),
           _NavBtn(
-              label: "PARAMETRE",
+              label: "PARAMETRELER",
               onTap: () => Navigator.pushNamed(context, 'parameter-page',
                   arguments: _site)),
           SizedBox(width: 2.w),
@@ -463,9 +482,13 @@ class _ControllerPageState extends State<ControllerPage> {
                                     crossAxisAlignment:
                                         CrossAxisAlignment.center,
                                     children: [
-                                      PowerButton(onPressed: () {
-                                        veriBas("k315");
-                                      }),
+                                      PowerButton(
+                                        labelOff: 'Sistemi\nBaşlat',
+                                        labelOn: 'Sistemi\nDurdur',
+                                        onPressed: () {
+                                          veriBas("k315");
+                                        },
+                                      ),
                                       SizedBox(width: 2.w),
                                       Expanded(
                                           child: NormalButton(
@@ -556,7 +579,7 @@ class _ControllerPageState extends State<ControllerPage> {
                                       SizedBox(width: 1.5.w),
                                       Expanded(
                                           child: NormalButton(
-                                        text: "Lidar A/K",
+                                        text: "LiDAR A/K",
                                         assignedKey: LogicalKeyboardKey.keyV,
                                         onPressed: () {
                                           if (lidarDurum) {
@@ -613,16 +636,6 @@ class _ControllerPageState extends State<ControllerPage> {
                               ),
                               SizedBox(height: 0.8.h),
                               _statusRow(
-                                'MOD',
-                                kAdminMode && !conn.robotBaglanti.aktif
-                                    ? 'ADMIN / DEMO'
-                                    : (kAdminMode ? 'DEMO' : 'CANLI'),
-                                kAdminMode ? const Color(0xFFFF9800) : bright,
-                                muted,
-                                bright,
-                              ),
-                              SizedBox(height: 0.8.h),
-                              _statusRow(
                                 'ÇALIŞMA MODU',
                                 manuelOrOtonom,
                                 oto ? accent : bright,
@@ -631,7 +644,7 @@ class _ControllerPageState extends State<ControllerPage> {
                               ),
                               SizedBox(height: 0.8.h),
                               _statusRow(
-                                'KOMUT GÖNDERİM',
+                                'UZAKTAN KOMUT',
                                 _komutDurumu(conn.robotBaglanti.aktif,
                                     conn.uzaktanKontrolAktif),
                                 _komutRenk(
@@ -684,7 +697,7 @@ class _ControllerPageState extends State<ControllerPage> {
                                 Expanded(
                                     child: _GcsTelCard(
                                   icon: Icons.thermostat,
-                                  label: "SICAKLIK",
+                                  label: "KONTROLCÜ SICAK.",
                                   value: safe(agv.sicaklik) == '--'
                                       ? '--'
                                       : "${safe(agv.sicaklik)}°C",
@@ -862,8 +875,16 @@ class _ControllerPageState extends State<ControllerPage> {
                               SizedBox(height: 1.2.h),
                               _statusRow(
                                 'UZAKTAN KONTROL',
-                                conn.uzaktanKontrolAktif ? 'Aktif' : 'Kilitli',
-                                conn.uzaktanKontrolAktif ? success : danger,
+                                oto
+                                    ? 'Kilitli (Otonom)'
+                                    : (conn.uzaktanKontrolAktif
+                                        ? 'Aktif'
+                                        : 'Kilitli'),
+                                oto
+                                    ? muted
+                                    : (conn.uzaktanKontrolAktif
+                                        ? success
+                                        : danger),
                                 muted,
                                 bright,
                               ),
@@ -871,10 +892,66 @@ class _ControllerPageState extends State<ControllerPage> {
                           ),
                         ),
                         SizedBox(height: 2.h),
+
+                        // ── Güvenli Durdur ────────────────────────────
+                        GestureDetector(
+                          onTap: _guvenliDurdur,
+                          child: Container(
+                            width: double.infinity,
+                            padding: EdgeInsets.symmetric(vertical: 1.4.h),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF2A0A0A),
+                              border: Border.all(
+                                  color: const Color(0xFFB71C1C),
+                                  width: 0.6.w),
+                              borderRadius: BorderRadius.circular(4.r),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.stop_circle_outlined,
+                                    color: const Color(0xFFEF5350),
+                                    size: 4.5.sp),
+                                SizedBox(width: 1.5.w),
+                                Text(
+                                  'GÜVENLİ DURDUR',
+                                  style: TextStyle(
+                                    color: const Color(0xFFEF5350),
+                                    fontSize: 3.5.sp,
+                                    fontWeight: FontWeight.bold,
+                                    fontFamily: 'monospace',
+                                    letterSpacing: 1.2,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        SizedBox(height: 2.h),
+
                         // ── Manuel Kontroller ─────────────────────────
                         _sectionLabel("MANUEL KONTROLLER"),
-                        SizedBox(height: 1.h),
-                        Row(
+                        if (oto)
+                          Padding(
+                            padding: EdgeInsets.only(bottom: 1.h),
+                            child: Text(
+                              'Otomatik modda manuel kontrol pasif',
+                              style: TextStyle(
+                                color: muted,
+                                fontSize: 2.4.sp,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                          ),
+                        SizedBox(height: 0.5.h),
+                        IgnorePointer(
+                          ignoring: oto,
+                          child: AnimatedOpacity(
+                            opacity: oto ? 0.35 : 1.0,
+                            duration: const Duration(milliseconds: 200),
+                            child: Column(
+                              children: [
+                                Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Expanded(
@@ -984,45 +1061,50 @@ class _ControllerPageState extends State<ControllerPage> {
                                 ),
                               ),
                             ),
-                          ],
-                        ),
-                        SizedBox(height: 1.5.h),
-                        Container(
-                          padding: EdgeInsets.symmetric(
-                              horizontal: 2.w, vertical: 1.h),
-                          decoration: _flatBox(panelBg, borderC),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                "HIZ: $speed",
-                                style: TextStyle(
-                                  color: bright,
-                                  fontSize: 3.sp,
-                                  fontFamily: 'monospace',
-                                  fontWeight: FontWeight.bold,
+                                ],
+                                ),   // Row (lift + araç butonları)
+                                SizedBox(height: 1.5.h),
+                                Container(
+                                  padding: EdgeInsets.symmetric(
+                                      horizontal: 2.w, vertical: 1.h),
+                                  decoration: _flatBox(panelBg, borderC),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        "HIZ: $speed",
+                                        style: TextStyle(
+                                          color: bright,
+                                          fontSize: 3.sp,
+                                          fontFamily: 'monospace',
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      ExcludeSemantics(
+                                        child: Slider(
+                                          value: speed.toDouble(),
+                                          divisions: 4,
+                                          min: 0.0,
+                                          max: 4,
+                                          activeColor: accent,
+                                          inactiveColor: borderC,
+                                          label: speed.toString(),
+                                          onChanged: (val) {
+                                            setState(() {
+                                              speed = val.toInt();
+                                            });
+                                          },
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                              ),
-                              ExcludeSemantics(
-                                child: Slider(
-                                  value: speed.toDouble(),
-                                  divisions: 4,
-                                  min: 0.0,
-                                  max: 4,
-                                  activeColor: accent,
-                                  inactiveColor: borderC,
-                                  label: speed.toString(),
-                                  onChanged: (val) {
-                                    setState(() {
-                                      speed = val.toInt();
-                                    });
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        SizedBox(height: 3.h),
+                                SizedBox(height: 3.h),
+                              ],
+                            ),   // Column inside AnimatedOpacity
+                          ),     // AnimatedOpacity
+                        ),       // IgnorePointer
                       ],
                     ),
                   ),
@@ -1285,17 +1367,42 @@ class _ControllerPageState extends State<ControllerPage> {
           Expanded(
               child: _SummaryCard(
             title: 'GÖREV ÖZETİ',
-            borderC: borderC,
+            titleColor: mission.asama.hataVeyaStop ? danger : null,
+            borderC: mission.asama.hataVeyaStop
+                ? danger.withAlpha(100)
+                : borderC,
             muted: muted,
             bright: bright,
             rows: [
               _SRow('ID', safe(mission.gorevId)),
               _SRow('ROTA', rota, truncate: true),
-              _SRow('AŞAMA', mission.asama.etiket, truncate: true),
-              _SRow('SONRAKİ', mission.asama.sonrakiAdim, truncate: true),
+              _SRow('DURUM', mission.asama.etiket,
+                  valueColor: mission.asama.hataVeyaStop
+                      ? danger
+                      : mission.asama == GorevAsama.tamamlandi
+                          ? success
+                          : null,
+                  truncate: true),
+              _SRow(
+                'SONRAKİ',
+                // Kapı izni zaten verilmişse "Kapı iznini bekle" yerine ileri adım yaz
+                (mission.asama == GorevAsama.yukluHareket ||
+                            mission.asama == GorevAsama.kapiIzniBekleniyor) &&
+                        mission.kapiIzni
+                    ? 'Kapıdan geç → Bırakma noktasına ilerle'
+                    : mission.asama.sonrakiAdim,
+                truncate: true,
+              ),
               _SRow('SÜRE',
                   mission.gorevAktif ? mission.gorevSuresiFormatli : '--'),
             ],
+            footer: _MissionProgressBar(
+              asama:   mission.asama,
+              bright:  bright,
+              muted:   muted,
+              success: success,
+              danger:  danger,
+            ),
           )),
           SizedBox(width: 1.5.w),
 
@@ -1352,24 +1459,36 @@ class _ControllerPageState extends State<ControllerPage> {
             muted: muted,
             bright: bright,
             rows: [
+              _SRow(
+                  'DURUM',
+                  alarms.temiz && !alarms.guvenliDurusAktif
+                      ? 'Güvenli'
+                      : 'Uyarı',
+                  valueColor: alarms.temiz && !alarms.guvenliDurusAktif
+                      ? success
+                      : danger),
               _SRow('ACİL STOP',
                   alarms.isAktif(AlarmTur.acilStop) ? 'AKTİF' : 'Normal',
                   valueColor:
                       alarms.isAktif(AlarmTur.acilStop) ? danger : success),
+              _SRow('GÜV. DURUŞ',
+                  alarms.guvenliDurusAktif ? 'Aktif' : 'Normal',
+                  valueColor: alarms.guvenliDurusAktif ? danger : success),
               _SRow(
                   'ALARM',
                   alarms.temiz
-                      ? 'Temiz'
-                      : '${alarms.aktifAlarmlar.length} Aktif',
-                  valueColor: alarms.temiz ? success : const Color(0xFFFF9800)),
-              _SRow('GÜV. DURUŞ', alarms.guvenliDurusAktif ? 'Aktif' : 'Normal',
-                  valueColor: alarms.guvenliDurusAktif ? danger : muted),
+                      ? 'Yok'
+                      : (alarms.aktifAlarmlar.isNotEmpty
+                          ? alarms.aktifAlarmlar.first.tur.etiket
+                          : 'Aktif'),
+                  valueColor: alarms.temiz ? success : const Color(0xFFFF9800),
+                  truncate: true),
               _SRow(
                   'KRİTİK',
                   alarms.kritikAlarmVar
                       ? (alarms.enKritik?.etiket ?? 'Var')
                       : 'Yok',
-                  valueColor: alarms.kritikAlarmVar ? danger : muted,
+                  valueColor: alarms.kritikAlarmVar ? danger : success,
                   truncate: true),
             ],
           )),
@@ -1492,8 +1611,10 @@ class _ControllerPageState extends State<ControllerPage> {
   }
 
   String _komutDurumu(bool connected, bool uzaktanAktif) {
-    if (kAdminMode) return 'Simülasyon';
-    if (!connected || !uzaktanAktif) return 'Pasif';
+    if (!connected) return 'Pasif';
+    // Otomatik modda uzaktan kontrol kilitlidir ama komut gönderimi sistem tarafından aktiftir.
+    if (oto) return 'Aktif (Otonom)';
+    if (!uzaktanAktif) return 'Pasif';
     return 'Aktif';
   }
 
@@ -1504,8 +1625,9 @@ class _ControllerPageState extends State<ControllerPage> {
     Color muted,
     Color danger,
   ) {
-    if (kAdminMode) return const Color(0xFFFF9800);
-    if (!connected || !uzaktanAktif) return danger;
+    if (!connected) return danger;
+    if (oto) return success;
+    if (!uzaktanAktif) return muted;
     return success;
   }
 
@@ -1835,6 +1957,7 @@ class _SummaryCard extends StatelessWidget {
   final String title;
   final Color? titleColor;
   final List<_SRow> rows;
+  final Widget? footer;
   final Color borderC;
   final Color muted;
   final Color bright;
@@ -1843,6 +1966,7 @@ class _SummaryCard extends StatelessWidget {
     required this.title,
     this.titleColor,
     required this.rows,
+    this.footer,
     required this.borderC,
     required this.muted,
     required this.bright,
@@ -1911,8 +2035,130 @@ class _SummaryCard extends StatelessWidget {
                   ],
                 ),
               )),
+          if (footer != null) ...[
+            SizedBox(height: 0.8.h),
+            footer!,
+          ],
         ],
       ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Görev ilerleme çubuğu
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Görevin 7 adımlık akışını yatay şerit olarak gösterir.
+///
+/// Tamamlanan adımlar ✓ ile, aktif adım parlak vurgulu, bekleyenler soluk görünür.
+/// Hata/acil stop durumunda tüm şerit kırmızı uyarı moduna girer.
+class _MissionProgressBar extends StatelessWidget {
+  final GorevAsama asama;
+  final Color bright;
+  final Color muted;
+  final Color success;
+  final Color danger;
+
+  static const List<String> _adimlar = [
+    'Görev\nAlındı',
+    'Yüksüz\nHareket',
+    'Yük\nAlma',
+    'Yüklü\nHareket',
+    'Kapı\nİzni',
+    'Yük\nBırakma',
+    'Tamamlandı',
+  ];
+
+  const _MissionProgressBar({
+    required this.asama,
+    required this.bright,
+    required this.muted,
+    required this.success,
+    required this.danger,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final aktifIndex = asama.adimSirasi;
+    final isError = asama.hataVeyaStop;
+    final tamamlandi = asama == GorevAsama.tamamlandi;
+
+    return Row(
+      children: List.generate(_adimlar.length * 2 - 1, (i) {
+        // Çift index → bağlantı çizgisi
+        if (i.isOdd) {
+          final stepIndex = (i + 1) ~/ 2;
+          final lineActive = !isError &&
+              (tamamlandi || (aktifIndex >= stepIndex));
+          return Expanded(
+            child: Container(
+              height: 0.4.h,
+              color: lineActive ? success : const Color(0xFF333333),
+            ),
+          );
+        }
+
+        final stepIndex = i ~/ 2;
+        final isDone = !isError && (tamamlandi || aktifIndex > stepIndex);
+        final isActive = !isError && aktifIndex == stepIndex;
+        final isWaiting = !isDone && !isActive;
+
+        Color dotColor;
+        Color textColor;
+
+        if (isError) {
+          dotColor  = danger;
+          textColor = stepIndex == aktifIndex ? danger : muted;
+        } else if (isDone) {
+          dotColor  = success;
+          textColor = success;
+        } else if (isActive) {
+          dotColor  = bright;
+          textColor = bright;
+        } else {
+          dotColor  = const Color(0xFF333333);
+          textColor = muted;
+        }
+
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Nokta veya ✓
+            Container(
+              width: 2.5.w,
+              height: 2.5.w,
+              decoration: BoxDecoration(
+                color: isDone ? success : dotColor,
+                shape: BoxShape.circle,
+                border: isActive
+                    ? Border.all(color: bright, width: 0.4.w)
+                    : null,
+              ),
+              child: isDone
+                  ? Icon(Icons.check, size: 1.5.sp, color: Colors.black)
+                  : isActive && isError
+                      ? Icon(Icons.warning_amber,
+                          size: 1.5.sp, color: Colors.white)
+                      : null,
+            ),
+            SizedBox(height: 0.4.h),
+            // Adım etiketi
+            Text(
+              isError && isActive
+                  ? (asama == GorevAsama.acilStop ? 'Acil\nStop' : 'Hata')
+                  : _adimlar[stepIndex],
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: isWaiting ? const Color(0xFF555555) : textColor,
+                fontSize: 1.8.sp,
+                fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+                height: 1.2,
+              ),
+            ),
+          ],
+        );
+      }),
     );
   }
 }

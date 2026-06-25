@@ -21,6 +21,18 @@ class QRPage extends StatefulWidget {
 
 class _QRPageState extends State<QRPage> {
 
+  /// QR etiket adından (QA2.1, QB3.1, CS1.1 vb.) tip döner.
+  String _qrTipEtiket(String label) {
+    final upper = label.toUpperCase();
+    if (upper.startsWith('QA'))  return 'Alma';
+    if (upper.startsWith('QB'))  return 'Bırakma';
+    if (upper.startsWith('CS'))  return 'Şarj';
+    if (upper.startsWith('S'))   return 'Başlangıç';
+    if (upper.startsWith('D') || upper.contains('KAPI')) return 'Kapı';
+    if (upper.startsWith('W') || upper.contains('BEKL')) return 'Bekleme';
+    return '--';
+  }
+
   void _showRenameDialog(BuildContext context, DataPoint qrPoint) {
     final TextEditingController controller = TextEditingController();
 
@@ -162,11 +174,12 @@ class _QRPageState extends State<QRPage> {
           ),
         ),
       ),
-      body: Center(
-        child: Container(
-          width: 220.w,
-          padding: EdgeInsets.symmetric(vertical: 4.h),
+      body: Padding(
+        padding: EdgeInsets.symmetric(vertical: 4.h, horizontal: 4.w),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
           child: SingleChildScrollView(
+            scrollDirection: Axis.vertical,
             child: DataTable(
               headingTextStyle: TextStyle(
                 color: _muted,
@@ -189,15 +202,18 @@ class _QRPageState extends State<QRPage> {
               dividerThickness: 0.3,
               columns: const <DataColumn>[
                 DataColumn(label: Text('ETİKET')),
+                DataColumn(label: Text('TİP')),
                 DataColumn(label: Text('X KONUM')),
                 DataColumn(label: Text('Y KONUM')),
                 DataColumn(label: Text('EK BİLGİ')),
+                DataColumn(label: Text('DOĞRULAMA')),
+                DataColumn(label: Text('SON OKUNMA')),
                 DataColumn(label: Text('İŞLEM')),
               ],
               rows: List.generate(
                 qrPoints.length,
                 (index) {
-                  var qrPoint = qrPoints[index];
+                  final qrPoint = qrPoints[index];
 
                   String additionalData = '';
                   for (var invisibleQR in invisibleQRfor) {
@@ -208,14 +224,20 @@ class _QRPageState extends State<QRPage> {
                     }
                   }
 
+                  // QR tipi etiket adından türetilir
+                  final tip = _qrTipEtiket(qrPoint.type);
+
                   return DataRow(
                     cells: <DataCell>[
                       DataCell(Text(qrPoint.type)),
+                      DataCell(Text(tip)),
                       DataCell(Text(qrPoint.x.toString())),
                       DataCell(Text(qrPoint.y.toString())),
                       DataCell(Text(
                         additionalData.isEmpty ? '--' : additionalData,
                       )),
+                      const DataCell(Text('--')),
+                      const DataCell(Text('--')),
                       DataCell(
                         GestureDetector(
                           onTap: () => _showRenameDialog(context, qrPoint),

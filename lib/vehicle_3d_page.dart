@@ -54,8 +54,10 @@ class _Vehicle3DPageState extends State<Vehicle3DPage> {
               child: Image.asset('assets/images/agv_vehicle.png'),
             ),
             SizedBox(width: 6.w),
-            // Özellikler paneli
-            Column(
+            // Özellikler paneli — genişliği 202.w ile sabitle
+            SizedBox(
+              width: 202.w,
+              child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // Başlık bandı
@@ -80,11 +82,12 @@ class _Vehicle3DPageState extends State<Vehicle3DPage> {
                   ),
                 ),
                 SizedBox(height: 3.h),
+                // ── Mekanik / Güç Özellikleri ─────────────────────────
                 const Row(
                   children: [
                     PropertyCard(cardName: "Max Hız",        value: "1.46 m/sn"),
-                    PropertyCard(cardName: "Kapasite",       value: "400 kg"),
-                    PropertyCard(cardName: "Max Pil Süresi", value: "3 sa 20 dk"),
+                    PropertyCard(cardName: "Kapasite",       value: "--"),
+                    PropertyCard(cardName: "Max Pil Süresi", value: "--"),
                   ],
                 ),
                 const Row(
@@ -98,21 +101,113 @@ class _Vehicle3DPageState extends State<Vehicle3DPage> {
                   children: [
                     PropertyCard(cardName: "Taban Yük.",     value: "30 mm"),
                     PropertyCard(cardName: "Lift Yük.",      value: "100 mm"),
-                    PropertyCard(cardName: "Çekme Kap.",     value: "500 kg"),
+                    PropertyCard(cardName: "Çekme Kap.",     value: "--"),
                   ],
                 ),
                 const Row(
                   children: [
                     PropertyCard(cardName: "Motor Gücü",     value: "500 W"),
-                    PropertyCard(cardName: "Haberleşme",     value: "70 m"),
+                    PropertyCard(cardName: "Haberleşme",     value: "--"),
                     PropertyCard(cardName: "Çalışma V.",     value: "24 V"),
                   ],
                 ),
+                SizedBox(height: 3.h),
+                // ── Sistem Bileşenleri ─────────────────────────────────
+                _ComponentsPanel(),
               ],
-            ),
+            ),   // Column
+            ),   // SizedBox(width: 202.w)
           ],
         ),
       ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026 Sistem Bileşenleri Paneli
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ComponentsPanel extends StatelessWidget {
+  static const _items = [
+    ('İşlemci',          'Orange Pi 5'),
+    ('Alt Kontrol',      'STM32-Nucleo'),
+    ('LiDAR',            'RPLiDAR A3'),
+    ('Kamera',           'IMX219'),
+    ('QR Okuyucu',       'GM67 USB'),
+    ('Akım/Voltaj',      'Max471'),
+    ('Bluetooth',        'HC06'),
+    ('Motor Sürücü',     'BTS7960B'),
+    ('İşletim Sistemi',  'ROS 2 / Nav2'),
+    ('Haritalama',       'SLAM Toolbox'),
+    ('Görüntü',          'OpenCV'),
+    ('Geliştirme',       'STM32CubeIDE'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 202.w,
+          height: 18.h,
+          decoration: BoxDecoration(
+            color: _panelBg,
+            border: Border.all(color: _borderC, width: 0.5.w),
+            borderRadius: BorderRadius.circular(4.r),
+          ),
+          child: Center(
+            child: Text(
+              'SİSTEM BİLEŞENLERİ — 2026',
+              style: TextStyle(
+                color: _bright,
+                fontSize: 3.5.sp,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.8,
+              ),
+            ),
+          ),
+        ),
+        SizedBox(height: 1.5.h),
+        Wrap(
+          spacing: 1.w,
+          runSpacing: 1.2.h,
+          children: _items.map(((String label, String value) item) {
+            return Container(
+              width: 99.w,
+              padding: EdgeInsets.symmetric(horizontal: 2.w, vertical: 1.h),
+              decoration: BoxDecoration(
+                color: _panelBg,
+                border: Border.all(color: _borderC, width: 0.4.w),
+                borderRadius: BorderRadius.circular(4.r),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    item.$1,
+                    style: TextStyle(color: _muted, fontSize: 2.6.sp),
+                  ),
+                  Flexible(
+                    child: Text(
+                      item.$2,
+                      textAlign: TextAlign.end,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: _accent,
+                        fontSize: 2.8.sp,
+                        fontFamily: 'monospace',
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+        ),
+      ],
     );
   }
 }

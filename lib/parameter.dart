@@ -175,7 +175,7 @@ class _ParameterPageState extends State<ParameterPage> {
           child: Divider(height: 0.3.h, color: _borderC),
         ),
         title: Text(
-          'PARAMETRE',
+          'PARAMETRELER',
           style: TextStyle(
             color: Colors.white,
             fontSize: 4.sp,
@@ -470,7 +470,7 @@ class _ParameterPageState extends State<ParameterPage> {
                   ]),
 
                   SizedBox(height: 4.h),
-                  _sectionLabel("ARDUİNO MANUEL PID"),
+                  _sectionLabel("STM32 MANUEL PID"),
                   Row(children: [
                     _field(
                       w: 50, h: 52,
@@ -510,7 +510,7 @@ class _ParameterPageState extends State<ParameterPage> {
                   ]),
 
                   SizedBox(height: 4.h),
-                  _sectionLabel("RASPBERRYPİ OTONOM PID"),
+                  _sectionLabel("ORANGE PI 5 / ROS 2 OTONOM PID"),
                   Row(children: [
                     _field(
                       w: 50, h: 52,
@@ -550,7 +550,7 @@ class _ParameterPageState extends State<ParameterPage> {
                   ]),
 
                   SizedBox(height: 4.h),
-                  _sectionLabel("KOMUT DEĞER DEĞİŞTİRME"),
+                  _sectionLabel("MANUEL KOMUT DEĞERLERİ"),
                   Row(children: [
                     _field(
                       w: 28, h: 52,
@@ -614,7 +614,7 @@ class _ParameterPageState extends State<ParameterPage> {
                   ]),
 
                   SizedBox(height: 4.h),
-                  _sectionLabel("LİFT HAREKET PARAMETRESİ"),
+                  _sectionLabel("FORKLİFT / LİFT HAREKET PARAMETRELERİ"),
                   Row(children: [
                     _field(
                       w: 50, h: 52,

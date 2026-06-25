@@ -8,6 +8,8 @@ class PowerButton extends StatefulWidget {
   final double width;
   final IconData icon;
   final Function onPressed;
+  final String? labelOn;
+  final String? labelOff;
 
   const PowerButton({
     super.key,
@@ -15,6 +17,8 @@ class PowerButton extends StatefulWidget {
     this.width = 300,
     this.height = 100,
     required this.onPressed,
+    this.labelOn,
+    this.labelOff,
   });
 
   @override
@@ -42,8 +46,8 @@ class _PowerButtonState extends State<PowerButton> {
       },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        height: 55.h,
         width: 55.w,
+        padding: EdgeInsets.symmetric(vertical: 1.2.h),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(4.r),
           color: isOn ? const Color(0xFF3A2020) : const Color(0xFF1A1A1A),
@@ -56,10 +60,34 @@ class _PowerButtonState extends State<PowerButton> {
           child: AnimatedScale(
             scale: isOn ? 0.88 : 1.0,
             duration: const Duration(milliseconds: 200),
-            child: Icon(
-              widget.icon,
-              color: isOn ? const Color(0xFFE53935) : const Color(0xFF9E9E9E),
-              size: 14.sp,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  widget.icon,
+                  color: isOn ? const Color(0xFFE53935) : const Color(0xFF9E9E9E),
+                  size: 9.sp,
+                ),
+                if (widget.labelOn != null || widget.labelOff != null)
+                  Padding(
+                    padding: EdgeInsets.only(top: 0.5.h),
+                    child: Text(
+                      isOn
+                          ? (widget.labelOn ?? '')
+                          : (widget.labelOff ?? ''),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: isOn
+                            ? const Color(0xFFE53935)
+                            : const Color(0xFF9E9E9E),
+                        fontSize: 2.2.sp,
+                        fontFamily: 'monospace',
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
         ),

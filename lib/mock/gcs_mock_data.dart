@@ -19,15 +19,15 @@ abstract final class GcsMockData {
   static const ConnDurum mockSistem    = ConnDurum.bagli;
   static const ConnDurum mockRobot     = ConnDurum.bagli;
   static const ConnDurum mockPlc       = ConnDurum.bagli;
-  static const ConnDurum mockStm32     = ConnDurum.baglaniyor;
-  static const ConnDurum mockBluetooth = ConnDurum.cevrimdisi;
+  static const ConnDurum mockStm32     = ConnDurum.bagli;
+  static const ConnDurum mockBluetooth = ConnDurum.bagli;
 
   // ── Görev ────────────────────────────────────────────────────────────────
 
   static const String mockGorevId      = 'MSN-0042';
   static const String mockAlmaNoktasi  = 'A2';
   static const String mockBirakNoktasi = 'B3';
-  static const GorevAsama mockAsama    = GorevAsama.birakmayadGidiyor;
+  static const GorevAsama mockAsama    = GorevAsama.yukluHareket;
   static const Duration mockSure       = Duration(minutes: 4, seconds: 17);
 
   // ── Otomasyon ────────────────────────────────────────────────────────────
@@ -63,15 +63,13 @@ abstract final class GcsMockData {
   // ── Manuel güvenlik ──────────────────────────────────────────────────────
 
   static const bool mockFizikselManuelMod   = false; // Otomatik modda
-  static const bool mockUzaktanKontrolAktif = true;
+  static const bool mockUzaktanKontrolAktif = false; // Otomatik modda kilitli
 
   // ── Aktif alarmlar ────────────────────────────────────────────────────────
   //
-  // Demo senaryosu: STM32 henüz tam bağlı değil → haberleşme uyarısı.
+  // Final senaryo: tüm sistemler normal — aktif alarm yok.
 
-  static const List<AlarmTur> mockAktifAlarmlar = [
-    AlarmTur.stm32HaberlesmeHata, // STM32 henüz bağlanıyor
-  ];
+  static const List<AlarmTur> mockAktifAlarmlar = [];
 
   // ─────────────────────────────────────────────────────────────────────────
   // Uygulayıcı metodlar — her model için ayrı, null-safe

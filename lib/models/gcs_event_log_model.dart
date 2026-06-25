@@ -39,23 +39,27 @@ class GcsEventLogModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Demo / admin modu için örnek olay geçmişi.
+  /// Test / admin modu için örnek olay geçmişi.
+  ///
+  /// Tüm görev aşamalarını ve önemli sistem olaylarını içerir.
   void demoYukle() {
     _kayitlar.clear();
     final now = DateTime.now();
-    const mesajlar = [
-      'Görev tamamlandı',
-      'Yük bırakıldı',
-      'PLC: Geçiş izni alındı',
-      'Kapı kontrol noktasına ulaşıldı',
-      'Yük alındı',
-      'QR okundu',
-      'Görev alındı',
+    final kayitlar = [
+      // (kaç saniye önce, mesaj)
+      (10,  'Yüklü hareket başladı → B3 istikameti'),
+      (38,  'Yük alındı — Lift kaldırıldı'),
+      (72,  'QR okundu: QA2.1 — Konum doğrulandı'),
+      (115, 'Yük alma noktasına ulaşıldı (A2)'),
+      (158, 'Yüksüz hareket başladı → A2 istikameti'),
+      (183, 'Görev alındı — ID: MSN-0042 | A2 → B3'),
+      (210, 'Robot bağlantısı kuruldu'),
+      (245, 'Sistem hazır — Görev bekleniyor'),
     ];
-    for (var i = 0; i < mesajlar.length; i++) {
+    for (final (sn, mesaj) in kayitlar) {
       _kayitlar.add(GcsEventEntry(
-        zaman: now.subtract(Duration(minutes: (mesajlar.length - i) * 2)),
-        mesaj: mesajlar[i],
+        zaman: now.subtract(Duration(seconds: sn)),
+        mesaj: mesaj,
       ));
     }
     notifyListeners();

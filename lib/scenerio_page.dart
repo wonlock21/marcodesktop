@@ -66,16 +66,43 @@ class _ScenarioPageState extends State<ScenarioPage> {
     return code;
   }
 
+  /// İstasyon tipi etiketi (QR Listesi / görev mantığıyla uyumlu).
+  String _tipEtiketi(String code) {
+    if (code.startsWith('A'))  return 'Alma Noktası';
+    if (code.startsWith('B'))  return 'Bırakma Noktası';
+    if (code.startsWith('S'))  return 'Başlangıç / Bekleme';
+    if (code == 'CS')          return 'Şarj İstasyonu';
+    return '';
+  }
+
+  IconData _tipIkon(String code) {
+    if (code.startsWith('A'))  return Icons.download_outlined;
+    if (code.startsWith('B'))  return Icons.upload_outlined;
+    if (code.startsWith('S'))  return Icons.flag_outlined;
+    if (code == 'CS')          return Icons.battery_charging_full;
+    return Icons.place_outlined;
+  }
+
+  Color _tipRengi(String code) {
+    if (code.startsWith('A'))  return const Color(0xFF42A5F5); // mavi — alma
+    if (code.startsWith('B'))  return const Color(0xFF66BB6A); // yeşil — bırakma
+    if (code.startsWith('S'))  return const Color(0xFFFF9800); // turuncu — başlangıç
+    if (code == 'CS')          return const Color(0xFFAB47BC); // mor — şarj
+    return _accent;
+  }
+
   List<Widget> _buildChipList() => _selected.map((code) {
+        final renk = _tipRengi(code);
         return Padding(
-          padding: EdgeInsets.symmetric(vertical: 1.h, horizontal: 1.5.w),
+          padding: EdgeInsets.symmetric(vertical: 0.8.h, horizontal: 1.w),
           child: Chip(
+            avatar: Icon(_tipIkon(code), size: 4.sp, color: renk),
             label: Text(
               _displayName(code),
               style: TextStyle(color: _bright, fontSize: 3.sp, fontFamily: 'monospace'),
             ),
             backgroundColor: _panelBg,
-            side: BorderSide(width: 0.5.w, color: _borderC),
+            side: BorderSide(width: 0.5.w, color: renk.withAlpha(120)),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4.r)),
           ),
         );
@@ -137,7 +164,7 @@ class _ScenarioPageState extends State<ScenarioPage> {
           child: Divider(height: 0.3.h, color: _borderC),
         ),
         title: Text(
-          'SENARYO',
+          'GÖREV ROTASI OLUŞTUR',
           style: TextStyle(
             color: Colors.white,
             fontSize: 4.sp,
@@ -201,13 +228,12 @@ class _ScenarioPageState extends State<ScenarioPage> {
                 spacing: 2.w,
                 runSpacing: 2.h,
                 children: _allPlaces.map((code) {
-                  final isCS   = code == 'CS';
-                  final title  = isCS ? 'Şarj\nİstasyonu' : code;
-                  final icon   = isCS ? Icons.battery_charging_full : Icons.place_outlined;
+                  final renk = _tipRengi(code);
+                  final tip  = _tipEtiketi(code);
 
                   return SizedBox(
                     width: 50.w,
-                    height: 85.h,
+                    height: 90.h,
                     child: GestureDetector(
                       onTap: () => _addPlace(code),
                       child: Container(
@@ -219,16 +245,29 @@ class _ScenarioPageState extends State<ScenarioPage> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(icon, color: _accent, size: 6.sp),
-                            SizedBox(height: 1.h),
+                            Icon(_tipIkon(code), color: renk, size: 5.5.sp),
+                            SizedBox(height: 0.8.h),
                             Text(
-                              title,
+                              code == 'CS' ? 'CS' : code,
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 color: _bright,
-                                fontSize: isCS ? 3.sp : 4.sp,
+                                fontSize: 4.sp,
                                 fontFamily: 'monospace',
                                 fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            SizedBox(height: 0.4.h),
+                            Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 1.w),
+                              child: Text(
+                                tip,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: renk.withAlpha(200),
+                                  fontSize: 2.2.sp,
+                                  letterSpacing: 0.2,
+                                ),
                               ),
                             ),
                           ],
