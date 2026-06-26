@@ -2,12 +2,12 @@
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 // ─── Renk sabitleri ────────────────────────────────────────────────────────
-const _bg      = Color(0xFF121212);
+const _bg = Color(0xFF121212);
 const _panelBg = Color(0xFF1A1A1A);
 const _borderC = Color(0xFF333333);
-const _muted   = Color(0xFF9E9E9E);
-const _bright  = Color(0xFFE0E0E0);
-const _accent  = Color(0xFF42A5F5);
+const _muted = Color(0xFF9E9E9E);
+const _bright = Color(0xFFE0E0E0);
+const _accent = Color(0xFF42A5F5);
 
 class Vehicle3DPage extends StatefulWidget {
   const Vehicle3DPage({super.key});
@@ -42,7 +42,8 @@ class _Vehicle3DPageState extends State<Vehicle3DPage> {
         ),
       ),
       body: Padding(
-        padding: EdgeInsets.symmetric(vertical: 6.h, horizontal: 4.w),
+        padding:
+            EdgeInsets.only(top: 120.h, bottom: 6.h, left: 4.w, right: 4.w),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -58,65 +59,65 @@ class _Vehicle3DPageState extends State<Vehicle3DPage> {
             SizedBox(
               width: 202.w,
               child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Başlık bandı
-                Container(
-                  width: 202.w,
-                  height: 22.h,
-                  decoration: BoxDecoration(
-                    color: _panelBg,
-                    border: Border.all(color: _borderC, width: 0.5.w),
-                    borderRadius: BorderRadius.circular(4.r),
-                  ),
-                  child: Center(
-                    child: Text(
-                      "ÖZELLİKLER",
-                      style: TextStyle(
-                        color: _bright,
-                        fontSize: 4.5.sp,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 1,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Başlık bandı
+                  Container(
+                    width: 202.w,
+                    height: 22.h,
+                    decoration: BoxDecoration(
+                      color: _panelBg,
+                      border: Border.all(color: _borderC, width: 0.5.w),
+                      borderRadius: BorderRadius.circular(4.r),
+                    ),
+                    child: Center(
+                      child: Text(
+                        "ÖZELLİKLER",
+                        style: TextStyle(
+                          color: _bright,
+                          fontSize: 4.5.sp,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1,
+                        ),
                       ),
                     ),
                   ),
-                ),
-                SizedBox(height: 3.h),
-                // ── Mekanik / Güç Özellikleri ─────────────────────────
-                const Row(
-                  children: [
-                    PropertyCard(cardName: "Max Hız",        value: "1.46 m/sn"),
-                    PropertyCard(cardName: "Kapasite",       value: "--"),
-                    PropertyCard(cardName: "Max Pil Süresi", value: "--"),
-                  ],
-                ),
-                const Row(
-                  children: [
-                    PropertyCard(cardName: "Genişlik",       value: "850 mm"),
-                    PropertyCard(cardName: "Uzunluk",        value: "950 mm"),
-                    PropertyCard(cardName: "Yükseklik",      value: "450 mm"),
-                  ],
-                ),
-                const Row(
-                  children: [
-                    PropertyCard(cardName: "Taban Yük.",     value: "30 mm"),
-                    PropertyCard(cardName: "Lift Yük.",      value: "100 mm"),
-                    PropertyCard(cardName: "Çekme Kap.",     value: "--"),
-                  ],
-                ),
-                const Row(
-                  children: [
-                    PropertyCard(cardName: "Motor Gücü",     value: "500 W"),
-                    PropertyCard(cardName: "Haberleşme",     value: "--"),
-                    PropertyCard(cardName: "Çalışma V.",     value: "24 V"),
-                  ],
-                ),
-                SizedBox(height: 3.h),
-                // ── Sistem Bileşenleri ─────────────────────────────────
-                _ComponentsPanel(),
-              ],
-            ),   // Column
-            ),   // SizedBox(width: 202.w)
+                  SizedBox(height: 3.h),
+                  // ── Mekanik / Güç Özellikleri ─────────────────────────
+                  const Row(
+                    children: [
+                      PropertyCard(cardName: "Max Hız", value: "1.46 m/sn"),
+                      PropertyCard(cardName: "Kapasite", value: "--"),
+                      PropertyCard(cardName: "Max Pil Süresi", value: "--"),
+                    ],
+                  ),
+                  const Row(
+                    children: [
+                      PropertyCard(cardName: "Genişlik", value: "850 mm"),
+                      PropertyCard(cardName: "Uzunluk", value: "950 mm"),
+                      PropertyCard(cardName: "Yükseklik", value: "450 mm"),
+                    ],
+                  ),
+                  const Row(
+                    children: [
+                      PropertyCard(cardName: "Taban Yük.", value: "30 mm"),
+                      PropertyCard(cardName: "Lift Yük.", value: "100 mm"),
+                      PropertyCard(cardName: "Çekme Kap.", value: "--"),
+                    ],
+                  ),
+                  const Row(
+                    children: [
+                      PropertyCard(cardName: "Motor Gücü", value: "500 W"),
+                      PropertyCard(cardName: "Haberleşme", value: "--"),
+                      PropertyCard(cardName: "Çalışma V.", value: "24 V"),
+                    ],
+                  ),
+                  SizedBox(height: 3.h),
+                  // ── Sistem Bileşenleri ─────────────────────────────────
+                  _ComponentsPanel(),
+                ],
+              ), // Column
+            ), // SizedBox(width: 202.w)
           ],
         ),
       ),
@@ -130,18 +131,18 @@ class _Vehicle3DPageState extends State<Vehicle3DPage> {
 
 class _ComponentsPanel extends StatelessWidget {
   static const _items = [
-    ('İşlemci',          'Orange Pi 5'),
-    ('Alt Kontrol',      'STM32-Nucleo'),
-    ('LiDAR',            'RPLiDAR A3'),
-    ('Kamera',           'IMX219'),
-    ('QR Okuyucu',       'GM67 USB'),
-    ('Akım/Voltaj',      'Max471'),
-    ('Bluetooth',        'HC06'),
-    ('Motor Sürücü',     'BTS7960B'),
-    ('İşletim Sistemi',  'ROS 2 / Nav2'),
-    ('Haritalama',       'SLAM Toolbox'),
-    ('Görüntü',          'OpenCV'),
-    ('Geliştirme',       'STM32CubeIDE'),
+    ('İşlemci', 'Orange Pi 5'),
+    ('Alt Kontrol', 'STM32-Nucleo'),
+    ('LiDAR', 'RPLiDAR A3'),
+    ('Kamera', 'IMX219'),
+    ('QR Okuyucu', 'GM67 USB'),
+    ('Akım/Voltaj', 'Max471'),
+    ('Bluetooth', 'HC06'),
+    ('Motor Sürücü', 'BTS7960B'),
+    ('İşletim Sistemi', 'ROS 2 / Nav2'),
+    ('Haritalama', 'SLAM Toolbox'),
+    ('Görüntü', 'OpenCV'),
+    ('Geliştirme', 'STM32CubeIDE'),
   ];
 
   @override
