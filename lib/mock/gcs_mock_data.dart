@@ -43,7 +43,6 @@ abstract final class GcsMockData {
   static const String mockVoltage      = '24.6';
   static const String mockAmper        = '1.8';
   static const String mockSonQR        = 'QA2.1';
-  static const String mockRfid         = 'RF-0427';
   static const double mockCurrX        = 3.2;
   static const double mockCurrY        = 2.1;
   static const double mockCurrYaw      = 0.45;
@@ -104,7 +103,6 @@ abstract final class GcsMockData {
       ..voltage      = mockVoltage
       ..amper        = mockAmper
       ..sonQR        = mockSonQR
-      ..rfid         = mockRfid
       ..currX        = mockCurrX
       ..currY        = mockCurrY
       ..currYaw      = mockCurrYaw

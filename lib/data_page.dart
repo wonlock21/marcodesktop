@@ -48,11 +48,6 @@ class _DataPageState extends State<DataPage> {
         'enc_sagPulse':  '2151',
         'enc_solHiz':    '0.87 m/s',
         'enc_sagHiz':    '0.86 m/s',
-        // RFID RC522
-        'rfid_id':       'RF-0427',
-        'rfid_durum':    'Okundu',
-        'rfid_son':      'İst. A2',
-        'rfid_rssi':     '--',
         // Max471
         'pwr_akim':      '1.8 A',
         'pwr_voltaj':    '24.6 V',
@@ -229,15 +224,6 @@ class _DataPageState extends State<DataPage> {
                   'Sağ Pulse',       _v('enc_sagPulse'),
                   'Sol Motor Hızı',  _v('enc_solHiz'),
                   'Sağ Motor Hızı',  _v('enc_sagHiz'),
-                ),
-
-                // ── RFID RC522 ──────────────────────────────────────────
-                _sectionLabel('RFID RC522'),
-                _row4(
-                  'Tag ID',          _v('rfid_id'),
-                  'Okuma Durumu',    _v('rfid_durum'),
-                  'Son İstasyon',    _v('rfid_son'),
-                  'RSSI',            _v('rfid_rssi'),
                 ),
 
                 // ── Max471 Akım / Voltaj ────────────────────────────────

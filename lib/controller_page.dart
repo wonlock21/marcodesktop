@@ -145,18 +145,13 @@ class _ControllerPageState extends State<ControllerPage> {
 
       // QR (opsiyonel)
       final qr = tel['qr'] as String?;
-      final rfid = tel['rfid'] as String?;
       if (qr != null && mounted) _agvModel.updateQR(qr);
-      if (rfid != null && mounted) _agvModel.updateRfid(rfid);
     } else if (_site.isNotEmpty && mounted) {
       // Fallback: /telemetri yoksa eski endpoint'ler (sıralı, delay yok)
       imageCache.clearLiveImages();
 
       final qr = await AgvService.fetchQRData(_site);
       if (qr != null && mounted) _agvModel.updateQR(qr);
-
-      final rfidVal = await AgvService.fetchRfid(_site);
-      if (rfidVal != null && mounted) _agvModel.updateRfid(rfidVal);
 
       final sensorData = await AgvService.fetchSensorData(_site);
       if (sensorData != null && mounted) {

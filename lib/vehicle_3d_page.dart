@@ -86,30 +86,34 @@ class _Vehicle3DPageState extends State<Vehicle3DPage> {
                   // ── Mekanik / Güç Özellikleri ─────────────────────────
                   const Row(
                     children: [
-                      PropertyCard(cardName: "Max Hız", value: "1.46 m/sn"),
+                      PropertyCard(cardName: "Max Hız", value: "1.46 m/s"),
                       PropertyCard(cardName: "Kapasite", value: "--"),
                       PropertyCard(cardName: "Max Pil Süresi", value: "--"),
                     ],
                   ),
                   const Row(
                     children: [
-                      PropertyCard(cardName: "Genişlik", value: "850 mm"),
-                      PropertyCard(cardName: "Uzunluk", value: "950 mm"),
-                      PropertyCard(cardName: "Yükseklik", value: "450 mm"),
+                      PropertyCard(cardName: "Genişlik", value: "650 mm"),
+                      PropertyCard(cardName: "Uzunluk", value: "1536 mm"),
+                      PropertyCard(cardName: "Yükseklik", value: "550 mm"),
                     ],
                   ),
                   const Row(
                     children: [
-                      PropertyCard(cardName: "Taban Yük.", value: "30 mm"),
-                      PropertyCard(cardName: "Lift Yük.", value: "100 mm"),
+                      PropertyCard(
+                          cardName: "Taban Yüksekliği", value: "30 mm"),
+                      PropertyCard(
+                          cardName: "Lift Yüksekliği", value: "100 mm"),
                       PropertyCard(cardName: "Çekme Kap.", value: "--"),
                     ],
                   ),
                   const Row(
                     children: [
-                      PropertyCard(cardName: "Motor Gücü", value: "500 W"),
-                      PropertyCard(cardName: "Haberleşme", value: "--"),
-                      PropertyCard(cardName: "Çalışma V.", value: "24 V"),
+                      PropertyCard(cardName: "Motor Gücü", value: "2×500 W"),
+                      PropertyCard(
+                          cardName: "Haberleşme",
+                          value: "WiFi / PLC / Bluetooth"),
+                      PropertyCard(cardName: "Çalışma Voltajı", value: "12 V"),
                     ],
                   ),
                   SizedBox(height: 3.h),
@@ -136,10 +140,10 @@ class _ComponentsPanel extends StatelessWidget {
     ('LiDAR', 'RPLiDAR A3'),
     ('Kamera', 'IMX219'),
     ('QR Okuyucu', 'GM67 USB'),
-    ('Akım/Voltaj', 'Max471'),
-    ('Bluetooth', 'HC06'),
+    ('Akım/Voltaj', 'MAX471'),
+    ('Bluetooth', 'HC-06'),
     ('Motor Sürücü', 'BTS7960B'),
-    ('İşletim Sistemi', 'ROS 2 / Nav2'),
+    ('Navigasyon', 'ROS 2 / Nav2'),
     ('Haritalama', 'SLAM Toolbox'),
     ('Görüntü', 'OpenCV'),
     ('Geliştirme', 'STM32CubeIDE'),

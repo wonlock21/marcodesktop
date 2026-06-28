@@ -18,7 +18,6 @@ class AgvSensorModel extends ChangeNotifier {
   String amper    = "";
   String isCharging = "Çalışıyor";
   String sonQR  = "null";
-  String rfid   = "null";
   double currX  = 0.0;
   double currY  = 0.0;
   double currYaw = 0.0;
@@ -86,11 +85,6 @@ class AgvSensorModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  void updateRfid(String rfidVal) {
-    rfid = rfidVal;
-    notifyListeners();
-  }
-
   // ── Yeni update metodları (2026 şartname) ────────────────────────────
 
   void updateRobotDurum(String durum) {
@@ -133,7 +127,6 @@ class AgvSensorModel extends ChangeNotifier {
     voltage  = "24.6";
     amper    = "1.8";
     sonQR    = "QA2.1";
-    rfid     = "RF-0427";
     currX    = 3.2;
     currY    = 2.1;
     currYaw  = 0.45;
