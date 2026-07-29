@@ -4,13 +4,13 @@ import 'services/agv_service.dart';
 import 'data_model.dart';
 
 // ─── Renk sabitleri (ana GCS ekranıyla birebir) ────────────────────────────
-const _bg      = Color(0xFF121212);
+const _bg = Color(0xFF121212);
 const _panelBg = Color(0xFF1A1A1A);
 const _borderC = Color(0xFF333333);
-const _muted   = Color(0xFF9E9E9E);
-const _bright  = Color(0xFFE0E0E0);
-const _accent  = Color(0xFF42A5F5);
-const _danger  = Color(0xFFEF5350);
+const _muted = Color(0xFF9E9E9E);
+const _bright = Color(0xFFE0E0E0);
+const _accent = Color(0xFF42A5F5);
+const _danger = Color(0xFFEF5350);
 
 // ─── İstasyon tipi sabitler ───────────────────────────────────────────────
 class _StationType {
@@ -21,19 +21,27 @@ class _StationType {
 }
 
 const _stationTypes = {
-  'A': _StationType('Alma Noktası',          Icons.download_outlined,        Color(0xFF42A5F5)),
-  'B': _StationType('Bırakma Noktası',       Icons.upload_outlined,          Color(0xFF66BB6A)),
-  'S': _StationType('Başlangıç / Bekleme',   Icons.flag_outlined,            Color(0xFFFF9800)),
-  'C': _StationType('Şarj İstasyonu',        Icons.battery_charging_full,    Color(0xFFAB47BC)),
+  'A': _StationType('Alma Noktası', Icons.download_outlined, Color(0xFF42A5F5)),
+  'B':
+      _StationType('Bırakma Noktası', Icons.upload_outlined, Color(0xFF66BB6A)),
+  'S': _StationType(
+      'Başlangıç / Bekleme', Icons.flag_outlined, Color(0xFFFF9800)),
+  'C': _StationType(
+      'Şarj İstasyonu', Icons.battery_charging_full, Color(0xFFAB47BC)),
 };
 
 // ─── İstasyon grid konumları (1–10 x / 1–9 y ölçeği) ─────────────────────
 const _stationPos = <String, Offset>{
-  'A1': Offset(1.8, 1.5), 'A2': Offset(1.8, 3.5),
-  'A3': Offset(1.8, 5.5), 'A4': Offset(1.8, 7.5),
-  'B1': Offset(7.2, 1.5), 'B2': Offset(7.2, 3.5),
-  'B3': Offset(7.2, 5.5), 'B4': Offset(7.2, 7.5),
-  'S1': Offset(4.2, 8.5), 'S2': Offset(5.8, 8.5),
+  'A1': Offset(1.8, 1.5),
+  'A2': Offset(1.8, 3.5),
+  'A3': Offset(1.8, 5.5),
+  'A4': Offset(1.8, 7.5),
+  'B1': Offset(7.2, 1.5),
+  'B2': Offset(7.2, 3.5),
+  'B3': Offset(7.2, 5.5),
+  'B4': Offset(7.2, 7.5),
+  'S1': Offset(4.2, 8.5),
+  'S2': Offset(5.8, 8.5),
   'CS': Offset(9.2, 4.5),
 };
 
@@ -58,9 +66,16 @@ class ScenarioPage extends StatefulWidget {
 class _ScenarioPageState extends State<ScenarioPage> {
   // ── Mevcut state (iş mantığı değişmedi) ─────────────────────────────────
   final List<String> _allPlaces = const [
-    'A1', 'A2', 'A3', 'A4',
-    'B1', 'B2', 'B3', 'B4',
-    'S1', 'S2',
+    'A1',
+    'A2',
+    'A3',
+    'A4',
+    'B1',
+    'B2',
+    'B3',
+    'B4',
+    'S1',
+    'S2',
     'CS',
   ];
 
@@ -70,9 +85,16 @@ class _ScenarioPageState extends State<ScenarioPage> {
   String? _hoveredCode; // hover efekti için
 
   final Map<String, String> _qrMap = const {
-    'A1': 'QA1.1', 'A2': 'QA2.1', 'A3': 'QA3.1', 'A4': 'QA4.1',
-    'B1': 'QB1.1', 'B2': 'QB2.1', 'B3': 'QB3.1', 'B4': 'QB4.1',
-    'S1': 'S1.1',  'S2': 'S2.1',
+    'A1': 'QA1.1',
+    'A2': 'QA2.1',
+    'A3': 'QA3.1',
+    'A4': 'QA4.1',
+    'B1': 'QB1.1',
+    'B2': 'QB2.1',
+    'B3': 'QB3.1',
+    'B4': 'QB4.1',
+    'S1': 'S1.1',
+    'S2': 'S2.1',
     'CS': 'CS1.1',
   };
 
@@ -97,8 +119,7 @@ class _ScenarioPageState extends State<ScenarioPage> {
 
   void _returnData() => Navigator.pop(context, arota);
 
-  String _displayName(String code) =>
-      code == 'CS' ? 'Şarj İstasyonu' : code;
+  String _displayName(String code) => code == 'CS' ? 'Şarj İstasyonu' : code;
 
   _StationType _tipOf(String code) {
     if (code.startsWith('A')) return _stationTypes['A']!;
@@ -118,13 +139,17 @@ class _ScenarioPageState extends State<ScenarioPage> {
 
     bool pickupNext = true;
     for (int i = startIndex; i < _selected.length; i++) {
-      final p  = _selected[i];
+      final p = _selected[i];
       final qr = _qrMap[p] ?? p;
       if (p.startsWith('A') || p.startsWith('B')) {
-        parts..add(qr)..add(pickupNext ? 'q' : 'e');
+        parts
+          ..add(qr)
+          ..add(pickupNext ? 'q' : 'e');
         pickupNext = !pickupNext;
       } else if (p.startsWith('S') || p == 'CS') {
-        parts..add(qr)..add('null');
+        parts
+          ..add(qr)
+          ..add('null');
       }
     }
 
@@ -211,10 +236,11 @@ class _ScenarioPageState extends State<ScenarioPage> {
         ),
         leading: IconButton(
           icon: Icon(Icons.arrow_back, size: 6.sp, color: _muted),
-          onPressed: () => senaryoIsDone ? _returnData() : Navigator.pop(context),
+          onPressed: () =>
+              senaryoIsDone ? _returnData() : Navigator.pop(context),
         ),
         title: Text(
-          'HARİTA OLUŞTURMA',
+          'SENARYO OLUŞTURMA',
           style: TextStyle(
             color: _bright,
             fontSize: 4.sp,
@@ -319,15 +345,16 @@ class _ScenarioPageState extends State<ScenarioPage> {
                       scrollDirection: Axis.horizontal,
                       child: Row(
                         children: _selected.asMap().entries.map((e) {
-                          final i    = e.key;
+                          final i = e.key;
                           final code = e.value;
-                          final tip  = _tipOf(code);
+                          final tip = _tipOf(code);
                           return Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               if (i > 0)
                                 Padding(
-                                  padding: EdgeInsets.symmetric(horizontal: 0.8.w),
+                                  padding:
+                                      EdgeInsets.symmetric(horizontal: 0.8.w),
                                   child: Icon(Icons.arrow_forward,
                                       size: 3.sp, color: _muted),
                                 ),
@@ -373,8 +400,7 @@ class _ScenarioPageState extends State<ScenarioPage> {
                 padding:
                     EdgeInsets.symmetric(horizontal: 1.5.w, vertical: 0.6.h),
                 decoration: BoxDecoration(
-                  border:
-                      Border.all(color: _borderC, width: 0.4.w),
+                  border: Border.all(color: _borderC, width: 0.4.w),
                   borderRadius: BorderRadius.circular(4.r),
                 ),
                 child: Row(
@@ -410,8 +436,8 @@ class _ScenarioPageState extends State<ScenarioPage> {
           LayoutBuilder(builder: (ctx, box) {
             const cols = 11.0; // x bölümü
             const rows = 10.0; // y bölümü
-            final cw   = box.maxWidth  / cols;
-            final ch   = box.maxHeight / rows;
+            final cw = box.maxWidth / cols;
+            final ch = box.maxHeight / rows;
 
             return Stack(
               children: [
@@ -420,13 +446,16 @@ class _ScenarioPageState extends State<ScenarioPage> {
                   CustomPaint(
                     size: box.biggest,
                     painter: _RoutePainter(
-                      _selected, _stationPos, cw, ch,
+                      _selected,
+                      _stationPos,
+                      cw,
+                      ch,
                     ),
                   ),
                 // İstasyon noktaları
                 ..._allPlaces.map((code) {
-                  final pos   = _stationPos[code] ?? const Offset(5, 5);
-                  final tip   = _tipOf(code);
+                  final pos = _stationPos[code] ?? const Offset(5, 5);
+                  final tip = _tipOf(code);
                   final seqNo = _selected.lastIndexOf(code);
                   final isSelected = seqNo != -1;
                   final dx = pos.dx * cw;
@@ -434,15 +463,15 @@ class _ScenarioPageState extends State<ScenarioPage> {
 
                   return Positioned(
                     left: dx - 26.r,
-                    top:  dy - 26.r,
+                    top: dy - 26.r,
                     child: GestureDetector(
                       onTap: () => _addPlace(code),
                       child: MouseRegion(
                         onEnter: (_) => setState(() => _hoveredCode = code),
-                        onExit:  (_) => setState(() => _hoveredCode = null),
+                        onExit: (_) => setState(() => _hoveredCode = null),
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 150),
-                          width:  52.r,
+                          width: 52.r,
                           height: 52.r,
                           decoration: BoxDecoration(
                             color: isSelected
@@ -547,13 +576,13 @@ class _ScenarioPageState extends State<ScenarioPage> {
         spacing: 1.5.w,
         runSpacing: 1.5.h,
         children: _allPlaces.map((code) {
-          final tip        = _tipOf(code);
+          final tip = _tipOf(code);
           final isSelected = _selected.contains(code);
 
           return GestureDetector(
             onTap: () => _addPlace(code),
             child: Container(
-              width:  38.w,
+              width: 38.w,
               padding: EdgeInsets.symmetric(vertical: 1.8.h, horizontal: 0.8.w),
               decoration: BoxDecoration(
                 color: isSelected ? tip.color.withAlpha(28) : _panelBg,
@@ -567,8 +596,7 @@ class _ScenarioPageState extends State<ScenarioPage> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(tip.icon,
-                      size: 5.sp,
-                      color: isSelected ? tip.color : _muted),
+                      size: 5.sp, color: isSelected ? tip.color : _muted),
                   SizedBox(height: 0.6.h),
                   Text(
                     _displayName(code),
@@ -623,14 +651,14 @@ class _ScenarioPageState extends State<ScenarioPage> {
           : Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _infoRow('TİP',     _tipOf(last).label),
-                _infoRow('ETİKET',  _displayName(last)),
-                _infoRow('QR',      _qrMap[last] ?? '--'),
-                _infoRow('X KON.',
-                    _stationPos[last]?.dx.toStringAsFixed(1) ?? '--'),
-                _infoRow('Y KON.',
-                    _stationPos[last]?.dy.toStringAsFixed(1) ?? '--'),
-                _infoRow('SIRADA',  '${_selected.length}. istasyon'),
+                _infoRow('TİP', _tipOf(last).label),
+                _infoRow('ETİKET', _displayName(last)),
+                _infoRow('QR', _qrMap[last] ?? '--'),
+                _infoRow(
+                    'X KON.', _stationPos[last]?.dx.toStringAsFixed(1) ?? '--'),
+                _infoRow(
+                    'Y KON.', _stationPos[last]?.dy.toStringAsFixed(1) ?? '--'),
+                _infoRow('SIRADA', '${_selected.length}. istasyon'),
               ],
             ),
     );
@@ -704,13 +732,9 @@ class _ScenarioPageState extends State<ScenarioPage> {
               child: Container(
                 padding: EdgeInsets.symmetric(vertical: 1.6.h),
                 decoration: BoxDecoration(
-                  color: canSave
-                      ? const Color(0xFF0D2137)
-                      : _panelBg,
+                  color: canSave ? const Color(0xFF0D2137) : _panelBg,
                   border: Border.all(
-                    color: canSave
-                        ? const Color(0xFF1565C0)
-                        : _borderC,
+                    color: canSave ? const Color(0xFF1565C0) : _borderC,
                     width: 0.5.w,
                   ),
                   borderRadius: BorderRadius.circular(4.r),
@@ -719,8 +743,7 @@ class _ScenarioPageState extends State<ScenarioPage> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Icon(Icons.save_outlined,
-                        size: 4.sp,
-                        color: canSave ? _accent : _muted),
+                        size: 4.sp, color: canSave ? _accent : _muted),
                     SizedBox(width: 1.5.w),
                     Text(
                       'HARİTAYI KAYDET',
@@ -743,9 +766,8 @@ class _ScenarioPageState extends State<ScenarioPage> {
               child: Container(
                 padding: EdgeInsets.symmetric(vertical: 1.4.h),
                 decoration: BoxDecoration(
-                  color: _selected.isNotEmpty
-                      ? const Color(0xFF2A0A0A)
-                      : _panelBg,
+                  color:
+                      _selected.isNotEmpty ? const Color(0xFF2A0A0A) : _panelBg,
                   border: Border.all(
                     color: _selected.isNotEmpty
                         ? const Color(0xFFB71C1C)
@@ -832,9 +854,11 @@ class _MapGridPainter extends CustomPainter {
       textPainter.paint(canvas, pos);
     }
 
-    drawLabel('ALMA ALANI', const Offset(8, 16),    const Color(0xFF42A5F5));
-    drawLabel('BIRAKIM ALANI', Offset(size.width - 100, 16), const Color(0xFF66BB6A));
-    drawLabel('BAŞLANGIÇ', Offset(size.width * 0.4, size.height - 20), const Color(0xFFFF9800));
+    drawLabel('ALMA ALANI', const Offset(8, 16), const Color(0xFF42A5F5));
+    drawLabel(
+        'BIRAKIM ALANI', Offset(size.width - 100, 16), const Color(0xFF66BB6A));
+    drawLabel('BAŞLANGIÇ', Offset(size.width * 0.4, size.height - 20),
+        const Color(0xFFFF9800));
   }
 
   @override
@@ -877,6 +901,5 @@ class _RoutePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_RoutePainter old) =>
-      old.selected != selected;
+  bool shouldRepaint(_RoutePainter old) => old.selected != selected;
 }

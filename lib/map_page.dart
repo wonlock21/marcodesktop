@@ -272,7 +272,7 @@ class _MapPageState extends State<MapPage> {
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
-          'GIRILEN HARITA',
+          'HARITA OLUŞTURMA',
           style: TextStyle(
             color: _mpBright,
             fontSize: 4.sp,
