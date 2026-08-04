@@ -1,4 +1,5 @@
-﻿import 'dart:async';
+import 'dart:async';
+import 'dart:math' as math;
 import 'admin_mode.dart';
 import 'data_model.dart';
 import 'data_page.dart';
@@ -11,6 +12,7 @@ import 'mock/gcs_mock_data.dart';
 import 'parameter_model.dart';
 import 'scenerio_page.dart';
 import 'services/agv_service.dart';
+import 'services/ros_bridge_client.dart';
 import 'widgets/control_buttons.dart';
 import 'models/gcs_map_model.dart';
 import 'widgets/gcs_map_view.dart';
@@ -49,10 +51,6 @@ class _ControllerPageState extends State<ControllerPage> {
   bool isConnectionPanelOpen = false;
   final TextEditingController _ipController = TextEditingController();
 
-  Timer? _poseTimer;
-  Timer? _dataPollTimer;
-  Timer? _connectionTimer;
-
   @override
   void initState() {
     super.initState();
@@ -60,6 +58,10 @@ class _ControllerPageState extends State<ControllerPage> {
     parameterModel = Provider.of<ParameterModel>(context, listen: false);
     Provider.of<DataModel>(context, listen: false).loadDataPoints();
     parameterModel.loadParameters();
+    _ipController.text = 'ws://localhost:9090';
+    AgvService.ros.onRobotStatus = _applyRobotStatus;
+    AgvService.ros.onMissionEvent = _onMissionEvent;
+    AgvService.ros.state.addListener(_onRosConnectionState);
     // GEÇİCİ admin/demo modu: cihaz yokken rapor için örnek veri bas.
     if (kAdminMode) {
       isConnected = true;
@@ -72,177 +74,221 @@ class _ControllerPageState extends State<ControllerPage> {
         eventLogModel: Provider.of<GcsEventLogModel>(context, listen: false),
       );
     }
-    startConnectionCheck();
-    _poseTimer = Timer.periodic(const Duration(milliseconds: 200), (_) async {
-      final result = await AgvService.fetchPose(_site,
-          fallbackX: _agvModel.currX,
-          fallbackY: _agvModel.currY,
-          fallbackYaw: _agvModel.currYaw);
-      if (result != null && mounted) {
-        _agvModel.updatePose(result.$1, result.$2, result.$3);
-      }
-    });
-    _startPolling();
   }
 
-  /// Telemetri polling döngüsünü başlatır.
-  void _startPolling() {
-    _runNextPoll();
-  }
+  double _number(dynamic value, [double fallback = 0]) =>
+      value is num ? value.toDouble() : fallback;
 
-  /// Sequential polling: önceki döngü tamamlandıktan 1s sonra yenisi başlar.
-  /// Timer.periodic yerine kullanılır — örtüşen async callback riski yok.
-  Future<void> _runNextPoll() async {
+  void _applyRobotStatus(Map<String, dynamic> status) {
     if (!mounted) return;
+    final poseStamped = status['pose'];
+    final poseWithCovariance = poseStamped is Map ? poseStamped['pose'] : null;
+    final pose = poseWithCovariance is Map ? poseWithCovariance['pose'] : null;
+    final position = pose is Map ? pose['position'] : null;
+    final orientation = pose is Map ? pose['orientation'] : null;
+    final x = position is Map ? _number(position['x']) : 0.0;
+    final y = position is Map ? _number(position['y']) : 0.0;
+    final qx = orientation is Map ? _number(orientation['x']) : 0.0;
+    final qy = orientation is Map ? _number(orientation['y']) : 0.0;
+    final qz = orientation is Map ? _number(orientation['z']) : 0.0;
+    final qw = orientation is Map ? _number(orientation['w'], 1) : 1.0;
+    final yaw = math.atan2(
+      2 * (qw * qz + qx * qy),
+      1 - 2 * (qy * qy + qz * qz),
+    );
+    final missionState = (status['mission_state'] as num?)?.toInt() ?? 0;
+    final estop = status['estop_active'] == true;
+    final obstacle = status['obstacle_detected'] == true;
+    final plcConnected = status['plc_connected'] == true;
+    final manualEnabled = status['manual_mode_enabled'] == true;
+    final qr = status['last_qr_data']?.toString() ?? '';
 
-    // /telemetri endpoint'i varsa tek istekte tüm veriyi al
-    final tel = await AgvService.fetchTelemetri(_site);
+    _agvModel
+      ..updateRobotDurum(switch (missionState) {
+        1 => kRobotDurumGorevIsleniyor,
+        2 => kRobotDurumYuksuzHareket,
+        3 => kRobotDurumYukluHareket,
+        4 => kRobotDurumKapiBekle,
+        5 => kRobotDurumBaslangicaDon,
+        6 => kRobotDurumHata,
+        7 => kRobotDurumAcilStop,
+        _ => kRobotDurumIdle,
+      })
+      ..updateRobotStatus(
+        x: x,
+        y: y,
+        yaw: yaw,
+        localizationValid: status['localization_valid'] == true,
+        positionCovariance:
+            _number(status['position_covariance'], double.infinity),
+        currentRouteEdge: status['current_route_edge']?.toString() ?? '',
+        nextNode: status['next_node']?.toString() ?? '',
+        crossTrackError: _number(status['cross_track_error'], double.nan),
+        obstacleDetected: obstacle,
+        lastQrData: qr,
+        plcConnected: plcConnected,
+        estopActive: estop,
+      );
 
-    if (tel != null && mounted) {
-      final durum = tel['durum'];
-      if (durum is String) _agvModel.updateRobotDurum(durum);
+    final mission = Provider.of<GcsMissionModel>(context, listen: false);
+    mission.topluGuncelle(
+      gorevId: status['task_id']?.toString() ?? '',
+      gorevKaynagi: status['task_source']?.toString() ?? '',
+      almaNoktasi: status['pickup_node']?.toString() ?? '',
+      birakNoktasi: status['dropoff_node']?.toString() ?? '',
+      asama: switch (missionState) {
+        1 => GorevAsama.gorevAlindi,
+        2 => GorevAsama.yuksuzHareket,
+        3 => GorevAsama.yukluHareket,
+        4 => GorevAsama.kapiIzniBekleniyor,
+        5 => GorevAsama.tamamlandi,
+        6 => GorevAsama.hata,
+        7 => GorevAsama.acilStop,
+        _ => GorevAsama.bosta,
+      },
+      kapiIzni: status['gate_permission_granted'] == true,
+    );
+    _connModel.topluGuncelle(
+      sistem: ConnDurum.bagli,
+      robot: ConnDurum.bagli,
+      plc: plcConnected ? ConnDurum.bagli : ConnDurum.cevrimdisi,
+      manuelMod: manualEnabled,
+      uzaktanKontrol: manualEnabled,
+    );
+    final alarms = Provider.of<GcsAlarmModel>(context, listen: false);
+    alarms.topluGuncelle(
+      aktifOlanlar: [
+        if (estop) AlarmTur.acilStop,
+        if (obstacle) AlarmTur.guvenlikSensorUyari,
+      ],
+      pasifOlanlar: [
+        if (!estop) AlarmTur.acilStop,
+        if (!obstacle) AlarmTur.guvenlikSensorUyari,
+      ],
+    );
+    setState(() {
+      isConnected = true;
+      oto = !manualEnabled;
+      manuelOrOtonom = manualEnabled ? 'Manuel' : 'Otonom';
+    });
+  }
 
-      final gorev = tel['gorev'];
-      if (gorev is String) _agvModel.updateGorev(gorev);
+  void _onMissionEvent(String event) {
+    if (!mounted) return;
+    Provider.of<GcsEventLogModel>(context, listen: false).ekle(event);
+  }
 
-      final lift = tel['lift'];
-      final hiz = (tel['hiz'] as num?)?.toDouble();
-      if (lift is bool) _agvModel.updateLift(acik: lift, hiz: hiz);
-
-      final batarya = (tel['batarya'] as num?)?.toDouble();
-      if (batarya != null) _agvModel.updateBatarya(batarya);
-
-      final plcDurum = tel['plcDurum'];
-      final plcMesaj = tel['plcMesaj'] as String? ?? '';
-      if (plcDurum is String) {
-        _agvModel.updatePlc(durum: plcDurum, mesaj: plcMesaj);
-      }
-
-      final qrKonum = tel['qrKonum'];
-      if (qrKonum is String && qrKonum.isNotEmpty) {
-        _agvModel.updateQrKonum(qrKonum);
-      }
-
-      // Konum (opsiyonel — /pose timer'ı öncelikli, telemetri varsa override)
-      final tx = (tel['x'] as num?)?.toDouble();
-      final ty = (tel['y'] as num?)?.toDouble();
-      final tyaw = (tel['yaw'] as num?)?.toDouble();
-      if (tx != null && ty != null && mounted) {
-        _agvModel.updatePose(tx, ty, tyaw ?? _agvModel.currYaw);
-      }
-
-      // Sensör (opsiyonel)
-      final sicaklik = tel['sicaklik'] as String?;
-      final voltaj = tel['voltaj'] as String?;
-      final akim = tel['akim'] as String?;
-      if (sicaklik != null && voltaj != null && akim != null && mounted) {
-        _agvModel.updateSensor(
-          sicaklik: sicaklik,
-          voltage: voltaj,
-          amper: akim,
-        );
-      }
-
-      // QR (opsiyonel)
-      final qr = tel['qr'] as String?;
-      if (qr != null && mounted) _agvModel.updateQR(qr);
-    } else if (_site.isNotEmpty && mounted) {
-      // Fallback: /telemetri yoksa eski endpoint'ler (sıralı, delay yok)
-      imageCache.clearLiveImages();
-
-      final qr = await AgvService.fetchQRData(_site);
-      if (qr != null && mounted) _agvModel.updateQR(qr);
-
-      final sensorData = await AgvService.fetchSensorData(_site);
-      if (sensorData != null && mounted) {
-        _agvModel.updateSensor(
-          sicaklik: sensorData.sicaklik,
-          voltage: sensorData.voltage,
-          amper: sensorData.amper,
-        );
-      }
-    }
-
-    // Önceki döngü bitti; 1s sonra bir sonraki başlasın
-    if (mounted) {
-      _dataPollTimer = Timer(const Duration(seconds: 1), _runNextPoll);
-    }
+  void _onRosConnectionState() {
+    if (!mounted) return;
+    final rosState = AgvService.ros.state.value;
+    final durum = switch (rosState.status) {
+      RosConnectionStatus.connected => ConnDurum.bagli,
+      RosConnectionStatus.connecting ||
+      RosConnectionStatus.reconnecting =>
+        ConnDurum.baglaniyor,
+      RosConnectionStatus.error => ConnDurum.hata,
+      RosConnectionStatus.disconnected => ConnDurum.cevrimdisi,
+    };
+    setState(() => isConnected = rosState.isConnected);
+    _connModel.topluGuncelle(sistem: durum, robot: durum);
   }
 
   // Kısa yol: model erişimi (listen: false — sadece write için)
   GcsConnectionModel get _connModel =>
       Provider.of<GcsConnectionModel>(context, listen: false);
 
-  void startConnectionCheck() {
-    // Admin/demo modu: gerçek bağlantı kontrolünü atla.
-    if (kAdminMode) return;
-    if (_site.isEmpty) return;
-    _connectionTimer?.cancel();
-    _connectionTimer =
-        Timer.periodic(const Duration(seconds: 1), (timer) async {
-      final ok = await AgvService.checkConnection(_site);
-      if (!mounted) return;
-      final yeniDurum = ok ? ConnDurum.bagli : ConnDurum.hata;
-      setState(() { isConnected = ok; });
-      _connModel.topluGuncelle(
-        sistem: yeniDurum,
-        robot:  yeniDurum,
-      );
-    });
-  }
-
   /// "Bağlan" butonuna basıldığında çağrılır.
   ///
   /// 1. Önce `baglaniyor` durumunu set eder (anlık geri bildirim).
   /// 2. Ardından periyodik bağlantı kontrolünü başlatır.
-  void _baglantiyiBaslat(String ip) {
+  Future<void> _baglantiyiBaslat(String ip) async {
     if (ip.isEmpty) return;
+    String normalized;
+    try {
+      normalized = RosBridgeClient.normalizeAddress(ip).toString();
+    } catch (error) {
+      _connModel.topluGuncelle(
+        sistem: ConnDurum.hata,
+        robot: ConnDurum.hata,
+      );
+      _onMissionEvent('Geçersiz ROS adresi: $error');
+      return;
+    }
     setState(() {
-      _site = ip;
+      _site = normalized;
       isConnected = false;
     });
     _connModel.topluGuncelle(
       sistem: ConnDurum.baglaniyor,
-      robot:  ConnDurum.baglaniyor,
-      plc:    ConnDurum.baglaniyor,
+      robot: ConnDurum.baglaniyor,
+      plc: ConnDurum.baglaniyor,
     );
-    startConnectionCheck();
+    try {
+      await AgvService.connectRos(normalized);
+    } catch (_) {
+      // Durum ve hata metni RosBridgeClient.state uzerinden gosterilir.
+    }
   }
 
   /// Yazılımsal güvenli durdurma — fiziksel acil stopun yerine geçmez.
   ///
   /// Görevi iptal eder, komutu pasife alır, olay günlüğüne kaydeder.
-  void _guvenliDurdur() {
+  Future<void> _guvenliDurdur() async {
     // Görev durumunu acil stop olarak işaretle
     final mission = Provider.of<GcsMissionModel>(context, listen: false);
-    final alarms  = Provider.of<GcsAlarmModel>(context, listen: false);
-    final log     = Provider.of<GcsEventLogModel>(context, listen: false);
+    final alarms = Provider.of<GcsAlarmModel>(context, listen: false);
+    final log = Provider.of<GcsEventLogModel>(context, listen: false);
 
     mission.asamaGuncelle(GorevAsama.acilStop);
     alarms.setAlarm(AlarmTur.acilStop,
         mesaj: 'Yazılımsal güvenli durdurma komutu gönderildi');
     log.ekle('Güvenli durdurma komutu gönderildi');
 
-    if (!kAdminMode) {
-      veriBas("k944"); // Dur komutu (hareket durdur)
+    AgvService.stopManual();
+    if (!kAdminMode && AgvService.ros.state.value.isConnected) {
+      try {
+        final response = await AgvService.cancelMission();
+        log.ekle(response['message']?.toString() ?? 'İptal istendi');
+      } catch (error) {
+        log.ekle('İptal hatası: $error');
+      }
     }
   }
 
   /// "Bağlantıyı Kes" butonuna basıldığında çağrılır.
-  void _baglantiyiKes() {
-    _connectionTimer?.cancel();
-    _connectionTimer = null;
+  Future<void> _baglantiyiKes() async {
     setState(() {
       _site = '';
       isConnected = false;
     });
     _connModel.baglantiyiKes();
+    await AgvService.disconnectRos();
+  }
+
+  Future<void> _missionBaslat() async {
+    try {
+      final response = await AgvService.startMission();
+      _onMissionEvent(
+          response['message']?.toString() ?? 'Başlatma yanıtı alındı');
+    } catch (error) {
+      _onMissionEvent('Başlatma hatası: $error');
+    }
+  }
+
+  Future<void> _resetSafety() async {
+    try {
+      final response = await AgvService.resetMissionSafety();
+      _onMissionEvent(response['message']?.toString() ?? 'Safety reset yanıtı');
+    } catch (error) {
+      _onMissionEvent('Safety reset hatası: $error');
+    }
+  }
+
+  void _manualDrive(double linear, double angular) {
+    AgvService.publishManual(linear, angular);
   }
 
   Future<void> veriBas(String veri) => AgvService.veriBas(_site, veri);
-
-  Future<void> startSendingData(String command, Duration duration) =>
-      AgvService.startSendingData(_site, command, duration);
 
   Future<void> _navigateToScenarioPage(List<DataPoint> dataPoints) async {
     if (dataPoints.isEmpty && !kAdminMode) {
@@ -275,9 +321,11 @@ class _ControllerPageState extends State<ControllerPage> {
 
   @override
   void dispose() {
-    _poseTimer?.cancel();
-    _dataPollTimer?.cancel();
-    _connectionTimer?.cancel();
+    AgvService.ros.state.removeListener(_onRosConnectionState);
+    AgvService.ros.onRobotStatus = null;
+    AgvService.ros.onMissionEvent = null;
+    AgvService.stopManual();
+    unawaited(AgvService.disconnectRos());
     _focusNode.dispose();
     _ipController.dispose();
     super.dispose();
@@ -348,9 +396,7 @@ class _ControllerPageState extends State<ControllerPage> {
                 borderRadius: BorderRadius.circular(2.r),
               ),
               child: Text(
-                conn.sistemBaglanti.aktif
-                    ? _site
-                    : conn.sistemBaglanti.etiket,
+                conn.sistemBaglanti.aktif ? _site : conn.sistemBaglanti.etiket,
                 style: TextStyle(
                     color: conn.sistemBaglanti.aktif ? muted : danger,
                     fontSize: 3.sp,
@@ -389,20 +435,7 @@ class _ControllerPageState extends State<ControllerPage> {
           child: KeyboardListener(
             focusNode: _focusNode,
             onKeyEvent: (keyEvent) {
-              if (keyEvent is KeyDownEvent) {
-                if (keyEvent.logicalKey == LogicalKeyboardKey.keyO) {
-                  setState(() {
-                    oto = !oto;
-                    if (manuelOrOtonom == "Manuel") {
-                      manuelOrOtonom = "Otonom";
-                      veriBas("k300");
-                    } else {
-                      manuelOrOtonom = "Manuel";
-                      veriBas("k310");
-                    }
-                  });
-                }
-              }
+              // Kontrol modu fiziksel anahtardan /robot_status ile gelir.
             },
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -480,9 +513,7 @@ class _ControllerPageState extends State<ControllerPage> {
                                       PowerButton(
                                         labelOff: 'Sistemi\nBaşlat',
                                         labelOn: 'Sistemi\nDurdur',
-                                        onPressed: () {
-                                          veriBas("k315");
-                                        },
+                                        onPressed: _missionBaslat,
                                       ),
                                       SizedBox(width: 2.w),
                                       Expanded(
@@ -622,8 +653,7 @@ class _ControllerPageState extends State<ControllerPage> {
                                 conn.robotBaglanti.etiket,
                                 conn.robotBaglanti == ConnDurum.bagli
                                     ? success
-                                    : conn.robotBaglanti ==
-                                            ConnDurum.baglaniyor
+                                    : conn.robotBaglanti == ConnDurum.baglaniyor
                                         ? const Color(0xFFFF9800)
                                         : danger,
                                 muted,
@@ -843,24 +873,7 @@ class _ControllerPageState extends State<ControllerPage> {
                                         child: Switch(
                                           value: oto,
                                           activeThumbColor: accent,
-                                          onChanged: (val) {
-                                            setState(() {
-                                              oto = val;
-                                              if (manuelOrOtonom == "Manuel") {
-                                                manuelOrOtonom = "Otonom";
-                                                startSendingData(
-                                                    "k300",
-                                                    const Duration(
-                                                        milliseconds: 500));
-                                              } else {
-                                                manuelOrOtonom = "Manuel";
-                                                startSendingData(
-                                                    "k310",
-                                                    const Duration(
-                                                        milliseconds: 500));
-                                              }
-                                            });
-                                          },
+                                          onChanged: null,
                                         ),
                                       ),
                                     ),
@@ -891,14 +904,14 @@ class _ControllerPageState extends State<ControllerPage> {
                         // ── Güvenli Durdur ────────────────────────────
                         GestureDetector(
                           onTap: _guvenliDurdur,
+                          onLongPress: _resetSafety,
                           child: Container(
                             width: double.infinity,
                             padding: EdgeInsets.symmetric(vertical: 1.4.h),
                             decoration: BoxDecoration(
                               color: const Color(0xFF2A0A0A),
                               border: Border.all(
-                                  color: const Color(0xFFB71C1C),
-                                  width: 0.6.w),
+                                  color: const Color(0xFFB71C1C), width: 0.6.w),
                               borderRadius: BorderRadius.circular(4.r),
                             ),
                             child: Row(
@@ -947,117 +960,129 @@ class _ControllerPageState extends State<ControllerPage> {
                             child: Column(
                               children: [
                                 Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: Container(
-                                padding: EdgeInsets.all(2.w),
-                                decoration: _flatBox(panelBg, borderC),
-                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text("LİFT",
-                                        style: TextStyle(
-                                            color: muted,
-                                            fontSize: 3.sp,
-                                            letterSpacing: 1)),
-                                    SizedBox(height: 2.h),
-                                    ControlButton(
-                                      onPressed: () {
-                                        veriBas("k802");
-                                      },
-                                      onReleased: () {
-                                        veriBas("k801");
-                                      },
-                                      assignedKey: LogicalKeyboardKey.keyQ,
-                                      child: Icon(Icons.arrow_upward_rounded,
-                                          size: 7.sp),
+                                    Expanded(
+                                      child: Container(
+                                        padding: EdgeInsets.all(2.w),
+                                        decoration: _flatBox(panelBg, borderC),
+                                        child: Column(
+                                          children: [
+                                            Text("LİFT",
+                                                style: TextStyle(
+                                                    color: muted,
+                                                    fontSize: 3.sp,
+                                                    letterSpacing: 1)),
+                                            SizedBox(height: 2.h),
+                                            ControlButton(
+                                              onPressed: () {
+                                                veriBas("k802");
+                                              },
+                                              onReleased: () {
+                                                veriBas("k801");
+                                              },
+                                              assignedKey:
+                                                  LogicalKeyboardKey.keyQ,
+                                              child: Icon(
+                                                  Icons.arrow_upward_rounded,
+                                                  size: 7.sp),
+                                            ),
+                                            SizedBox(height: 3.h),
+                                            ControlButton(
+                                              onPressed: () {
+                                                veriBas("k800");
+                                              },
+                                              onReleased: () {
+                                                veriBas("k801");
+                                              },
+                                              assignedKey:
+                                                  LogicalKeyboardKey.keyE,
+                                              child: Icon(
+                                                  Icons.arrow_downward_rounded,
+                                                  size: 7.sp),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
                                     ),
-                                    SizedBox(height: 3.h),
-                                    ControlButton(
-                                      onPressed: () {
-                                        veriBas("k800");
-                                      },
-                                      onReleased: () {
-                                        veriBas("k801");
-                                      },
-                                      assignedKey: LogicalKeyboardKey.keyE,
-                                      child: Icon(Icons.arrow_downward_rounded,
-                                          size: 7.sp),
+                                    SizedBox(width: 2.w),
+                                    Expanded(
+                                      child: Container(
+                                        padding: EdgeInsets.all(2.w),
+                                        decoration: _flatBox(panelBg, borderC),
+                                        child: Column(
+                                          children: [
+                                            Text("ARAÇ",
+                                                style: TextStyle(
+                                                    color: muted,
+                                                    fontSize: 3.sp,
+                                                    letterSpacing: 1)),
+                                            SizedBox(height: 1.h),
+                                            ControlButton(
+                                              onPressed: () {
+                                                _manualDrive(
+                                                    (speed + 1) / 5, 0);
+                                              },
+                                              onReleased: () {
+                                                AgvService.stopManual();
+                                              },
+                                              assignedKey:
+                                                  LogicalKeyboardKey.keyW,
+                                              child: Icon(Icons.arrow_drop_up,
+                                                  size: 7.sp),
+                                            ),
+                                            Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              children: [
+                                                ControlButton(
+                                                  onPressed: () {
+                                                    _manualDrive(
+                                                        0, (speed + 1) / 5);
+                                                  },
+                                                  onReleased: () {
+                                                    AgvService.stopManual();
+                                                  },
+                                                  assignedKey:
+                                                      LogicalKeyboardKey.keyA,
+                                                  child: Icon(Icons.arrow_left,
+                                                      size: 7.sp),
+                                                ),
+                                                SizedBox(width: 8.w),
+                                                ControlButton(
+                                                  onPressed: () {
+                                                    _manualDrive(
+                                                        0, -(speed + 1) / 5);
+                                                  },
+                                                  onReleased: () {
+                                                    AgvService.stopManual();
+                                                  },
+                                                  assignedKey:
+                                                      LogicalKeyboardKey.keyD,
+                                                  child: Icon(Icons.arrow_right,
+                                                      size: 7.sp),
+                                                ),
+                                              ],
+                                            ),
+                                            ControlButton(
+                                              onPressed: () {
+                                                _manualDrive(
+                                                    -(speed + 1) / 5, 0);
+                                              },
+                                              onReleased: () {
+                                                AgvService.stopManual();
+                                              },
+                                              assignedKey:
+                                                  LogicalKeyboardKey.keyS,
+                                              child: Icon(Icons.arrow_drop_down,
+                                                  size: 7.sp),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
                                     ),
                                   ],
-                                ),
-                              ),
-                            ),
-                            SizedBox(width: 2.w),
-                            Expanded(
-                              child: Container(
-                                padding: EdgeInsets.all(2.w),
-                                decoration: _flatBox(panelBg, borderC),
-                                child: Column(
-                                  children: [
-                                    Text("ARAÇ",
-                                        style: TextStyle(
-                                            color: muted,
-                                            fontSize: 3.sp,
-                                            letterSpacing: 1)),
-                                    SizedBox(height: 1.h),
-                                    ControlButton(
-                                      onPressed: () {
-                                        veriBas("k94${4 - speed}");
-                                      },
-                                      onReleased: () {
-                                        veriBas("k944");
-                                      },
-                                      assignedKey: LogicalKeyboardKey.keyW,
-                                      child:
-                                          Icon(Icons.arrow_drop_up, size: 7.sp),
-                                    ),
-                                    Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        ControlButton(
-                                          onPressed: () {
-                                            veriBas("k9${4 - speed}4");
-                                          },
-                                          onReleased: () {
-                                            veriBas("k944");
-                                          },
-                                          assignedKey: LogicalKeyboardKey.keyA,
-                                          child: Icon(Icons.arrow_left,
-                                              size: 7.sp),
-                                        ),
-                                        SizedBox(width: 8.w),
-                                        ControlButton(
-                                          onPressed: () {
-                                            veriBas("k9${4 + speed}4");
-                                          },
-                                          onReleased: () {
-                                            veriBas("k944");
-                                          },
-                                          assignedKey: LogicalKeyboardKey.keyD,
-                                          child: Icon(Icons.arrow_right,
-                                              size: 7.sp),
-                                        ),
-                                      ],
-                                    ),
-                                    ControlButton(
-                                      onPressed: () {
-                                        veriBas("k94${4 + speed}");
-                                      },
-                                      onReleased: () {
-                                        veriBas("k944");
-                                      },
-                                      assignedKey: LogicalKeyboardKey.keyS,
-                                      child: Icon(Icons.arrow_drop_down,
-                                          size: 7.sp),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                                ],
-                                ),   // Row (lift + araç butonları)
+                                ), // Row (lift + araç butonları)
                                 SizedBox(height: 1.5.h),
                                 Container(
                                   padding: EdgeInsets.symmetric(
@@ -1097,9 +1122,9 @@ class _ControllerPageState extends State<ControllerPage> {
                                 ),
                                 SizedBox(height: 3.h),
                               ],
-                            ),   // Column inside AnimatedOpacity
-                          ),     // AnimatedOpacity
-                        ),       // IgnorePointer
+                            ), // Column inside AnimatedOpacity
+                          ), // AnimatedOpacity
+                        ), // IgnorePointer
                       ],
                     ),
                   ),
@@ -1124,9 +1149,9 @@ class _ControllerPageState extends State<ControllerPage> {
     final conn = context.watch<GcsConnectionModel>();
 
     Color durumRengi(ConnDurum d) => switch (d) {
-          ConnDurum.bagli      => success,
+          ConnDurum.bagli => success,
           ConnDurum.baglaniyor => const Color(0xFFFF9800),
-          ConnDurum.hata       => danger,
+          ConnDurum.hata => danger,
           ConnDurum.cevrimdisi => const Color(0xFF555555),
         };
 
@@ -1136,7 +1161,8 @@ class _ControllerPageState extends State<ControllerPage> {
         padding: EdgeInsets.only(bottom: 1.4.h),
         child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
           Container(
-            width: 1.8.w, height: 1.8.w,
+            width: 1.8.w,
+            height: 1.8.w,
             decoration: BoxDecoration(color: renk, shape: BoxShape.circle),
           ),
           SizedBox(width: 1.5.w),
@@ -1144,8 +1170,7 @@ class _ControllerPageState extends State<ControllerPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(label,
-                    style: TextStyle(color: muted, fontSize: 2.4.sp)),
+                Text(label, style: TextStyle(color: muted, fontSize: 2.4.sp)),
                 Text(
                   alt ?? durum.etiket,
                   style: TextStyle(
@@ -1186,13 +1211,14 @@ class _ControllerPageState extends State<ControllerPage> {
                           letterSpacing: 1.2)),
                 ),
                 GestureDetector(
-                  onTap: () => setState(() { isConnectionPanelOpen = false; }),
+                  onTap: () => setState(() {
+                    isConnectionPanelOpen = false;
+                  }),
                   child: Icon(Icons.close, color: muted, size: 4.5.sp),
                 ),
               ],
             ),
             SizedBox(height: 1.5.h),
-
 
             // ── Bağlantı kanalları ──────────────────────────────────────
             _connSectionLabel('BAĞLANTI KANALLARI', muted),
@@ -1217,7 +1243,7 @@ class _ControllerPageState extends State<ControllerPage> {
               decoration: InputDecoration(
                 filled: true,
                 fillColor: const Color(0xFF111111),
-                hintText: 'http://192.168.x.x:5000',
+                hintText: 'ws://192.168.x.x:9090',
                 hintStyle: TextStyle(
                     color: const Color(0xFF444444),
                     fontSize: 3.sp,
@@ -1229,8 +1255,8 @@ class _ControllerPageState extends State<ControllerPage> {
                   borderRadius: BorderRadius.circular(4.r),
                 ),
                 focusedBorder: OutlineInputBorder(
-                  borderSide: BorderSide(
-                      color: const Color(0xFF1565C0), width: 0.7.w),
+                  borderSide:
+                      BorderSide(color: const Color(0xFF1565C0), width: 0.7.w),
                   borderRadius: BorderRadius.circular(4.r),
                 ),
               ),
@@ -1248,8 +1274,8 @@ class _ControllerPageState extends State<ControllerPage> {
                 padding: EdgeInsets.symmetric(vertical: 1.1.h),
                 decoration: BoxDecoration(
                   color: const Color(0xFF1A2540),
-                  border: Border.all(
-                      color: const Color(0xFF1565C0), width: 0.5.w),
+                  border:
+                      Border.all(color: const Color(0xFF1565C0), width: 0.5.w),
                   borderRadius: BorderRadius.circular(4.r),
                 ),
                 child: Row(
@@ -1279,14 +1305,16 @@ class _ControllerPageState extends State<ControllerPage> {
             GestureDetector(
               onTap: () {
                 _baglantiyiKes();
-                setState(() { isConnectionPanelOpen = false; });
+                setState(() {
+                  isConnectionPanelOpen = false;
+                });
               },
               child: Container(
                 padding: EdgeInsets.symmetric(vertical: 1.1.h),
                 decoration: BoxDecoration(
                   color: const Color(0xFF2A1010),
-                  border: Border.all(
-                      color: const Color(0xFF6B2020), width: 0.5.w),
+                  border:
+                      Border.all(color: const Color(0xFF6B2020), width: 0.5.w),
                   borderRadius: BorderRadius.circular(4.r),
                 ),
                 child: Row(
@@ -1363,13 +1391,13 @@ class _ControllerPageState extends State<ControllerPage> {
               child: _SummaryCard(
             title: 'GÖREV ÖZETİ',
             titleColor: mission.asama.hataVeyaStop ? danger : null,
-            borderC: mission.asama.hataVeyaStop
-                ? danger.withAlpha(100)
-                : borderC,
+            borderC:
+                mission.asama.hataVeyaStop ? danger.withAlpha(100) : borderC,
             muted: muted,
             bright: bright,
             rows: [
               _SRow('ID', safe(mission.gorevId)),
+              _SRow('KAYNAK', safe(mission.gorevKaynagi)),
               _SRow('ROTA', rota, truncate: true),
               _SRow('DURUM', mission.asama.etiket,
                   valueColor: mission.asama.hataVeyaStop
@@ -1388,15 +1416,13 @@ class _ControllerPageState extends State<ControllerPage> {
                     : mission.asama.sonrakiAdim,
                 truncate: true,
               ),
-              _SRow('SÜRE',
-                  mission.gorevAktif ? mission.gorevSuresiFormatli : '--'),
             ],
             footer: _MissionProgressBar(
-              asama:   mission.asama,
-              bright:  bright,
-              muted:   muted,
+              asama: mission.asama,
+              bright: bright,
+              muted: muted,
               success: success,
-              danger:  danger,
+              danger: danger,
             ),
           )),
           SizedBox(width: 1.5.w),
@@ -1433,14 +1459,20 @@ class _ControllerPageState extends State<ControllerPage> {
             muted: muted,
             bright: bright,
             rows: [
+              _SRow('POZ',
+                  '${agv.currX.toStringAsFixed(2)}, ${agv.currY.toStringAsFixed(2)}'),
+              _SRow('LOKAL', agv.lokalizasyonGecerli ? 'Geçerli' : 'Geçersiz',
+                  valueColor: agv.lokalizasyonGecerli ? success : danger),
+              _SRow('EDGE', safe(agv.aktifRotaEdge), truncate: true),
+              _SRow('SONRAKİ', safe(agv.sonrakiNode), truncate: true),
+              _SRow(
+                  'SAPMA',
+                  agv.rotaSapmasi.isFinite
+                      ? '${agv.rotaSapmasi.toStringAsFixed(3)} m'
+                      : '--'),
+              _SRow('ENGEL', agv.engelAlgilandi ? 'VAR' : 'Yok',
+                  valueColor: agv.engelAlgilandi ? danger : success),
               _SRow('SON QR', safe(agv.sonQR)),
-              _SRow('QR DOĞR.', safe(agv.qrDogrulama),
-                  valueColor: agv.qrDogrulama == 'Geçerli' ? success : null),
-              _SRow('KONUM', safe(agv.konumDogrulamaSonucu),
-                  valueColor:
-                      agv.konumDogrulamaSonucu == 'Onaylandı' ? success : null),
-              _SRow('KON. HATA', safe(agv.konumHatasi)),
-              _SRow('YÖN HATA', safe(agv.yonHatasi)),
             ],
           )),
           SizedBox(width: 1.5.w),
@@ -1466,8 +1498,7 @@ class _ControllerPageState extends State<ControllerPage> {
                   alarms.isAktif(AlarmTur.acilStop) ? 'AKTİF' : 'Normal',
                   valueColor:
                       alarms.isAktif(AlarmTur.acilStop) ? danger : success),
-              _SRow('GÜV. DURUŞ',
-                  alarms.guvenliDurusAktif ? 'Aktif' : 'Normal',
+              _SRow('GÜV. DURUŞ', alarms.guvenliDurusAktif ? 'Aktif' : 'Normal',
                   valueColor: alarms.guvenliDurusAktif ? danger : success),
               _SRow(
                   'ALARM',
@@ -2084,8 +2115,8 @@ class _MissionProgressBar extends StatelessWidget {
         // Çift index → bağlantı çizgisi
         if (i.isOdd) {
           final stepIndex = (i + 1) ~/ 2;
-          final lineActive = !isError &&
-              (tamamlandi || (aktifIndex >= stepIndex));
+          final lineActive =
+              !isError && (tamamlandi || (aktifIndex >= stepIndex));
           return Expanded(
             child: Container(
               height: 0.4.h,
@@ -2103,16 +2134,16 @@ class _MissionProgressBar extends StatelessWidget {
         Color textColor;
 
         if (isError) {
-          dotColor  = danger;
+          dotColor = danger;
           textColor = stepIndex == aktifIndex ? danger : muted;
         } else if (isDone) {
-          dotColor  = success;
+          dotColor = success;
           textColor = success;
         } else if (isActive) {
-          dotColor  = bright;
+          dotColor = bright;
           textColor = bright;
         } else {
-          dotColor  = const Color(0xFF333333);
+          dotColor = const Color(0xFF333333);
           textColor = muted;
         }
 
@@ -2126,9 +2157,8 @@ class _MissionProgressBar extends StatelessWidget {
               decoration: BoxDecoration(
                 color: isDone ? success : dotColor,
                 shape: BoxShape.circle,
-                border: isActive
-                    ? Border.all(color: bright, width: 0.4.w)
-                    : null,
+                border:
+                    isActive ? Border.all(color: bright, width: 0.4.w) : null,
               ),
               child: isDone
                   ? Icon(Icons.check, size: 1.5.sp, color: Colors.black)

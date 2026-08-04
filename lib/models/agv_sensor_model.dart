@@ -1,26 +1,34 @@
-﻿import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart';
 
 /// 8 zorunlu robot durumu (2026 şartname §3.1.1 madde 10a–h).
 /// Robot tarafı bu string'lerden birini /telemetri "durum" alanında gönderir.
-const kRobotDurumIdle           = 'idle';
+const kRobotDurumIdle = 'idle';
 const kRobotDurumGorevIsleniyor = 'gorevIsleniyor';
-const kRobotDurumYuksuzHareket  = 'yuksuzHareket';
-const kRobotDurumYukluHareket   = 'yukluHareket';
-const kRobotDurumKapiBekle      = 'kapiBekle';
-const kRobotDurumBaslangicaDon  = 'baslangicaDon';
-const kRobotDurumHata           = 'hata';
-const kRobotDurumAcilStop       = 'acilStop';
+const kRobotDurumYuksuzHareket = 'yuksuzHareket';
+const kRobotDurumYukluHareket = 'yukluHareket';
+const kRobotDurumKapiBekle = 'kapiBekle';
+const kRobotDurumBaslangicaDon = 'baslangicaDon';
+const kRobotDurumHata = 'hata';
+const kRobotDurumAcilStop = 'acilStop';
 
 class AgvSensorModel extends ChangeNotifier {
   // ── Mevcut alanlar (korunuyor) ────────────────────────────────────────
   String sicaklik = "";
-  String voltage  = "";
-  String amper    = "";
+  String voltage = "";
+  String amper = "";
   String isCharging = "Çalışıyor";
-  String sonQR  = "null";
-  double currX  = 0.0;
-  double currY  = 0.0;
+  String sonQR = "null";
+  double currX = 0.0;
+  double currY = 0.0;
   double currYaw = 0.0;
+
+  bool lokalizasyonGecerli = false;
+  double pozisyonKovaryansi = double.infinity;
+  String aktifRotaEdge = '';
+  String sonrakiNode = '';
+  double rotaSapmasi = double.nan;
+  bool engelAlgilandi = false;
+  bool estopAktif = false;
 
   // ── 2026 Şartname — zorunlu UI alanları ──────────────────────────────
   /// Robot anlık durum (8 sabit: kRobotDurum*).
@@ -67,15 +75,15 @@ class AgvSensorModel extends ChangeNotifier {
     required String amper,
   }) {
     this.sicaklik = sicaklik;
-    this.voltage  = voltage;
-    this.amper    = amper;
+    this.voltage = voltage;
+    this.amper = amper;
     _updateChargingStatus();
     notifyListeners();
   }
 
   void updatePose(double x, double y, double yaw) {
-    currX   = x;
-    currY   = y;
+    currX = x;
+    currY = y;
     currYaw = yaw;
     notifyListeners();
   }
@@ -119,29 +127,59 @@ class AgvSensorModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// /robot_status alanlarini tek bildirimle mevcut ekran modeline uygular.
+  void updateRobotStatus({
+    required double x,
+    required double y,
+    required double yaw,
+    required bool localizationValid,
+    required double positionCovariance,
+    required String currentRouteEdge,
+    required String nextNode,
+    required double crossTrackError,
+    required bool obstacleDetected,
+    required String lastQrData,
+    required bool plcConnected,
+    required bool estopActive,
+  }) {
+    currX = x;
+    currY = y;
+    currYaw = yaw;
+    lokalizasyonGecerli = localizationValid;
+    pozisyonKovaryansi = positionCovariance;
+    aktifRotaEdge = currentRouteEdge;
+    sonrakiNode = nextNode;
+    rotaSapmasi = crossTrackError;
+    engelAlgilandi = obstacleDetected;
+    if (lastQrData.isNotEmpty) sonQR = lastQrData;
+    plcDurum = plcConnected ? 'bağlı' : 'bağlantı yok';
+    estopAktif = estopActive;
+    notifyListeners();
+  }
+
   // ── GEÇİCİ: Admin/demo modu için örnek veri ──────────────────────────
   /// TODO(kaldır): Admin modu kaldırılınca bu metot da silinmeli.
   /// Rapor ekran görüntüleri için gerçekçi örnek değerler basar.
   void loadDemoData() {
     sicaklik = "36.5";
-    voltage  = "24.6";
-    amper    = "1.8";
-    sonQR    = "QA2.1";
-    currX    = 3.2;
-    currY    = 2.1;
-    currYaw  = 0.45;
-    robotDurum   = kRobotDurumYukluHareket;
-    gorevDurum   = "A2 → B3 yük taşınıyor";
-    liftAcik     = true;
-    anlikHiz     = 0.85;
+    voltage = "24.6";
+    amper = "1.8";
+    sonQR = "QA2.1";
+    currX = 3.2;
+    currY = 2.1;
+    currYaw = 0.45;
+    robotDurum = kRobotDurumYukluHareket;
+    gorevDurum = "A2 → B3 yük taşınıyor";
+    liftAcik = true;
+    anlikHiz = 0.85;
     bataryaYuzde = 78.0;
-    plcDurum     = "bağlı";
-    plcSonMesaj  = "Kapı açıldı, geçebilirsin";
-    qrKonum      = "x:0.12, y:-0.05, z:0.80";
-    qrDogrulama  = "Geçerli";
+    plcDurum = "bağlı";
+    plcSonMesaj = "Kapı açıldı, geçebilirsin";
+    qrKonum = "x:0.12, y:-0.05, z:0.80";
+    qrDogrulama = "Geçerli";
     konumDogrulamaSonucu = "Onaylandı";
-    konumHatasi  = "0.04 m";
-    yonHatasi    = "2.1°";
+    konumHatasi = "0.04 m";
+    yonHatasi = "2.1°";
     _updateChargingStatus();
     notifyListeners();
   }

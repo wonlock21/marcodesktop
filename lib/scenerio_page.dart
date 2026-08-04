@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'services/agv_service.dart';
 import 'data_model.dart';
@@ -128,8 +128,6 @@ class _ScenarioPageState extends State<ScenarioPage> {
     return _stationTypes['C']!;
   }
 
-  Future<void> veriBas(String veri) => AgvService.veriBas(widget.site, veri);
-
   Future<void> _buildScenarioAndSend() async {
     if (_selected.isEmpty) return;
 
@@ -158,8 +156,34 @@ class _ScenarioPageState extends State<ScenarioPage> {
       arota = parts.join('/');
     });
 
-    if (arota.isNotEmpty) await veriBas("v$arota");
-    if (mounted) Navigator.pop(context, arota);
+    final pickup = _selected.where((p) => p.startsWith('A')).firstOrNull;
+    final dropoff = _selected.where((p) => p.startsWith('B')).firstOrNull;
+    if (pickup == null || dropoff == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Bir alma ve bir bırakma noktası seçin')),
+        );
+      }
+      return;
+    }
+    try {
+      final response = await AgvService.submitManualTask(
+        taskId: 'gui_${DateTime.now().millisecondsSinceEpoch}',
+        pickupNode: 'alma_${pickup.substring(1)}',
+        dropoffNode: 'birak_${dropoff.substring(1)}',
+      );
+      if (response['accepted'] != true) {
+        throw StateError(response['message']?.toString() ?? 'Görev reddedildi');
+      }
+      if (mounted) Navigator.pop(context, arota);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Görev gönderilemedi: $error')),
+        );
+      }
+    }
   }
 
   // ── UI ───────────────────────────────────────────────────────────────────

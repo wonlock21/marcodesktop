@@ -2,7 +2,38 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
+import 'ros_bridge_client.dart';
+
 class AgvService {
+  static final RosBridgeClient ros = RosBridgeClient();
+
+  static Future<void> connectRos(String address) => ros.connect(address);
+
+  static Future<void> disconnectRos() => ros.disconnect();
+
+  static Future<Map<String, dynamic>> startMission() => ros.startMission();
+
+  static Future<Map<String, dynamic>> submitManualTask({
+    required String taskId,
+    required String pickupNode,
+    required String dropoffNode,
+  }) =>
+      ros.submitManualTask(
+        taskId: taskId,
+        pickupNode: pickupNode,
+        dropoffNode: dropoffNode,
+      );
+
+  static Future<Map<String, dynamic>> cancelMission() => ros.cancelMission();
+
+  static Future<Map<String, dynamic>> resetMissionSafety() =>
+      ros.resetMissionSafety();
+
+  static bool publishManual(double linearX, double angularZ) =>
+      ros.publishManualTwist(linearX, angularZ);
+
+  static void stopManual() => ros.stopManual();
+
   static Future<bool> checkConnection(String site) async {
     if (site.isEmpty) return false;
     try {
