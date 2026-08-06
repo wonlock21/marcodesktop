@@ -303,7 +303,6 @@ class _ControlButtonState extends State<ControlButton> {
   }
 
   void _handleRelease() {
-    if (_debounceTimer?.isActive ?? false) return;
     if (isPressed) {
       setState(() { isPressed = false; });
       widget.onReleased();
@@ -320,6 +319,7 @@ class _ControlButtonState extends State<ControlButton> {
       child: GestureDetector(
         onTapDown: (_) => _handlePress(),
         onTapUp: (_) => _handleRelease(),
+        onTapCancel: _handleRelease,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
           padding: EdgeInsets.symmetric(horizontal: 4.w, vertical: 6.h),

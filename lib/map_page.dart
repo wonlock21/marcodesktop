@@ -237,6 +237,24 @@ class _MapPageState extends State<MapPage> {
     } else if (lastDataPoints[ind].type.contains("charge")) {
       incrementChargeStationCount();
       return Icon(Icons.battery_charging_full, size: 5.sp);
+    } else if (lastDataPoints[ind].type.startsWith("pickupPoint")) {
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.file_upload_outlined, size: 5.sp, color: _mpAccent),
+          Text(lastDataPoints[ind].type.substring(11),
+              style: TextStyle(fontSize: 3.sp, fontWeight: FontWeight.w700)),
+        ],
+      );
+    } else if (lastDataPoints[ind].type.startsWith("dropoffPoint")) {
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.file_download_outlined, size: 5.sp, color: _mpDanger),
+          Text(lastDataPoints[ind].type.substring(12),
+              style: TextStyle(fontSize: 3.sp, fontWeight: FontWeight.w700)),
+        ],
+      );
     } else if (lastDataPoints[ind].type.contains("cargo")) {
       //cargoAreaA
       getNextCargoAreaName();
@@ -821,7 +839,7 @@ class _MapPageState extends State<MapPage> {
                             Column(
                               children: [
                                 Text(
-                                  'Y?K ALANI',
+                                  'YÜK ALMA',
                                   style: TextStyle(
                                       color: _mpAccent,
                                       fontSize: 2.8.sp,
@@ -829,9 +847,8 @@ class _MapPageState extends State<MapPage> {
                                 ),
                                 SizedBox(height: 5.h),
                                 Draggable<Map<String, dynamic>>(
-                                  data: {
-                                    'type': 'cargoArea',
-                                    'name': getNextCargoAreaName
+                                  data: const {
+                                    'type': 'pickupPoint',
                                   },
                                   feedback: Container(
                                     width: 15.w,
@@ -839,7 +856,7 @@ class _MapPageState extends State<MapPage> {
                                     color:
                                         const Color(0xFF42A5F5).withAlpha(120),
                                     child: Center(
-                                        child: Icon(Icons.archive_outlined,
+                                        child: Icon(Icons.file_upload_outlined,
                                             size: 6.w)),
                                   ),
                                   childWhenDragging: Container(
@@ -847,7 +864,7 @@ class _MapPageState extends State<MapPage> {
                                     height: 50.h,
                                     color: const Color(0xFF1A3A5C),
                                     child: Center(
-                                        child: Icon(Icons.archive_outlined,
+                                        child: Icon(Icons.file_upload_outlined,
                                             size: 6.w)),
                                   ), // Yap? t?r?
                                   child: Container(
@@ -857,14 +874,59 @@ class _MapPageState extends State<MapPage> {
                                     height: 50.h,
                                     color: const Color(0xFF42A5F5),
                                     child: Center(
-                                        child: Icon(Icons.archive_outlined,
+                                        child: Icon(Icons.file_upload_outlined,
                                             size: 6.w)),
                                   ),
                                 ),
                               ],
                             ),
                             SizedBox(
-                              width: 20.w,
+                              width: 10.w,
+                            ),
+                            Column(
+                              children: [
+                                Text(
+                                  'YÜK BIRAKMA',
+                                  style: TextStyle(
+                                      color: _mpDanger,
+                                      fontSize: 2.8.sp,
+                                      fontFamily: 'monospace'),
+                                ),
+                                SizedBox(height: 5.h),
+                                Draggable<Map<String, dynamic>>(
+                                  data: const {'type': 'dropoffPoint'},
+                                  feedback: Container(
+                                    width: 15.w,
+                                    height: 50.h,
+                                    color:
+                                        const Color(0xFFEF5350).withAlpha(120),
+                                    child: Center(
+                                        child: Icon(Icons.file_download_outlined,
+                                            size: 6.w)),
+                                  ),
+                                  childWhenDragging: Container(
+                                    width: 15.w,
+                                    height: 50.h,
+                                    color: const Color(0xFF3A1A1A),
+                                    child: Center(
+                                        child: Icon(Icons.file_download_outlined,
+                                            size: 6.w)),
+                                  ),
+                                  child: Container(
+                                    constraints:
+                                        BoxConstraints.tight(Size(9.w, 35.h)),
+                                    width: 15.w,
+                                    height: 50.h,
+                                    color: const Color(0xFFEF5350),
+                                    child: Center(
+                                        child: Icon(Icons.file_download_outlined,
+                                            size: 6.w)),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            SizedBox(
+                              width: 10.w,
                             ),
                             Column(
                               children: [
@@ -1029,6 +1091,37 @@ class _DragTargetContainerState extends State<DragTargetContainer> {
     });
   }
 
+  String _nextMissionPointName(String typePrefix, String labelPrefix) {
+    final used = <int>{};
+    for (final point in widget.dataPoints) {
+      if (!point.type.startsWith(typePrefix)) continue;
+      final label = point.type.substring(typePrefix.length);
+      if (!label.startsWith(labelPrefix)) continue;
+      final number = int.tryParse(label.substring(labelPrefix.length));
+      if (number != null) used.add(number);
+    }
+    var next = 1;
+    while (used.contains(next)) {
+      next++;
+    }
+    return '$labelPrefix$next';
+  }
+
+  void _showMissionPoint(String label, {required bool pickup}) {
+    _child = Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(
+          pickup ? Icons.file_upload_outlined : Icons.file_download_outlined,
+          size: 5.sp,
+          color: pickup ? _mpAccent : _mpDanger,
+        ),
+        Text(label,
+            style: TextStyle(fontSize: 3.sp, fontWeight: FontWeight.w700)),
+      ],
+    );
+  }
+
   void calculatePosition(int index) {
     yValue = 16 - (index ~/ 29); // Inverted y calculation
     xValue = 28 - (index % 29); // Inverted x calculation based on 17 rows
@@ -1084,6 +1177,14 @@ class _DragTargetContainerState extends State<DragTargetContainer> {
               localChargeStationCount = widget.incrementChargeStationCount();
               qrName = widget.incrementQRCount().toString();
               _child = Icon(Icons.battery_charging_full, size: 5.sp);
+            } else if (receivedData.data['type'] == 'pickupPoint') {
+              qrName = widget.incrementQRCount().toString();
+              name = _nextMissionPointName('pickupPoint', 'A');
+              _showMissionPoint(name, pickup: true);
+            } else if (receivedData.data['type'] == 'dropoffPoint') {
+              qrName = widget.incrementQRCount().toString();
+              name = _nextMissionPointName('dropoffPoint', 'B');
+              _showMissionPoint(name, pickup: false);
             } else if (receivedData.data['type'] == 'cargoArea') {
               qrName = widget.incrementQRCount().toString();
               String newCargoAreaName = widget.getNextCargoAreaName();
@@ -1147,10 +1248,19 @@ class _DragTargetContainerState extends State<DragTargetContainer> {
                 widget.dataPoints
                     .add(DataPoint(type: ("Q$qrName"), x: xValue, y: yValue));
               }
+              final droppedType = receivedData.data['type'] as String;
+              String? rosNodeName;
+              if (droppedType == 'pickupPoint') {
+                rosNodeName = 'alma_${name.substring(1)}';
+              } else if (droppedType == 'dropoffPoint') {
+                rosNodeName = 'birak_${name.substring(1)}';
+              }
               widget.dataPoints.add(DataPoint(
-                  type: (receivedData.data['type'] + name),
-                  x: xValue,
-                  y: yValue));
+                type: droppedType + name,
+                x: xValue,
+                y: yValue,
+                rosNodeName: rosNodeName,
+              ));
             }
           });
         },

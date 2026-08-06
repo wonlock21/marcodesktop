@@ -311,6 +311,84 @@ class _ControllerPageState extends State<ControllerPage> {
     }
   }
 
+  Future<void> _showRosMissionDialog(List<DataPoint> dataPoints) async {
+    final pickups = dataPoints
+        .where((p) => p.rosNodeName?.startsWith('alma_') ?? false)
+        .toList();
+    final dropoffs = dataPoints
+        .where((p) => p.rosNodeName?.startsWith('birak_') ?? false)
+        .toList();
+    if (pickups.isEmpty || dropoffs.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Önce haritaya yük alma ve bırakma noktası ekleyin.'),
+        ));
+      }
+      return;
+    }
+
+    String pickup = pickups.first.rosNodeName!;
+    String dropoff = dropoffs.first.rosNodeName!;
+    final selection = await showDialog<Map<String, String>>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('ROS Görevi Oluştur'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            DropdownButtonFormField<String>(
+              initialValue: pickup,
+              decoration: const InputDecoration(labelText: 'Yük alma noktası'),
+              items: pickups
+                  .map((p) => DropdownMenuItem(
+                      value: p.rosNodeName, child: Text(p.rosNodeName!)))
+                  .toList(),
+              onChanged: (v) {
+                if (v != null) setDialogState(() => pickup = v);
+              },
+            ),
+            const SizedBox(height: 16),
+            DropdownButtonFormField<String>(
+              initialValue: dropoff,
+              decoration:
+                  const InputDecoration(labelText: 'Yük bırakma noktası'),
+              items: dropoffs
+                  .map((p) => DropdownMenuItem(
+                      value: p.rosNodeName, child: Text(p.rosNodeName!)))
+                  .toList(),
+              onChanged: (v) {
+                if (v != null) setDialogState(() => dropoff = v);
+              },
+            ),
+          ]),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('İptal'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, {
+                'pickup': pickup,
+                'dropoff': dropoff,
+              }),
+              child: const Text('Gönder'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (selection == null || !mounted) return;
+    try {
+      final response = await AgvService.submitManualTask(
+        taskId: 'GUI-${DateTime.now().millisecondsSinceEpoch}',
+        pickupNode: selection['pickup']!,
+        dropoffNode: selection['dropoff']!,
+      );
+      _onMissionEvent(response['message']?.toString() ?? 'Görev gönderildi');
+    } catch (error) {
+      _onMissionEvent('Görev gönderilemedi: $error');
+    }
+  }
+
   Future<void> _navigateToDataPage(String site) async {
     if (site.isEmpty && !kAdminMode) return;
     await Navigator.push(
@@ -580,8 +658,14 @@ class _ControllerPageState extends State<ControllerPage> {
                                         text: "Senaryo",
                                         assignedKey: LogicalKeyboardKey.keyN,
                                         onPressed: () async {
-                                          await _navigateToScenarioPage(
-                                              dataPoints);
+                                          if (AgvService
+                                              .ros.state.value.isConnected) {
+                                            await _showRosMissionDialog(
+                                                dataPoints);
+                                          } else {
+                                            await _navigateToScenarioPage(
+                                                dataPoints);
+                                          }
                                         },
                                       )),
                                       SizedBox(width: 1.5.w),
@@ -1743,6 +1827,55 @@ class _ControllerPageState extends State<ControllerPage> {
     );
   }
 
+  GcsMapData _mapDataFromSavedPoints(AgvSensorModel agv) {
+    const cellSizeMeters = 0.25;
+    const centerX = 14.0;
+    const centerY = 8.0;
+    final dataPoints = Provider.of<DataModel>(context, listen: false).dataPoints;
+    final mission = Provider.of<GcsMissionModel>(context, listen: false);
+    final points = <MapPoint>[];
+
+    for (final point in dataPoints) {
+      MapPointType? type;
+      String label = '';
+      if (point.type.startsWith('pickupPoint')) {
+        type = MapPointType.almaNoktasi;
+        label = point.type.substring(11);
+      } else if (point.type.startsWith('dropoffPoint')) {
+        type = MapPointType.birakNoktasi;
+        label = point.type.substring(12);
+      } else if (point.type.startsWith('startArea')) {
+        type = MapPointType.beklemeNoktasi;
+        label = 'S${point.type.substring(9)}';
+      } else if (point.type.startsWith('chargeStation')) {
+        type = MapPointType.sarjIstasyonu;
+        label = 'ŞARJ';
+      } else if (point.type.startsWith('Q')) {
+        type = MapPointType.qrNoktasi;
+        label = point.type;
+      }
+      if (type == null) continue;
+
+      final nodeName = point.rosNodeName;
+      points.add(MapPoint(
+        id: nodeName ?? '${point.type}_${point.x}_${point.y}',
+        label: label,
+        x: (point.x - centerX) * cellSizeMeters,
+        y: (point.y - centerY) * cellSizeMeters,
+        type: type,
+        aktif: nodeName != null &&
+            (nodeName == mission.almaNoktasi ||
+                nodeName == mission.birakNoktasi),
+      ));
+    }
+    return GcsMapData(
+      robotX: agv.currX,
+      robotY: agv.currY,
+      robotYaw: agv.currYaw,
+      points: points,
+    );
+  }
+
   /// Seçili sekmeye göre içerik döndürür.
   Widget _buildWorkAreaContent(
     AgvSensorModel agv,
@@ -1754,11 +1887,7 @@ class _ControllerPageState extends State<ControllerPage> {
     switch (_selectedWorkTab) {
       // ── Harita ─────────────────────────────────────────────────────────
       case 0:
-        final mapData = GcsMapData.mock(
-          robotX: agv.currX,
-          robotY: agv.currY,
-          robotYaw: agv.currYaw,
-        );
+        final mapData = _mapDataFromSavedPoints(agv);
         return GcsMapView(data: mapData);
 
       // ── Kamera ─────────────────────────────────────────────────────────

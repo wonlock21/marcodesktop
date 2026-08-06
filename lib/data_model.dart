@@ -24,7 +24,7 @@ class DataModel with ChangeNotifier {
 
   Future<void> clearAllData() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
+    await prefs.remove('dataPoints');
   }
 
   /// Verileri SharedPreferences ile kaydetme fonksiyonu
@@ -52,8 +52,16 @@ class DataPoint {
   String type;
   int x;
   int y;
+  String? rosNodeName;
+  double yaw;
 
-  DataPoint({required this.type, required this.x, required this.y});
+  DataPoint({
+    required this.type,
+    required this.x,
+    required this.y,
+    this.rosNodeName,
+    this.yaw = 0.0,
+  });
 
   /// Nesneyi JSON formatına dönüştürme
   Map<String, dynamic> toJson() {
@@ -61,6 +69,8 @@ class DataPoint {
       'type': type,
       'x': x,
       'y': y,
+      'rosNodeName': rosNodeName,
+      'yaw': yaw,
     };
   }
 
@@ -70,6 +80,8 @@ class DataPoint {
       type: json['type'],
       x: json['x'],
       y: json['y'],
+      rosNodeName: json['rosNodeName'] as String?,
+      yaw: (json['yaw'] as num?)?.toDouble() ?? 0.0,
     );
   }
 }
