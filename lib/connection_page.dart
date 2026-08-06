@@ -2,11 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 // ─── Renk sabitleri ────────────────────────────────────────────────────────
-const _bg      = Color(0xFF121212);
+const _bg = Color(0xFF121212);
 const _panelBg = Color(0xFF1A1A1A);
 const _borderC = Color(0xFF333333);
-const _muted   = Color(0xFF9E9E9E);
-const _bright  = Color(0xFFE0E0E0);
+const _muted = Color(0xFF9E9E9E);
+const _bright = Color(0xFFE0E0E0);
 
 class ConnectionPage extends StatefulWidget {
   const ConnectionPage({super.key});
@@ -77,14 +77,15 @@ class _ConnectionPageState extends State<ConnectionPage> {
               decoration: InputDecoration(
                 filled: true,
                 fillColor: const Color(0xFF1E1E1E),
-                hintText: 'http://192.168.x.x:5000',
+                hintText: 'ws://192.168.x.x:9090',
                 hintStyle: TextStyle(
                   color: const Color(0xFF444444),
                   fontSize: 3.5.sp,
                   fontFamily: 'monospace',
                 ),
                 contentPadding: EdgeInsets.symmetric(
-                  horizontal: 3.w, vertical: 2.h,
+                  horizontal: 3.w,
+                  vertical: 2.h,
                 ),
                 enabledBorder: OutlineInputBorder(
                   borderSide: BorderSide(color: _borderC, width: 0.5.w),
@@ -92,7 +93,8 @@ class _ConnectionPageState extends State<ConnectionPage> {
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderSide: BorderSide(
-                    color: const Color(0xFF1565C0), width: 0.7.w,
+                    color: const Color(0xFF1565C0),
+                    width: 0.7.w,
                   ),
                   borderRadius: BorderRadius.circular(4.r),
                 ),
@@ -147,13 +149,9 @@ class _ConnectButtonState extends State<ConnectButton> {
         duration: const Duration(milliseconds: 200),
         height: 55.h,
         decoration: BoxDecoration(
-          color: isOn
-              ? const Color(0xFF1A2540)
-              : const Color(0xFF1E1E1E),
+          color: isOn ? const Color(0xFF1A2540) : const Color(0xFF1E1E1E),
           border: Border.all(
-            color: isOn
-                ? const Color(0xFF1565C0)
-                : _borderC,
+            color: isOn ? const Color(0xFF1565C0) : _borderC,
             width: 0.5.w,
           ),
           borderRadius: BorderRadius.circular(4.r),
@@ -164,18 +162,14 @@ class _ConnectButtonState extends State<ConnectButton> {
             children: [
               Icon(
                 Icons.link,
-                color: isOn
-                    ? const Color(0xFF42A5F5)
-                    : _muted,
+                color: isOn ? const Color(0xFF42A5F5) : _muted,
                 size: 5.sp,
               ),
               SizedBox(width: 1.5.w),
               Text(
                 widget.text.toUpperCase(),
                 style: TextStyle(
-                  color: isOn
-                      ? const Color(0xFF42A5F5)
-                      : _muted,
+                  color: isOn ? const Color(0xFF42A5F5) : _muted,
                   fontWeight: FontWeight.bold,
                   fontSize: 4.sp,
                   fontFamily: 'monospace',

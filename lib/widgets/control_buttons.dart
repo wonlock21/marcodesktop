@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -8,6 +8,7 @@ class PowerButton extends StatefulWidget {
   final double width;
   final IconData icon;
   final Function onPressed;
+  final VoidCallback? onLongPress;
   final String? labelOn;
   final String? labelOff;
 
@@ -17,6 +18,7 @@ class PowerButton extends StatefulWidget {
     this.width = 300,
     this.height = 100,
     required this.onPressed,
+    this.onLongPress,
     this.labelOn,
     this.labelOff,
   });
@@ -33,13 +35,18 @@ class _PowerButtonState extends State<PowerButton> {
       isOn = !isOn;
     });
     Future.delayed(const Duration(milliseconds: 600), () {
-      if (mounted) setState(() { isOn = false; });
+      if (mounted) {
+        setState(() {
+          isOn = false;
+        });
+      }
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
+      onLongPress: widget.onLongPress,
       onTap: () {
         _toggleState();
         widget.onPressed();
@@ -65,16 +72,15 @@ class _PowerButtonState extends State<PowerButton> {
               children: [
                 Icon(
                   widget.icon,
-                  color: isOn ? const Color(0xFFE53935) : const Color(0xFF9E9E9E),
+                  color:
+                      isOn ? const Color(0xFFE53935) : const Color(0xFF9E9E9E),
                   size: 9.sp,
                 ),
                 if (widget.labelOn != null || widget.labelOff != null)
                   Padding(
                     padding: EdgeInsets.only(top: 0.5.h),
                     child: Text(
-                      isOn
-                          ? (widget.labelOn ?? '')
-                          : (widget.labelOff ?? ''),
+                      isOn ? (widget.labelOn ?? '') : (widget.labelOff ?? ''),
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: isOn
@@ -164,9 +170,15 @@ class _NormalButtonState extends State<NormalButton> {
   late FocusNode _focusNode;
 
   void _toggleState() {
-    setState(() { isOn = !isOn; });
+    setState(() {
+      isOn = !isOn;
+    });
     Future.delayed(const Duration(milliseconds: 300), () {
-      if (mounted) setState(() { isOn = false; });
+      if (mounted) {
+        setState(() {
+          isOn = false;
+        });
+      }
     });
   }
 
@@ -228,7 +240,8 @@ class _NormalButtonState extends State<NormalButton> {
                 widget.text,
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: isOn ? const Color(0xFF42A5F5) : const Color(0xFF9E9E9E),
+                  color:
+                      isOn ? const Color(0xFF42A5F5) : const Color(0xFF9E9E9E),
                   fontWeight: FontWeight.bold,
                   fontSize: 4.sp,
                 ),
@@ -295,7 +308,9 @@ class _ControlButtonState extends State<ControlButton> {
 
   void _handlePress() {
     if (!isPressed) {
-      setState(() { isPressed = true; });
+      setState(() {
+        isPressed = true;
+      });
       widget.onPressed();
     }
     _debounceTimer?.cancel();
@@ -304,7 +319,9 @@ class _ControlButtonState extends State<ControlButton> {
 
   void _handleRelease() {
     if (isPressed) {
-      setState(() { isPressed = false; });
+      setState(() {
+        isPressed = false;
+      });
       widget.onReleased();
     }
     _debounceTimer?.cancel();
@@ -324,14 +341,12 @@ class _ControlButtonState extends State<ControlButton> {
           duration: const Duration(milliseconds: 150),
           padding: EdgeInsets.symmetric(horizontal: 4.w, vertical: 6.h),
           decoration: BoxDecoration(
-            color: isPressed
-                ? const Color(0xFF3A3A3A)
-                : const Color(0xFF242424),
+            color:
+                isPressed ? const Color(0xFF3A3A3A) : const Color(0xFF242424),
             borderRadius: BorderRadius.circular(4.r),
             border: Border.all(
-              color: isPressed
-                  ? const Color(0xFF5E5E5E)
-                  : const Color(0xFF333333),
+              color:
+                  isPressed ? const Color(0xFF5E5E5E) : const Color(0xFF333333),
               width: 0.5.w,
             ),
           ),

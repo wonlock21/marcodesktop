@@ -148,6 +148,11 @@ class GcsMissionModel extends ChangeNotifier {
   /// Bırakma noktası kodu (örn. "B3", "QB3.1").
   String birakNoktasi = '';
 
+  /// Çok duraklı görevin ROS düğümleri, seçim sırasıyla.
+  List<String> rotaDugumleri = const [];
+  int aktifDurakIndeksi = 0;
+  bool baslangicaDon = true;
+
   /// Görev yaşam döngüsünde bulunulan aşama.
   GorevAsama asama = GorevAsama.bosta;
 
@@ -256,6 +261,9 @@ class GcsMissionModel extends ChangeNotifier {
     String? gorevKaynagi,
     String? almaNoktasi,
     String? birakNoktasi,
+    List<String>? rotaDugumleri,
+    int? aktifDurakIndeksi,
+    bool? baslangicaDon,
     GorevAsama? asama,
     Duration? gorevSuresi,
     bool? kapiIzni,
@@ -267,6 +275,11 @@ class GcsMissionModel extends ChangeNotifier {
     if (gorevKaynagi != null) this.gorevKaynagi = gorevKaynagi;
     if (almaNoktasi != null) this.almaNoktasi = almaNoktasi;
     if (birakNoktasi != null) this.birakNoktasi = birakNoktasi;
+    if (rotaDugumleri != null) {
+      this.rotaDugumleri = List.unmodifiable(rotaDugumleri);
+    }
+    if (aktifDurakIndeksi != null) this.aktifDurakIndeksi = aktifDurakIndeksi;
+    if (baslangicaDon != null) this.baslangicaDon = baslangicaDon;
     if (asama != null) this.asama = asama;
     if (gorevSuresi != null) this.gorevSuresi = gorevSuresi;
     if (kapiIzni != null) this.kapiIzni = kapiIzni;

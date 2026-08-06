@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'services/agv_service.dart';
+import 'services/ros_gcs_contract.dart';
 import 'data_model.dart';
 
 // ─── Renk sabitleri (ana GCS ekranıyla birebir) ────────────────────────────
@@ -31,20 +32,6 @@ const _stationTypes = {
 };
 
 // ─── İstasyon grid konumları (1–10 x / 1–9 y ölçeği) ─────────────────────
-const _stationPos = <String, Offset>{
-  'A1': Offset(1.8, 1.5),
-  'A2': Offset(1.8, 3.5),
-  'A3': Offset(1.8, 5.5),
-  'A4': Offset(1.8, 7.5),
-  'B1': Offset(7.2, 1.5),
-  'B2': Offset(7.2, 3.5),
-  'B3': Offset(7.2, 5.5),
-  'B4': Offset(7.2, 7.5),
-  'S1': Offset(4.2, 8.5),
-  'S2': Offset(5.8, 8.5),
-  'CS': Offset(9.2, 4.5),
-};
-
 // ─────────────────────────────────────────────────────────────────────────────
 
 class ScenarioPage extends StatefulWidget {
@@ -65,23 +52,15 @@ class ScenarioPage extends StatefulWidget {
 
 class _ScenarioPageState extends State<ScenarioPage> {
   // ── Mevcut state (iş mantığı değişmedi) ─────────────────────────────────
-  final List<String> _allPlaces = const [
-    'A1',
-    'A2',
-    'A3',
-    'A4',
-    'B1',
-    'B2',
-    'B3',
-    'B4',
-    'S1',
-    'S2',
-    'CS',
-  ];
-
   final List<String> _selected = [];
+  final Map<String, String> _nodeByLabel = {};
+  final Map<String, Offset> _stationPositions = {};
+  List<String> get _allPlaces => _nodeByLabel.keys.toList(growable: false);
   String arota = "";
   bool senaryoIsDone = false;
+  bool _submitting = false;
+  bool _submitted = false;
+  String? _taskId;
   String? _hoveredCode; // hover efekti için
 
   final Map<String, String> _qrMap = const {
@@ -102,6 +81,20 @@ class _ScenarioPageState extends State<ScenarioPage> {
   void initState() {
     super.initState();
     senaryoIsDone = widget.rota.isNotEmpty;
+    for (final point in widget.dataPoints) {
+      final node = RosGcsContract.nodeForPoint(point);
+      if (node == null ||
+          (!node.startsWith('alma_') && !node.startsWith('birak_'))) {
+        continue;
+      }
+      final label = RosGcsContract.labelForNode(node);
+      _nodeByLabel.putIfAbsent(label, () => node);
+      final map = RosGcsContract.graphNodes[node]!;
+      _stationPositions[label] = Offset(
+        (map.dx + 4) * 1.25,
+        (3 - map.dy) * 1.5,
+      );
+    }
   }
 
   void _addPlace(String code) => setState(() => _selected.add(code));
@@ -115,6 +108,8 @@ class _ScenarioPageState extends State<ScenarioPage> {
         _selected.clear();
         arota = "";
         senaryoIsDone = false;
+        _submitted = false;
+        _taskId = null;
       });
 
   void _returnData() => Navigator.pop(context, arota);
@@ -129,60 +124,56 @@ class _ScenarioPageState extends State<ScenarioPage> {
   }
 
   Future<void> _buildScenarioAndSend() async {
-    if (_selected.isEmpty) return;
-
-    final parts = <String>[];
-    int startIndex = 0;
-    if (_selected.first.startsWith('S')) startIndex = 1;
-
-    bool pickupNext = true;
-    for (int i = startIndex; i < _selected.length; i++) {
-      final p = _selected[i];
-      final qr = _qrMap[p] ?? p;
-      if (p.startsWith('A') || p.startsWith('B')) {
-        parts
-          ..add(qr)
-          ..add(pickupNext ? 'q' : 'e');
-        pickupNext = !pickupNext;
-      } else if (p.startsWith('S') || p == 'CS') {
-        parts
-          ..add(qr)
-          ..add('null');
-      }
+    if (_selected.isEmpty || _submitting || _submitted) return;
+    if (_selected.length.isOdd ||
+        _selected.asMap().entries.any((entry) => entry.key.isEven
+            ? !entry.value.startsWith('A')
+            : !entry.value.startsWith('B'))) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content:
+            Text('Durakları A (alma), B (bırakma) çiftleri halinde seçin.'),
+      ));
+      return;
     }
+    final routeNodes = _selected.map((p) => _nodeByLabel[p]!).toList();
 
     setState(() {
       senaryoIsDone = true;
-      arota = parts.join('/');
+      arota = routeNodes.join(' → ');
     });
-
-    final pickup = _selected.where((p) => p.startsWith('A')).firstOrNull;
-    final dropoff = _selected.where((p) => p.startsWith('B')).firstOrNull;
-    if (pickup == null || dropoff == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('Bir alma ve bir bırakma noktası seçin')),
-        );
-      }
+    if (!AgvService.ros.state.value.isConnected) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text(
+            'Senaryo yerel olarak hazırlandı; ROS bağlı olmadığı için gönderilmedi.'),
+      ));
       return;
     }
+    setState(() => _submitting = true);
     try {
-      final response = await AgvService.submitManualTask(
-        taskId: 'gui_${DateTime.now().millisecondsSinceEpoch}',
-        pickupNode: 'alma_${pickup.substring(1)}',
-        dropoffNode: 'birak_${dropoff.substring(1)}',
+      _taskId ??= 'gui_${DateTime.now().microsecondsSinceEpoch}';
+      final response = await AgvService.submitMission(
+        taskId: _taskId!,
+        routeNodes: routeNodes,
+        returnHome: true,
       );
       if (response['accepted'] != true) {
         throw StateError(response['message']?.toString() ?? 'Görev reddedildi');
       }
-      if (mounted) Navigator.pop(context, arota);
+      if (mounted) {
+        setState(() => _submitted = true);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(response['message']?.toString() ??
+              'Görev kabul edildi; başlatma bekleniyor.'),
+        ));
+      }
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Görev gönderilemedi: $error')),
         );
       }
+    } finally {
+      if (mounted) setState(() => _submitting = false);
     }
   }
 
@@ -190,7 +181,7 @@ class _ScenarioPageState extends State<ScenarioPage> {
 
   @override
   Widget build(BuildContext context) {
-    final canSave = _selected.isNotEmpty;
+    final canSave = _selected.isNotEmpty && !_submitting && !_submitted;
 
     return Scaffold(
       backgroundColor: _bg,
@@ -471,14 +462,14 @@ class _ScenarioPageState extends State<ScenarioPage> {
                     size: box.biggest,
                     painter: _RoutePainter(
                       _selected,
-                      _stationPos,
+                      _stationPositions,
                       cw,
                       ch,
                     ),
                   ),
                 // İstasyon noktaları
                 ..._allPlaces.map((code) {
-                  final pos = _stationPos[code] ?? const Offset(5, 5);
+                  final pos = _stationPositions[code] ?? const Offset(5, 5);
                   final tip = _tipOf(code);
                   final seqNo = _selected.lastIndexOf(code);
                   final isSelected = seqNo != -1;
@@ -679,9 +670,15 @@ class _ScenarioPageState extends State<ScenarioPage> {
                 _infoRow('ETİKET', _displayName(last)),
                 _infoRow('QR', _qrMap[last] ?? '--'),
                 _infoRow(
-                    'X KON.', _stationPos[last]?.dx.toStringAsFixed(1) ?? '--'),
+                    'X KON.',
+                    RosGcsContract.graphNodes[_nodeByLabel[last]]?.dx
+                            .toStringAsFixed(1) ??
+                        '--'),
                 _infoRow(
-                    'Y KON.', _stationPos[last]?.dy.toStringAsFixed(1) ?? '--'),
+                    'Y KON.',
+                    RosGcsContract.graphNodes[_nodeByLabel[last]]?.dy
+                            .toStringAsFixed(1) ??
+                        '--'),
                 _infoRow('SIRADA', '${_selected.length}. istasyon'),
               ],
             ),

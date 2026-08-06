@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'ros_gcs_contract.dart';
+
 enum RosConnectionStatus {
   disconnected,
   connecting,
@@ -35,6 +37,7 @@ class RosBridgeClient {
 
   static const robotStatusTopic = '/robot_status';
   static const missionEventsTopic = '/mission/events';
+  static const mapTopic = '/map';
   static const manualVelocityTopic = '/cmd_vel_manual';
 
   final Duration connectTimeout;
@@ -47,6 +50,7 @@ class RosBridgeClient {
 
   void Function(Map<String, dynamic> message)? onRobotStatus;
   void Function(String message)? onMissionEvent;
+  void Function(OccupancyGridMetadata? metadata)? onMapMetadata;
 
   WebSocketChannel? _channel;
   StreamSubscription<dynamic>? _subscription;
@@ -94,6 +98,7 @@ class RosBridgeClient {
     if (_channel != null) await disconnect();
     _manualDisconnect = false;
     _uri = nextUri;
+    onMapMetadata?.call(null);
     await _open(reconnecting: false);
   }
 
@@ -163,6 +168,13 @@ class RosBridgeClient {
     });
     _send({
       'op': 'subscribe',
+      'topic': mapTopic,
+      'type': 'nav_msgs/msg/OccupancyGrid',
+      'queue_length': 1,
+      'throttle_rate': 5000,
+    });
+    _send({
+      'op': 'subscribe',
       'topic': missionEventsTopic,
       'type': 'std_msgs/msg/String',
       'queue_length': 20,
@@ -191,9 +203,17 @@ class RosBridgeClient {
         final completer = _serviceCalls.remove(id);
         if (completer != null && !completer.isCompleted) {
           final values = message['values'];
-          completer.complete(values is Map
+          final response = values is Map
               ? Map<String, dynamic>.from(values)
-              : <String, dynamic>{});
+              : <String, dynamic>{};
+          if (message['result'] == false) {
+            completer.completeError(StateError(
+              response['message']?.toString() ??
+                  'ROS servis çağrısı başarısız: ${message['service'] ?? id}',
+            ));
+          } else {
+            completer.complete(response);
+          }
         }
       }
       return;
@@ -210,6 +230,16 @@ class RosBridgeClient {
     } else if (topic == missionEventsTopic && raw is Map) {
       final event = raw['data'];
       if (event is String) onMissionEvent?.call(event);
+    } else if (topic == mapTopic && raw is Map) {
+      try {
+        onMapMetadata?.call(
+          OccupancyGridMetadata.fromRosMessage(
+            Map<String, dynamic>.from(raw),
+          ),
+        );
+      } on FormatException catch (error) {
+        debugPrint('Geçersiz /map metadata: $error');
+      }
     }
   }
 
@@ -254,11 +284,25 @@ class RosBridgeClient {
         },
       );
 
+  Future<Map<String, dynamic>> submitMission({
+    required String taskId,
+    required List<String> routeNodes,
+    required bool returnHome,
+  }) =>
+      callService('/mission/submit', 'marco_msgs/srv/SubmitMission', {
+        'task_id': taskId,
+        'route_nodes': routeNodes,
+        'return_home': returnHome,
+      });
+
   Future<Map<String, dynamic>> cancelMission() =>
       callService('/mission/cancel', 'marco_msgs/srv/CancelMission');
 
   Future<Map<String, dynamic>> resetMissionSafety() =>
       callService('/mission/reset_safety', 'marco_msgs/srv/ResetMissionSafety');
+
+  Future<Map<String, dynamic>> emergencyStop() =>
+      callService('/mission/emergency_stop', 'std_srvs/srv/Trigger');
 
   bool publishManualTwist(double linearX, double angularZ) {
     if (!state.value.isConnected || !_manualModeEnabled) return false;
@@ -343,6 +387,7 @@ class RosBridgeClient {
     }
     _channel = null;
     _manualModeEnabled = false;
+    onMapMetadata?.call(null);
     for (final call in _serviceCalls.values) {
       if (!call.isCompleted) call.completeError(StateError(reason));
     }
@@ -374,6 +419,7 @@ class RosBridgeClient {
     _watchdogTimer?.cancel();
     stopManual();
     _manualModeEnabled = false;
+    onMapMetadata?.call(null);
     _generation++;
     await _subscription?.cancel();
     _subscription = null;

@@ -13,6 +13,7 @@ import 'parameter_model.dart';
 import 'scenerio_page.dart';
 import 'services/agv_service.dart';
 import 'services/ros_bridge_client.dart';
+import 'services/ros_gcs_contract.dart';
 import 'widgets/control_buttons.dart';
 import 'models/gcs_map_model.dart';
 import 'widgets/gcs_map_view.dart';
@@ -43,6 +44,7 @@ class _ControllerPageState extends State<ControllerPage> {
   final FocusNode _focusNode = FocusNode();
   late ParameterModel parameterModel;
   late AgvSensorModel _agvModel;
+  OccupancyGridMetadata? _mapMetadata;
 
   // Orta alan sekme indeksi: 0=Harita 1=Kamera 2=LiDAR 3=3D
   int _selectedWorkTab = 0;
@@ -61,6 +63,7 @@ class _ControllerPageState extends State<ControllerPage> {
     _ipController.text = 'ws://localhost:9090';
     AgvService.ros.onRobotStatus = _applyRobotStatus;
     AgvService.ros.onMissionEvent = _onMissionEvent;
+    AgvService.ros.onMapMetadata = _onMapMetadata;
     AgvService.ros.state.addListener(_onRosConnectionState);
     // GEÇİCİ admin/demo modu: cihaz yokken rapor için örnek veri bas.
     if (kAdminMode) {
@@ -131,11 +134,17 @@ class _ControllerPageState extends State<ControllerPage> {
       );
 
     final mission = Provider.of<GcsMissionModel>(context, listen: false);
+    final rawRoute = status['route_nodes'];
     mission.topluGuncelle(
       gorevId: status['task_id']?.toString() ?? '',
       gorevKaynagi: status['task_source']?.toString() ?? '',
       almaNoktasi: status['pickup_node']?.toString() ?? '',
       birakNoktasi: status['dropoff_node']?.toString() ?? '',
+      rotaDugumleri: rawRoute is List
+          ? rawRoute.map((node) => node.toString()).toList()
+          : const <String>[],
+      aktifDurakIndeksi: (status['current_stop_index'] as num?)?.toInt() ?? 0,
+      baslangicaDon: status['return_home'] != false,
       asama: switch (missionState) {
         1 => GorevAsama.gorevAlindi,
         2 => GorevAsama.yuksuzHareket,
@@ -176,6 +185,27 @@ class _ControllerPageState extends State<ControllerPage> {
   void _onMissionEvent(String event) {
     if (!mounted) return;
     Provider.of<GcsEventLogModel>(context, listen: false).ekle(event);
+  }
+
+  void _onMapMetadata(OccupancyGridMetadata? metadata) {
+    if (!mounted) return;
+    final previous = _mapMetadata;
+    setState(() => _mapMetadata = metadata);
+    if (metadata != null &&
+        (previous == null ||
+            previous.resolution != metadata.resolution ||
+            previous.width != metadata.width ||
+            previous.height != metadata.height ||
+            previous.originX != metadata.originX ||
+            previous.originY != metadata.originY ||
+            previous.originYaw != metadata.originYaw)) {
+      _onMissionEvent(
+        'Harita metadata: ${metadata.width}×${metadata.height}, '
+        '${metadata.resolution} m/hücre, '
+        'origin=(${metadata.originX}, ${metadata.originY}, '
+        '${metadata.originYaw})',
+      );
+    }
   }
 
   void _onRosConnectionState() {
@@ -230,7 +260,7 @@ class _ControllerPageState extends State<ControllerPage> {
     }
   }
 
-  /// Yazılımsal güvenli durdurma — fiziksel acil stopun yerine geçmez.
+  /// Yazılımsal acil durdurma — fiziksel acil stopun yerine geçmez.
   ///
   /// Görevi iptal eder, komutu pasife alır, olay günlüğüne kaydeder.
   Future<void> _guvenliDurdur() async {
@@ -247,8 +277,8 @@ class _ControllerPageState extends State<ControllerPage> {
     AgvService.stopManual();
     if (!kAdminMode && AgvService.ros.state.value.isConnected) {
       try {
-        final response = await AgvService.cancelMission();
-        log.ekle(response['message']?.toString() ?? 'İptal istendi');
+        final response = await AgvService.emergencyStop();
+        log.ekle(response['message']?.toString() ?? 'Acil durdurma istendi');
       } catch (error) {
         log.ekle('İptal hatası: $error');
       }
@@ -266,6 +296,10 @@ class _ControllerPageState extends State<ControllerPage> {
   }
 
   Future<void> _missionBaslat() async {
+    if (!AgvService.ros.state.value.isConnected) {
+      _onMissionEvent('Görev başlatılamadı: ROS bağlı değil');
+      return;
+    }
     try {
       final response = await AgvService.startMission();
       _onMissionEvent(
@@ -275,7 +309,24 @@ class _ControllerPageState extends State<ControllerPage> {
     }
   }
 
+  Future<void> _missionIptal() async {
+    if (!AgvService.ros.state.value.isConnected) {
+      _onMissionEvent('Görev iptal edilemedi: ROS bağlı değil');
+      return;
+    }
+    try {
+      final response = await AgvService.cancelMission();
+      _onMissionEvent(response['message']?.toString() ?? 'İptal yanıtı alındı');
+    } catch (error) {
+      _onMissionEvent('İptal hatası: $error');
+    }
+  }
+
   Future<void> _resetSafety() async {
+    if (!AgvService.ros.state.value.isConnected) {
+      _onMissionEvent('Safety reset yapılamadı: ROS bağlı değil');
+      return;
+    }
     try {
       final response = await AgvService.resetMissionSafety();
       _onMissionEvent(response['message']?.toString() ?? 'Safety reset yanıtı');
@@ -311,84 +362,6 @@ class _ControllerPageState extends State<ControllerPage> {
     }
   }
 
-  Future<void> _showRosMissionDialog(List<DataPoint> dataPoints) async {
-    final pickups = dataPoints
-        .where((p) => p.rosNodeName?.startsWith('alma_') ?? false)
-        .toList();
-    final dropoffs = dataPoints
-        .where((p) => p.rosNodeName?.startsWith('birak_') ?? false)
-        .toList();
-    if (pickups.isEmpty || dropoffs.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Önce haritaya yük alma ve bırakma noktası ekleyin.'),
-        ));
-      }
-      return;
-    }
-
-    String pickup = pickups.first.rosNodeName!;
-    String dropoff = dropoffs.first.rosNodeName!;
-    final selection = await showDialog<Map<String, String>>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('ROS Görevi Oluştur'),
-          content: Column(mainAxisSize: MainAxisSize.min, children: [
-            DropdownButtonFormField<String>(
-              initialValue: pickup,
-              decoration: const InputDecoration(labelText: 'Yük alma noktası'),
-              items: pickups
-                  .map((p) => DropdownMenuItem(
-                      value: p.rosNodeName, child: Text(p.rosNodeName!)))
-                  .toList(),
-              onChanged: (v) {
-                if (v != null) setDialogState(() => pickup = v);
-              },
-            ),
-            const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              initialValue: dropoff,
-              decoration:
-                  const InputDecoration(labelText: 'Yük bırakma noktası'),
-              items: dropoffs
-                  .map((p) => DropdownMenuItem(
-                      value: p.rosNodeName, child: Text(p.rosNodeName!)))
-                  .toList(),
-              onChanged: (v) {
-                if (v != null) setDialogState(() => dropoff = v);
-              },
-            ),
-          ]),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('İptal'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, {
-                'pickup': pickup,
-                'dropoff': dropoff,
-              }),
-              child: const Text('Gönder'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (selection == null || !mounted) return;
-    try {
-      final response = await AgvService.submitManualTask(
-        taskId: 'GUI-${DateTime.now().millisecondsSinceEpoch}',
-        pickupNode: selection['pickup']!,
-        dropoffNode: selection['dropoff']!,
-      );
-      _onMissionEvent(response['message']?.toString() ?? 'Görev gönderildi');
-    } catch (error) {
-      _onMissionEvent('Görev gönderilemedi: $error');
-    }
-  }
-
   Future<void> _navigateToDataPage(String site) async {
     if (site.isEmpty && !kAdminMode) return;
     await Navigator.push(
@@ -402,6 +375,7 @@ class _ControllerPageState extends State<ControllerPage> {
     AgvService.ros.state.removeListener(_onRosConnectionState);
     AgvService.ros.onRobotStatus = null;
     AgvService.ros.onMissionEvent = null;
+    AgvService.ros.onMapMetadata = null;
     AgvService.stopManual();
     unawaited(AgvService.disconnectRos());
     _focusNode.dispose();
@@ -589,9 +563,10 @@ class _ControllerPageState extends State<ControllerPage> {
                                         CrossAxisAlignment.center,
                                     children: [
                                       PowerButton(
-                                        labelOff: 'Sistemi\nBaşlat',
-                                        labelOn: 'Sistemi\nDurdur',
+                                        labelOff: 'Görevi\nBaşlat',
+                                        labelOn: 'Başlatılıyor',
                                         onPressed: _missionBaslat,
+                                        onLongPress: _missionIptal,
                                       ),
                                       SizedBox(width: 2.w),
                                       Expanded(
@@ -658,14 +633,8 @@ class _ControllerPageState extends State<ControllerPage> {
                                         text: "Senaryo",
                                         assignedKey: LogicalKeyboardKey.keyN,
                                         onPressed: () async {
-                                          if (AgvService
-                                              .ros.state.value.isConnected) {
-                                            await _showRosMissionDialog(
-                                                dataPoints);
-                                          } else {
-                                            await _navigateToScenarioPage(
-                                                dataPoints);
-                                          }
+                                          await _navigateToScenarioPage(
+                                              dataPoints);
                                         },
                                       )),
                                       SizedBox(width: 1.5.w),
@@ -1450,8 +1419,9 @@ class _ControllerPageState extends State<ControllerPage> {
             ? success
             : const Color(0xFFFF9800);
 
-    final rota =
-        (mission.almaNoktasi.isNotEmpty || mission.birakNoktasi.isNotEmpty)
+    final rota = mission.rotaDugumleri.isNotEmpty
+        ? mission.rotaDugumleri.join(' → ')
+        : (mission.almaNoktasi.isNotEmpty || mission.birakNoktasi.isNotEmpty)
             ? '${safe(mission.almaNoktasi)} → ${safe(mission.birakNoktasi)}'
             : '--';
 
@@ -1828,10 +1798,9 @@ class _ControllerPageState extends State<ControllerPage> {
   }
 
   GcsMapData _mapDataFromSavedPoints(AgvSensorModel agv) {
-    const cellSizeMeters = 0.25;
-    const centerX = 14.0;
-    const centerY = 8.0;
-    final dataPoints = Provider.of<DataModel>(context, listen: false).dataPoints;
+    final metadata = _mapMetadata!;
+    final dataPoints =
+        Provider.of<DataModel>(context, listen: false).dataPoints;
     final mission = Provider.of<GcsMissionModel>(context, listen: false);
     final points = <MapPoint>[];
 
@@ -1856,23 +1825,42 @@ class _ControllerPageState extends State<ControllerPage> {
       }
       if (type == null) continue;
 
-      final nodeName = point.rosNodeName;
+      final nodeName = RosGcsContract.nodeForPoint(point);
+      final mapPosition = RosGcsContract.editorGridToMap(
+        point.x,
+        point.y,
+        metadata,
+      );
       points.add(MapPoint(
         id: nodeName ?? '${point.type}_${point.x}_${point.y}',
         label: label,
-        x: (point.x - centerX) * cellSizeMeters,
-        y: (point.y - centerY) * cellSizeMeters,
+        x: mapPosition.dx,
+        y: mapPosition.dy,
         type: type,
         aktif: nodeName != null &&
             (nodeName == mission.almaNoktasi ||
                 nodeName == mission.birakNoktasi),
       ));
     }
+    final routes = <MapRoute>[];
+    final edge = agv.aktifRotaEdge.split('->');
+    if (edge.length == 2) {
+      final from = RosGcsContract.graphNodes[edge[0]];
+      final to = RosGcsContract.graphNodes[edge[1]];
+      if (from != null && to != null) {
+        routes.add(MapRoute(
+          id: agv.aktifRotaEdge,
+          label: agv.aktifRotaEdge,
+          waypoints: [from, to],
+        ));
+      }
+    }
     return GcsMapData(
       robotX: agv.currX,
       robotY: agv.currY,
       robotYaw: agv.currYaw,
       points: points,
+      routes: routes,
     );
   }
 
@@ -1887,6 +1875,19 @@ class _ControllerPageState extends State<ControllerPage> {
     switch (_selectedWorkTab) {
       // ── Harita ─────────────────────────────────────────────────────────
       case 0:
+        final metadata = _mapMetadata;
+        if (metadata == null) {
+          return _workAreaPlaceholder(
+            'HARİTA',
+            Icons.map_outlined,
+            'ROS /map metadata bekleniyor...',
+            'Noktalar resolution, origin, width ve height alınmadan '
+                'dönüştürülmez.',
+            panelBg,
+            borderC,
+            muted,
+          );
+        }
         final mapData = _mapDataFromSavedPoints(agv);
         return GcsMapView(data: mapData);
 
