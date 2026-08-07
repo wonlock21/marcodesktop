@@ -1,4 +1,8 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Zaman damgalı olay kaydı.
 class GcsEventEntry {
@@ -22,8 +26,13 @@ class GcsEventEntry {
 /// zaman damgalı geçmiş olayları tutar.
 class GcsEventLogModel extends ChangeNotifier {
   static const int _maxKayit = 50;
+  static const String _storageKey = 'gcsEventLog';
 
   final List<GcsEventEntry> _kayitlar = [];
+
+  GcsEventLogModel() {
+    unawaited(_kayitlariYukle());
+  }
 
   List<GcsEventEntry> get kayitlar => List.unmodifiable(_kayitlar);
 
@@ -37,6 +46,7 @@ class GcsEventLogModel extends ChangeNotifier {
       _kayitlar.removeRange(_maxKayit, _kayitlar.length);
     }
     notifyListeners();
+    unawaited(_kayitlariKaydet());
   }
 
   /// Test / admin modu için örnek olay geçmişi.
@@ -69,6 +79,49 @@ class GcsEventLogModel extends ChangeNotifier {
     if (_kayitlar.isNotEmpty) {
       _kayitlar.clear();
       notifyListeners();
+      unawaited(_kayitlariKaydet());
     }
+  }
+
+  Future<void> _kayitlariYukle() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_storageKey);
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return;
+      final saved = <GcsEventEntry>[];
+      for (final item in decoded) {
+        if (item is! Map) continue;
+        final zaman = DateTime.tryParse(item['zaman']?.toString() ?? '');
+        final mesaj = item['mesaj']?.toString() ?? '';
+        if (zaman != null && mesaj.isNotEmpty) {
+          saved.add(GcsEventEntry(zaman: zaman, mesaj: mesaj));
+        }
+      }
+      final existing = _kayitlar
+          .map((e) => '${e.zaman.toIso8601String()}|${e.mesaj}')
+          .toSet();
+      _kayitlar.addAll(saved.where((e) => existing
+          .add('${e.zaman.toIso8601String()}|${e.mesaj}')));
+      _kayitlar.sort((a, b) => b.zaman.compareTo(a.zaman));
+      if (_kayitlar.length > _maxKayit) {
+        _kayitlar.removeRange(_maxKayit, _kayitlar.length);
+      }
+      notifyListeners();
+    } catch (_) {
+      // Bozuk eski kayıt uygulamanın açılmasını engellemesin.
+    }
+  }
+
+  Future<void> _kayitlariKaydet() async {
+    final prefs = await SharedPreferences.getInstance();
+    final data = _kayitlar
+        .map((e) => {
+              'zaman': e.zaman.toIso8601String(),
+              'mesaj': e.mesaj,
+            })
+        .toList();
+    await prefs.setString(_storageKey, jsonEncode(data));
   }
 }

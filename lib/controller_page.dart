@@ -22,6 +22,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class ControllerPage extends StatefulWidget {
   const ControllerPage({super.key});
@@ -52,6 +53,7 @@ class _ControllerPageState extends State<ControllerPage> {
   // Bağlantı paneli durumu ve IP giriş kontrolcüsü
   bool isConnectionPanelOpen = false;
   final TextEditingController _ipController = TextEditingController();
+  String _lastRosStateLog = '';
 
   @override
   void initState() {
@@ -61,6 +63,7 @@ class _ControllerPageState extends State<ControllerPage> {
     Provider.of<DataModel>(context, listen: false).loadDataPoints();
     parameterModel.loadParameters();
     _ipController.text = 'ws://localhost:9090';
+    unawaited(_loadLastRosAddress());
     AgvService.ros.onRobotStatus = _applyRobotStatus;
     AgvService.ros.onMissionEvent = _onMissionEvent;
     AgvService.ros.onMapMetadata = _onMapMetadata;
@@ -221,6 +224,18 @@ class _ControllerPageState extends State<ControllerPage> {
     };
     setState(() => isConnected = rosState.isConnected);
     _connModel.topluGuncelle(sistem: durum, robot: durum);
+    final logText = '${rosState.status.name}:${rosState.message}';
+    if (rosState.message.isNotEmpty && logText != _lastRosStateLog) {
+      _lastRosStateLog = logText;
+      _onMissionEvent('ROS: ${rosState.message}');
+    }
+  }
+
+  Future<void> _loadLastRosAddress() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getString('rosBridgeAddress');
+    if (!mounted || saved == null || saved.isEmpty) return;
+    setState(() => _ipController.text = saved);
   }
 
   // Kısa yol: model erişimi (listen: false — sadece write için)
@@ -248,6 +263,9 @@ class _ControllerPageState extends State<ControllerPage> {
       _site = normalized;
       isConnected = false;
     });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('rosBridgeAddress', normalized);
+    if (!mounted) return;
     _connModel.topluGuncelle(
       sistem: ConnDurum.baglaniyor,
       robot: ConnDurum.baglaniyor,
