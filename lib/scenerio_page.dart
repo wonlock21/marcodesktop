@@ -55,6 +55,7 @@ class _ScenarioPageState extends State<ScenarioPage> {
   final List<String> _selected = [];
   final Map<String, String> _nodeByLabel = {};
   final Map<String, Offset> _stationPositions = {};
+  final List<String> _unsupportedMissionPoints = [];
   List<String> get _allPlaces => _nodeByLabel.keys.toList(growable: false);
   String arota = "";
   bool senaryoIsDone = false;
@@ -83,6 +84,11 @@ class _ScenarioPageState extends State<ScenarioPage> {
     senaryoIsDone = widget.rota.isNotEmpty;
     for (final point in widget.dataPoints) {
       final node = RosGcsContract.nodeForPoint(point);
+      if (node == null &&
+          (point.type.startsWith('pickupPoint') ||
+              point.type.startsWith('dropoffPoint'))) {
+        _unsupportedMissionPoints.add(_mapPointLabel(point));
+      }
       if (node == null ||
           (!node.startsWith('alma_') && !node.startsWith('birak_'))) {
         continue;
@@ -95,9 +101,41 @@ class _ScenarioPageState extends State<ScenarioPage> {
         (3 - map.dy) * 1.5,
       );
     }
+    if (_unsupportedMissionPoints.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+            '${_unsupportedMissionPoints.join(', ')} ROS rota dosyasinda tanimli degil; gorevde kullanilamaz.',
+          ),
+        ));
+      });
+    }
   }
 
-  void _addPlace(String code) => setState(() => _selected.add(code));
+  String _mapPointLabel(DataPoint point) {
+    if (point.type.startsWith('pickupPoint')) {
+      return point.type.substring('pickupPoint'.length);
+    }
+    if (point.type.startsWith('dropoffPoint')) {
+      return point.type.substring('dropoffPoint'.length);
+    }
+    return point.type;
+  }
+
+  void _addPlace(String code) {
+    final pickupExpected = _selected.length.isEven;
+    final valid = pickupExpected ? code.startsWith('A') : code.startsWith('B');
+    if (!valid) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(pickupExpected
+            ? 'Siradaki durak bir alma noktasi (A) olmali.'
+            : 'Siradaki durak bir birakma noktasi (B) olmali.'),
+      ));
+      return;
+    }
+    setState(() => _selected.add(code));
+  }
 
   void _undo() {
     if (_selected.isEmpty) return;
