@@ -134,6 +134,12 @@ class _ControllerPageState extends State<ControllerPage> {
         lastQrData: qr,
         plcConnected: plcConnected,
         estopActive: estop,
+      )
+      ..updatePowerTelemetry(
+        linearSpeed: _number(status['linear_speed'], double.nan),
+        voltage: _number(status['battery_voltage'], double.nan),
+        current: _number(status['battery_current'], double.nan),
+        temperature: _number(status['battery_temperature'], double.nan),
       );
 
     final mission = Provider.of<GcsMissionModel>(context, listen: false);

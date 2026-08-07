@@ -116,6 +116,20 @@ class AgvSensorModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  void updatePowerTelemetry({
+    required double linearSpeed,
+    required double voltage,
+    required double current,
+    required double temperature,
+  }) {
+    if (linearSpeed.isFinite) anlikHiz = linearSpeed;
+    if (voltage.isFinite) this.voltage = voltage.toStringAsFixed(2);
+    if (current.isFinite) amper = current.toStringAsFixed(2);
+    if (temperature.isFinite) sicaklik = temperature.toStringAsFixed(1);
+    _updateChargingStatus();
+    notifyListeners();
+  }
+
   void updatePlc({required String durum, String mesaj = ""}) {
     plcDurum = durum;
     if (mesaj.isNotEmpty) plcSonMesaj = mesaj;
