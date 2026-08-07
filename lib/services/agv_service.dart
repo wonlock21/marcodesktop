@@ -24,23 +24,10 @@ class AgvService {
         dropoffNode: dropoffNode,
       );
 
-  static Future<Map<String, dynamic>> submitMission({
-    required String taskId,
-    required List<String> routeNodes,
-    bool returnHome = true,
-  }) =>
-      ros.submitMission(
-        taskId: taskId,
-        routeNodes: routeNodes,
-        returnHome: returnHome,
-      );
-
   static Future<Map<String, dynamic>> cancelMission() => ros.cancelMission();
 
   static Future<Map<String, dynamic>> resetMissionSafety() =>
       ros.resetMissionSafety();
-
-  static Future<Map<String, dynamic>> emergencyStop() => ros.emergencyStop();
 
   static bool publishManual(double linearX, double angularZ) =>
       ros.publishManualTwist(linearX, angularZ);

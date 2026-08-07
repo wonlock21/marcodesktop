@@ -278,29 +278,32 @@ class _ControllerPageState extends State<ControllerPage> {
     }
   }
 
-  /// Yazılımsal acil durdurma — fiziksel acil stopun yerine geçmez.
+  /// Yazılımsal güvenli durdurma — fiziksel acil stopun yerine geçmez.
   ///
   /// Görevi iptal eder, komutu pasife alır, olay günlüğüne kaydeder.
   Future<void> _guvenliDurdur() async {
-    // Görev durumunu acil stop olarak işaretle
-    final mission = Provider.of<GcsMissionModel>(context, listen: false);
-    final alarms = Provider.of<GcsAlarmModel>(context, listen: false);
     final log = Provider.of<GcsEventLogModel>(context, listen: false);
-
-    mission.asamaGuncelle(GorevAsama.acilStop);
-    alarms.setAlarm(AlarmTur.acilStop,
-        mesaj: 'Yazılımsal güvenli durdurma komutu gönderildi');
-    log.ekle('Güvenli durdurma komutu gönderildi');
 
     AgvService.stopManual();
     if (!kAdminMode && AgvService.ros.state.value.isConnected) {
       try {
-        final response = await AgvService.emergencyStop();
-        log.ekle(response['message']?.toString() ?? 'Acil durdurma istendi');
+        final response = await AgvService.cancelMission();
+        log.ekle(response['message']?.toString() ??
+            'Yazılımsal güvenli durdurma istendi');
       } catch (error) {
-        log.ekle('İptal hatası: $error');
+        log.ekle('Güvenli durdurma gönderilemedi: $error');
       }
+    } else {
+      log.ekle('Manuel hareket durduruldu; ROS bağlı olmadığı için görev iptali gönderilmedi');
     }
+  }
+
+  void _manualLiftUnavailable() {
+    _onMissionEvent(
+        'Lift komutu gönderilmedi: gerçek lift ROS bağlantısı henüz hazır değil');
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('Gerçek lift bağlantısı henüz hazır değil.'),
+    ));
   }
 
   /// "Bağlantıyı Kes" butonuna basıldığında çağrılır.
@@ -1046,12 +1049,9 @@ class _ControllerPageState extends State<ControllerPage> {
                                                     letterSpacing: 1)),
                                             SizedBox(height: 2.h),
                                             ControlButton(
-                                              onPressed: () {
-                                                veriBas("k802");
-                                              },
-                                              onReleased: () {
-                                                veriBas("k801");
-                                              },
+                                              onPressed:
+                                                  _manualLiftUnavailable,
+                                              onReleased: () {},
                                               assignedKey:
                                                   LogicalKeyboardKey.keyQ,
                                               child: Icon(
@@ -1060,12 +1060,9 @@ class _ControllerPageState extends State<ControllerPage> {
                                             ),
                                             SizedBox(height: 3.h),
                                             ControlButton(
-                                              onPressed: () {
-                                                veriBas("k800");
-                                              },
-                                              onReleased: () {
-                                                veriBas("k801");
-                                              },
+                                              onPressed:
+                                                  _manualLiftUnavailable,
+                                              onReleased: () {},
                                               assignedKey:
                                                   LogicalKeyboardKey.keyE,
                                               child: Icon(

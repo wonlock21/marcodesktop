@@ -284,25 +284,11 @@ class RosBridgeClient {
         },
       );
 
-  Future<Map<String, dynamic>> submitMission({
-    required String taskId,
-    required List<String> routeNodes,
-    required bool returnHome,
-  }) =>
-      callService('/mission/submit', 'marco_msgs/srv/SubmitMission', {
-        'task_id': taskId,
-        'route_nodes': routeNodes,
-        'return_home': returnHome,
-      });
-
   Future<Map<String, dynamic>> cancelMission() =>
       callService('/mission/cancel', 'marco_msgs/srv/CancelMission');
 
   Future<Map<String, dynamic>> resetMissionSafety() =>
       callService('/mission/reset_safety', 'marco_msgs/srv/ResetMissionSafety');
-
-  Future<Map<String, dynamic>> emergencyStop() =>
-      callService('/mission/emergency_stop', 'std_srvs/srv/Trigger');
 
   bool publishManualTwist(double linearX, double angularZ) {
     if (!state.value.isConnected || !_manualModeEnabled) return false;
