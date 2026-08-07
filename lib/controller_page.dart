@@ -360,7 +360,14 @@ class _ControllerPageState extends State<ControllerPage> {
     AgvService.publishManual(linear, angular);
   }
 
-  Future<void> veriBas(String veri) => AgvService.veriBas(_site, veri);
+  Future<void> veriBas(String veri) {
+    if (_site.startsWith('ws://') || _site.startsWith('wss://')) {
+      _onMissionEvent(
+          'Komut gönderilmedi ($veri): bu eski buton için ROS karşılığı henüz tanımlı değil');
+      return Future<void>.value();
+    }
+    return AgvService.veriBas(_site, veri);
+  }
 
   Future<void> _navigateToScenarioPage(List<DataPoint> dataPoints) async {
     if (dataPoints.isEmpty && !kAdminMode) {
@@ -1908,6 +1915,17 @@ class _ControllerPageState extends State<ControllerPage> {
 
       // ── Kamera ─────────────────────────────────────────────────────────
       case 1:
+        if (_site.startsWith('ws://') || _site.startsWith('wss://')) {
+          return _workAreaPlaceholder(
+            'KAMERA',
+            Icons.videocam_outlined,
+            'Kamera akışı henüz bağlı değil',
+            'ROS görüntü topic veya HTTP kamera adresi netleşince bağlanacak.',
+            panelBg,
+            borderC,
+            muted,
+          );
+        }
         return Container(
           color: const Color(0xFF0D0D0D),
           child: ClipRect(
