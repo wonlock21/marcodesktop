@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:liftant_v2_bitirme/services/ros_bridge_client.dart';
 import 'package:liftant_v2_bitirme/services/agv_service.dart';
@@ -38,6 +39,22 @@ void main() {
       ),
       contains('ayni Wi-Fi'),
     );
+  });
+
+  test('harita sifirlama diger uygulama ayarlarini korur', () async {
+    SharedPreferences.setMockInitialValues({
+      'dataPoints': <String>['{}'],
+      'rosBridgeAddress': 'ws://192.168.1.20:9090/',
+      'gcsEventLog': <String>['baglanti kaydi'],
+    });
+    final model = DataModel();
+
+    await model.clearDataPoints();
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.containsKey('dataPoints'), isFalse);
+    expect(prefs.getString('rosBridgeAddress'), 'ws://192.168.1.20:9090/');
+    expect(prefs.getStringList('gcsEventLog'), <String>['baglanti kaydi']);
   });
 
   test('0.05 m OccupancyGrid metadata ekran grid donusumunu belirler', () {

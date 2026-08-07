@@ -15,10 +15,10 @@ class DataModel with ChangeNotifier {
   }
 
   /// Verileri temizleme fonksiyonu
-  void clearDataPoints() {
+  Future<void> clearDataPoints() async {
     _dataPoints.clear();
     notifyListeners();
-    clearAllData();
+    await clearAllData();
     //saveDataPoints(); // Verileri temizledikten sonra kaydediyoruz
   }
 

@@ -386,18 +386,17 @@ class _MapPageState extends State<MapPage> {
                     text: "HAR?TAYI KAYDET",
                     icon: Icons.save_outlined,
                     color: _mpAccent,
-                    onPressed: () {
-                      Provider.of<DataModel>(context, listen: false)
+                    onPressed: () async {
+                      final dataModel =
+                          Provider.of<DataModel>(context, listen: false);
+                      await dataModel
                           .clearDataPoints(); // ?nceki verileri temizleyin
                       for (var dataPoint in dataPoints) {
-                        Provider.of<DataModel>(context, listen: false)
-                            .addDataPoint(dataPoint);
+                        dataModel.addDataPoint(dataPoint);
                       }
-                      Provider.of<DataModel>(context, listen: false)
-                          .saveDataPoints();
-                      lastDataPoints =
-                          Provider.of<DataModel>(context, listen: false)
-                              .dataPoints;
+                      await dataModel.saveDataPoints();
+                      if (!context.mounted) return;
+                      lastDataPoints = dataModel.dataPoints;
                       Navigator.pop(context, 'controller-page');
                     },
                   ),
@@ -408,9 +407,10 @@ class _MapPageState extends State<MapPage> {
                     text: "SIFIRLA",
                     icon: Icons.restart_alt,
                     color: _mpDanger,
-                    onPressed: () {
-                      Provider.of<DataModel>(context, listen: false)
+                    onPressed: () async {
+                      await Provider.of<DataModel>(context, listen: false)
                           .clearDataPoints();
+                      if (!context.mounted) return;
                       lastDataPoints = [];
                       Navigator.pop(context, 'controller-page');
                     },
