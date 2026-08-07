@@ -38,8 +38,8 @@ Orange Pi'de once rosbridge baslatilir:
 ros2 launch marco_bringup gui_bridge.launch.py
 ```
 
-Uygulamadan alma-birakma test gorevi gonderilecek kontrollu testte mission
-katmani su sekilde baslatilir:
+Uygulamadan cok durakli alma-birakma gorevi gonderilecek kontrollu testte
+mission katmani su sekilde baslatilir:
 
 ```bash
 ros2 launch marco_mission mission.launch.py manual_task_enabled:=true
@@ -53,8 +53,10 @@ Kullanilan temel ROS arayuzleri:
 
 - `/robot_status`: robot konumu ve durum bilgileri
 - `/mission/events`: gorev olaylari
-- `/mission/submit_manual_task`: haritadan gorev gonderme
+- `/map`: canli ROS harita bilgisi
+- `/mission/submit`: cok durakli alma-birakma gorevi gonderme
 - `/mission/cancel`: aktif gorevi iptal etme
+- `/mission/emergency_stop`: yazilimsal acil durdurma
 - `/mission/reset_safety`: guvenlik kilidini sifirlama
 - `/cmd_vel_manual`: fiziksel manuel moddaki hareket komutlari
 
@@ -62,11 +64,30 @@ Kullanilan temel ROS arayuzleri:
 
 Harita duzenleyicide yuk alma ve yuk birakma noktalari eklenebilir. Noktalar
 `alma_1`, `alma_2`, `birak_1`, `birak_2` biciminde ROS dugumleriyle eslesir.
-ROS bagliyken Senaryo butonu bu noktalardan manuel test gorevi olusturur.
+Mevcut ROS rota grafigi A1-A3 ve B1-B3 noktalarini destekler. Daha yuksek
+numarali bir nokta haritaya eklenirse uygulama bunun ROS rota dosyasinda
+tanimli olmadigini acikca bildirir. Senaryo ekrani duraklari A-B ciftleri
+halinde kabul eder ve ROS bagliyken cok durakli gorevi `/mission/submit`
+servisine gonderir.
+
+Harita kaydetme ve sifirlama islemleri yalnizca `dataPoints` kaydini degistirir.
+Kayitli ROS adresi ve olay gunlugu korunur.
+
+## Baglanti ve guvenlik
+
+- Adres verilmezse `ws://` ve `9090` varsayilanlari tamamlanir.
+- Baglanti icin zaman asimi ve otomatik yeniden baglanma vardir.
+- Hatali IP, reddedilen baglanti ve farkli Wi-Fi gibi durumlar anlasilir
+  mesajlarla gosterilir.
+- Manuel hareket yalnizca ROS bagliyken ve arac fiziksel manuel mod bildirirken
+  acilir; baglanti kopunca komut durdurulur.
+- Yazilimsal acil durdurma fiziksel E-stopun yerine gecmez.
 
 ## Test durumu
 
 - `flutter analyze`: basarili
+- `flutter test`: 8 test basarili, canli Orange Pi testi ortam degiskeni yokken
+  1 test atlanir
 - Windows gorsel/acilis testi: bekliyor
 - Orange Pi baglanti testi: bekliyor
 - PLC, STM32, lift ve gercek arac testi: bekliyor
