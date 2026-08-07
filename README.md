@@ -32,6 +32,23 @@ ws://ORANGE_PI_IP:9090
 Son kullanilan adres uygulamada saklanir. Baglanti koparsa uygulama yeniden
 baglanmayi dener ve hata nedenini olay gunlugune yazar.
 
+Orange Pi'de once rosbridge baslatilir:
+
+```bash
+ros2 launch marco_bringup gui_bridge.launch.py
+```
+
+Uygulamadan alma-birakma test gorevi gonderilecek kontrollu testte mission
+katmani su sekilde baslatilir:
+
+```bash
+ros2 launch marco_mission mission.launch.py manual_task_enabled:=true
+```
+
+`manual_task_enabled` uretim varsayilaninda guvenlik icin `false` degerindedir.
+Gercek arac hareket ettirilecekse PLC, Nav2, docking, lift ve safety katmanlari
+hazir olmadan sadece bu iki komuta guvenilmemelidir.
+
 Kullanilan temel ROS arayuzleri:
 
 - `/robot_status`: robot konumu ve durum bilgileri
