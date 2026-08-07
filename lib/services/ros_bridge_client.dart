@@ -90,6 +90,29 @@ class RosBridgeClient {
     );
   }
 
+  static String connectionErrorMessage(Object error) {
+    if (error is TimeoutException) {
+      return 'Baglanti zaman asimina ugradi. IP, port ve Wi-Fi baglantisini kontrol edin.';
+    }
+    final detail = error.toString();
+    final normalized = detail.toLowerCase();
+    if (normalized.contains('connection refused')) {
+      return 'Baglanti reddedildi. Orange Pi acik mi ve rosbridge 9090 portunda calisiyor mu kontrol edin.';
+    }
+    if (normalized.contains('failed host lookup') ||
+        normalized.contains('no such host')) {
+      return 'Sunucu adresi bulunamadi. Girilen IP adresini kontrol edin.';
+    }
+    if (normalized.contains('network is unreachable') ||
+        normalized.contains('no route to host')) {
+      return 'Orange Pi agina ulasilamiyor. Cihazlarin ayni Wi-Fi aginda oldugunu kontrol edin.';
+    }
+    if (normalized.contains('certificate') || normalized.contains('tls')) {
+      return 'Guvenli WebSocket sertifika hatasi olustu.';
+    }
+    return 'ROS baglantisi kurulamadi: $detail';
+  }
+
   Future<void> connect(String address) async {
     final nextUri = normalizeAddress(address);
     _manualDisconnect = false;
@@ -125,7 +148,7 @@ class RosBridgeClient {
       state.value = RosConnectionState(
         RosConnectionStatus.error,
         url: uri.toString(),
-        message: 'Baglanti hatasi: $error',
+        message: connectionErrorMessage(error),
       );
       _scheduleReconnect();
       rethrow;

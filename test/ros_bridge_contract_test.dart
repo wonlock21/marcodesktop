@@ -19,6 +19,27 @@ void main() {
         throwsFormatException);
   });
 
+  test('baglanti hatalari anlasilir mesaja cevrilir', () {
+    expect(
+      RosBridgeClient.connectionErrorMessage(
+        TimeoutException('WebSocket connection timed out'),
+      ),
+      contains('zaman asimina'),
+    );
+    expect(
+      RosBridgeClient.connectionErrorMessage(
+        Exception('Connection refused'),
+      ),
+      contains('Baglanti reddedildi'),
+    );
+    expect(
+      RosBridgeClient.connectionErrorMessage(
+        Exception('Network is unreachable'),
+      ),
+      contains('ayni Wi-Fi'),
+    );
+  });
+
   test('0.05 m OccupancyGrid metadata ekran grid donusumunu belirler', () {
     final metadata = OccupancyGridMetadata.fromRosMessage({
       'info': {
