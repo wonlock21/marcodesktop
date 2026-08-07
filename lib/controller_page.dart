@@ -224,6 +224,13 @@ class _ControllerPageState extends State<ControllerPage> {
     };
     setState(() => isConnected = rosState.isConnected);
     _connModel.topluGuncelle(sistem: durum, robot: durum);
+    final alarms = Provider.of<GcsAlarmModel>(context, listen: false);
+    if (rosState.status == RosConnectionStatus.error) {
+      alarms.setAlarm(AlarmTur.robotBaglantiHata,
+          mesaj: rosState.message);
+    } else if (rosState.status == RosConnectionStatus.connected) {
+      alarms.clearAlarm(AlarmTur.robotBaglantiHata);
+    }
     final logText = '${rosState.status.name}:${rosState.message}';
     if (rosState.message.isNotEmpty && logText != _lastRosStateLog) {
       _lastRosStateLog = logText;
@@ -357,7 +364,11 @@ class _ControllerPageState extends State<ControllerPage> {
   }
 
   void _manualDrive(double linear, double angular) {
-    AgvService.publishManual(linear, angular);
+    final sent = AgvService.publishManual(linear, angular);
+    if (!sent) {
+      _onMissionEvent(
+          'Manuel hareket reddedildi: ROS bağlantısını ve fiziksel manuel modu kontrol edin');
+    }
   }
 
   Future<void> veriBas(String veri) {
@@ -1020,11 +1031,13 @@ class _ControllerPageState extends State<ControllerPage> {
 
                         // ── Manuel Kontroller ─────────────────────────
                         _sectionLabel("MANUEL KONTROLLER"),
-                        if (oto)
+                        if (oto || !conn.robotBaglanti.aktif)
                           Padding(
                             padding: EdgeInsets.only(bottom: 1.h),
                             child: Text(
-                              'Otomatik modda manuel kontrol pasif',
+                              !conn.robotBaglanti.aktif
+                                  ? 'Robot bağlantısı yok; manuel kontrol kilitli'
+                                  : 'Otomatik modda manuel kontrol pasif',
                               style: TextStyle(
                                 color: muted,
                                 fontSize: 2.4.sp,
@@ -1034,9 +1047,10 @@ class _ControllerPageState extends State<ControllerPage> {
                           ),
                         SizedBox(height: 0.5.h),
                         IgnorePointer(
-                          ignoring: oto,
+                          ignoring: oto || !conn.robotBaglanti.aktif,
                           child: AnimatedOpacity(
-                            opacity: oto ? 0.35 : 1.0,
+                            opacity:
+                                oto || !conn.robotBaglanti.aktif ? 0.35 : 1.0,
                             duration: const Duration(milliseconds: 200),
                             child: Column(
                               children: [
