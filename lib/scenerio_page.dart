@@ -137,14 +137,6 @@ class _ScenarioPageState extends State<ScenarioPage> {
     }
     final routeNodes = _selected.map((p) => _nodeByLabel[p]!).toList();
 
-    if (routeNodes.length != 2) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text(
-            'ROS tarafı şu an tek alma-bırakma çifti kabul ediyor. Yalnızca bir A ve bir B noktası seçin.'),
-      ));
-      return;
-    }
-
     setState(() {
       senaryoIsDone = true;
       arota = routeNodes.join(' → ');
@@ -159,10 +151,10 @@ class _ScenarioPageState extends State<ScenarioPage> {
     setState(() => _submitting = true);
     try {
       _taskId ??= 'gui_${DateTime.now().microsecondsSinceEpoch}';
-      final response = await AgvService.submitManualTask(
+      final response = await AgvService.submitMission(
         taskId: _taskId!,
-        pickupNode: routeNodes[0],
-        dropoffNode: routeNodes[1],
+        routeNodes: routeNodes,
+        returnHome: true,
       );
       if (response['accepted'] != true) {
         throw StateError(response['message']?.toString() ?? 'Görev reddedildi');

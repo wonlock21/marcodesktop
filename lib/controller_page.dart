@@ -296,13 +296,21 @@ class _ControllerPageState extends State<ControllerPage> {
   /// Görevi iptal eder, komutu pasife alır, olay günlüğüne kaydeder.
   Future<void> _guvenliDurdur() async {
     final log = Provider.of<GcsEventLogModel>(context, listen: false);
+    final mission = Provider.of<GcsMissionModel>(context, listen: false);
+    final alarms = Provider.of<GcsAlarmModel>(context, listen: false);
 
     AgvService.stopManual();
     if (!kAdminMode && AgvService.ros.state.value.isConnected) {
       try {
-        final response = await AgvService.cancelMission();
+        final response = await AgvService.emergencyStop();
+        final accepted = response['success'] == true;
+        if (accepted) {
+          mission.asamaGuncelle(GorevAsama.acilStop);
+          alarms.setAlarm(AlarmTur.acilStop,
+              mesaj: 'Yazılımsal acil durdurma kilitlendi');
+        }
         log.ekle(response['message']?.toString() ??
-            'Yazılımsal güvenli durdurma istendi');
+            'Yazılımsal acil durdurma istendi');
       } catch (error) {
         log.ekle('Güvenli durdurma gönderilemedi: $error');
       }
