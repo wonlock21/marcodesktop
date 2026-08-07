@@ -238,22 +238,28 @@ class _MapPageState extends State<MapPage> {
       incrementChargeStationCount();
       return Icon(Icons.battery_charging_full, size: 5.sp);
     } else if (lastDataPoints[ind].type.startsWith("pickupPoint")) {
-      return Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.file_upload_outlined, size: 5.sp, color: _mpAccent),
-          Text(lastDataPoints[ind].type.substring(11),
-              style: TextStyle(fontSize: 3.sp, fontWeight: FontWeight.w700)),
-        ],
+      return FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.file_upload_outlined, size: 5.sp, color: _mpAccent),
+            Text(lastDataPoints[ind].type.substring(11),
+                style: TextStyle(fontSize: 3.sp, fontWeight: FontWeight.w700)),
+          ],
+        ),
       );
     } else if (lastDataPoints[ind].type.startsWith("dropoffPoint")) {
-      return Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.file_download_outlined, size: 5.sp, color: _mpDanger),
-          Text(lastDataPoints[ind].type.substring(12),
-              style: TextStyle(fontSize: 3.sp, fontWeight: FontWeight.w700)),
-        ],
+      return FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.file_download_outlined, size: 5.sp, color: _mpDanger),
+            Text(lastDataPoints[ind].type.substring(12),
+                style: TextStyle(fontSize: 3.sp, fontWeight: FontWeight.w700)),
+          ],
+        ),
       );
     } else if (lastDataPoints[ind].type.contains("cargo")) {
       //cargoAreaA
@@ -1108,17 +1114,20 @@ class _DragTargetContainerState extends State<DragTargetContainer> {
   }
 
   void _showMissionPoint(String label, {required bool pickup}) {
-    _child = Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Icon(
-          pickup ? Icons.file_upload_outlined : Icons.file_download_outlined,
-          size: 5.sp,
-          color: pickup ? _mpAccent : _mpDanger,
-        ),
-        Text(label,
-            style: TextStyle(fontSize: 3.sp, fontWeight: FontWeight.w700)),
-      ],
+    _child = FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            pickup ? Icons.file_upload_outlined : Icons.file_download_outlined,
+            size: 5.sp,
+            color: pickup ? _mpAccent : _mpDanger,
+          ),
+          Text(label,
+              style: TextStyle(fontSize: 3.sp, fontWeight: FontWeight.w700)),
+        ],
+      ),
     );
   }
 
