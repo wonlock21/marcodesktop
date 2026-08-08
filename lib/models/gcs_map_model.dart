@@ -1,4 +1,8 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
+
+import '../services/ros_gcs_contract.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Harita üzerinde yer alabilecek nesne türleri
@@ -135,6 +139,12 @@ class GcsMapData {
   /// Engel / güvenli duruş bölgeleri.
   final List<MapZone> zones;
 
+  /// OccupancyGrid arka plan görüntüsü (satır 0 üstte).
+  final ui.Image? occupancyImage;
+
+  /// Görüntü ile eşleşen OccupancyGrid metadata.
+  final OccupancyGridMetadata? mapMeta;
+
   const GcsMapData({
     this.robotX   = 0.0,
     this.robotY   = 0.0,
@@ -142,6 +152,8 @@ class GcsMapData {
     this.points   = const [],
     this.routes   = const [],
     this.zones    = const [],
+    this.occupancyImage,
+    this.mapMeta,
   });
 
   GcsMapData copyWith({
@@ -151,6 +163,9 @@ class GcsMapData {
     List<MapPoint>? points,
     List<MapRoute>? routes,
     List<MapZone>?  zones,
+    ui.Image?       occupancyImage,
+    OccupancyGridMetadata? mapMeta,
+    bool clearOccupancy = false,
   }) =>
       GcsMapData(
         robotX:   robotX   ?? this.robotX,
@@ -159,6 +174,9 @@ class GcsMapData {
         points:   points   ?? this.points,
         routes:   routes   ?? this.routes,
         zones:    zones    ?? this.zones,
+        occupancyImage:
+            clearOccupancy ? null : (occupancyImage ?? this.occupancyImage),
+        mapMeta: clearOccupancy ? null : (mapMeta ?? this.mapMeta),
       );
 
   // ── Mock factory ─────────────────────────────────────────────────────────

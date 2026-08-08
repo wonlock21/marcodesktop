@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'occupancy_grid_image.dart';
 import 'ros_gcs_contract.dart';
 
 enum RosConnectionStatus {
@@ -51,6 +52,9 @@ class RosBridgeClient {
   void Function(Map<String, dynamic> message)? onRobotStatus;
   void Function(String message)? onMissionEvent;
   void Function(OccupancyGridMetadata? metadata)? onMapMetadata;
+  void Function(OccupancyGridFrame? frame)? onMapFrame;
+
+  int _mapParseGeneration = 0;
 
   WebSocketChannel? _channel;
   StreamSubscription<dynamic>? _subscription;
@@ -121,7 +125,7 @@ class RosBridgeClient {
     if (_channel != null) await disconnect();
     _manualDisconnect = false;
     _uri = nextUri;
-    onMapMetadata?.call(null);
+    _clearMapCallbacks();
     await _open(reconnecting: false);
   }
 
@@ -194,7 +198,8 @@ class RosBridgeClient {
       'topic': mapTopic,
       'type': 'nav_msgs/msg/OccupancyGrid',
       'queue_length': 1,
-      'throttle_rate': 5000,
+      // Büyük OccupancyGrid JSON; ~1 Hz.
+      'throttle_rate': 1000,
     });
     _send({
       'op': 'subscribe',
@@ -254,16 +259,41 @@ class RosBridgeClient {
       final event = raw['data'];
       if (event is String) onMissionEvent?.call(event);
     } else if (topic == mapTopic && raw is Map) {
-      try {
-        onMapMetadata?.call(
-          OccupancyGridMetadata.fromRosMessage(
-            Map<String, dynamic>.from(raw),
-          ),
-        );
-      } on FormatException catch (error) {
-        debugPrint('Geçersiz /map metadata: $error');
-      }
+      unawaited(_handleMapMessage(Map<String, dynamic>.from(raw), generation));
     }
+  }
+
+  Future<void> _handleMapMessage(
+    Map<String, dynamic> raw,
+    int generation,
+  ) async {
+    // Nested Map'leri isolate için JSON-safe hale getir.
+    final Map<String, dynamic> message;
+    try {
+      message = Map<String, dynamic>.from(
+        jsonDecode(jsonEncode(raw)) as Map,
+      );
+    } catch (error) {
+      debugPrint('Geçersiz /map JSON: $error');
+      return;
+    }
+
+    try {
+      final meta = OccupancyGridMetadata.fromRosMessage(message);
+      if (generation == _generation) onMapMetadata?.call(meta);
+    } on FormatException catch (error) {
+      debugPrint('Geçersiz /map metadata: $error');
+      return;
+    }
+
+    if (onMapFrame == null) return;
+    final parseId = ++_mapParseGeneration;
+    final frame = await parseOccupancyInIsolate(message);
+    if (generation != _generation || parseId != _mapParseGeneration) return;
+    if (frame == null) {
+      debugPrint('Geçersiz /map data (parse başarısız)');
+    }
+    onMapFrame?.call(frame);
   }
 
   Future<Map<String, dynamic>> callService(
@@ -410,7 +440,7 @@ class RosBridgeClient {
     }
     _channel = null;
     _manualModeEnabled = false;
-    onMapMetadata?.call(null);
+    _clearMapCallbacks();
     for (final call in _serviceCalls.values) {
       if (!call.isCompleted) call.completeError(StateError(reason));
     }
@@ -436,13 +466,19 @@ class RosBridgeClient {
     });
   }
 
+  void _clearMapCallbacks() {
+    _mapParseGeneration++;
+    onMapMetadata?.call(null);
+    onMapFrame?.call(null);
+  }
+
   Future<void> disconnect() async {
     _manualDisconnect = true;
     _reconnectTimer?.cancel();
     _watchdogTimer?.cancel();
     stopManual();
     _manualModeEnabled = false;
-    onMapMetadata?.call(null);
+    _clearMapCallbacks();
     _generation++;
     await _subscription?.cancel();
     _subscription = null;

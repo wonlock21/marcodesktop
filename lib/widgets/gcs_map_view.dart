@@ -1,8 +1,12 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+
 import '../models/gcs_map_model.dart';
+import '../services/ros_gcs_contract.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GcsMapView — interaktif harita widget'ı
@@ -155,7 +159,14 @@ class _MapPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    _paintGrid(canvas, size);
+    final hasOccupancy =
+        data.occupancyImage != null && data.mapMeta != null;
+    if (hasOccupancy) {
+      _paintOccupancy(canvas, size, data.occupancyImage!, data.mapMeta!);
+    } else {
+      _paintGrid(canvas, size);
+      _paintWaitingHint(canvas, size);
+    }
     for (final z in data.zones)  { _paintZone(canvas, size, z);  }
     for (final r in data.routes) { _paintRoute(canvas, size, r); }
     for (final p in data.points) {
@@ -166,6 +177,49 @@ class _MapPainter extends CustomPainter {
       if (p.type == MapPointType.qrNoktasi) _paintPoint(canvas, size, p);
     }
     _paintRobot(canvas, size);
+  }
+
+  /// OccupancyGrid görüntüsünü map origin/yaw/resolution ile çizer.
+  void _paintOccupancy(
+    Canvas canvas,
+    Size size,
+    ui.Image image,
+    OccupancyGridMetadata meta,
+  ) {
+    final wM = meta.mapWidthMeters;
+    final hM = meta.mapHeightMeters;
+    final origin = _w2c(meta.originX, meta.originY, size);
+
+    canvas.save();
+    canvas.translate(origin.dx, origin.dy);
+    // Dünya: +x sağ, +y yukarı → ekran: +x sağ, +y aşağı
+    canvas.rotate(-meta.originYaw);
+    canvas.scale(scale, -scale);
+    // Image satır 0 üstte (= map +y). Alt-sol origin olacak şekilde çevir.
+    canvas.translate(0, hM);
+    canvas.scale(1, -1);
+    canvas.drawImageRect(
+      image,
+      Rect.fromLTWH(0, 0, meta.width.toDouble(), meta.height.toDouble()),
+      Rect.fromLTWH(0, 0, wM, hM),
+      Paint()
+        ..filterQuality = FilterQuality.none
+        ..isAntiAlias = false,
+    );
+    canvas.restore();
+  }
+
+  void _paintWaitingHint(Canvas canvas, Size size) {
+    _paintText(
+      canvas,
+      '/map bekleniyor',
+      Offset(size.width / 2, size.height / 2),
+      const TextStyle(
+        color: Color(0xFF616161),
+        fontSize: 14,
+        fontFamily: 'monospace',
+      ),
+    );
   }
 
   // ── Grid ─────────────────────────────────────────────────────────────────
@@ -424,7 +478,16 @@ class _MapPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_MapPainter old) =>
-      old.data != data || old.scale != scale || old.pan != pan;
+      old.scale != scale ||
+      old.pan != pan ||
+      old.data.robotX != data.robotX ||
+      old.data.robotY != data.robotY ||
+      old.data.robotYaw != data.robotYaw ||
+      old.data.points != data.points ||
+      old.data.routes != data.routes ||
+      old.data.zones != data.zones ||
+      !identical(old.data.occupancyImage, data.occupancyImage) ||
+      old.data.mapMeta != data.mapMeta;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

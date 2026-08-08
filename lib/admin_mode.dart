@@ -10,4 +10,4 @@
 ///   2. `import 'admin_mode.dart';` satırlarını sil.
 ///   3. `|| kAdminMode` / `&& !kAdminMode` koşullarını eski hâline döndür.
 /// ============================================================
-const bool kAdminMode = false;
+const bool kAdminMode = true;

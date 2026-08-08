@@ -1,5 +1,13 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import 'admin_mode.dart';
 import 'data_model.dart';
 import 'data_page.dart';
@@ -7,22 +15,18 @@ import 'models/agv_sensor_model.dart';
 import 'models/gcs_alarm_model.dart';
 import 'models/gcs_connection_model.dart';
 import 'models/gcs_event_log_model.dart';
+import 'models/gcs_map_model.dart';
 import 'models/gcs_mission_model.dart';
 import 'mock/gcs_mock_data.dart';
 import 'parameter_model.dart';
 import 'scenerio_page.dart';
 import 'services/agv_service.dart';
+import 'services/occupancy_grid_image.dart';
 import 'services/ros_bridge_client.dart';
 import 'services/ros_gcs_contract.dart';
 import 'widgets/control_buttons.dart';
-import 'models/gcs_map_model.dart';
 import 'widgets/gcs_map_view.dart';
 import 'widgets/live_map.dart';
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 class ControllerPage extends StatefulWidget {
   const ControllerPage({super.key});
@@ -46,6 +50,8 @@ class _ControllerPageState extends State<ControllerPage> {
   late ParameterModel parameterModel;
   late AgvSensorModel _agvModel;
   OccupancyGridMetadata? _mapMetadata;
+  ui.Image? _occupancyImage;
+  int _occupancyImageGeneration = 0;
 
   // Orta alan sekme indeksi: 0=Harita 1=Kamera 2=LiDAR 3=3D
   int _selectedWorkTab = 0;
@@ -67,6 +73,7 @@ class _ControllerPageState extends State<ControllerPage> {
     AgvService.ros.onRobotStatus = _applyRobotStatus;
     AgvService.ros.onMissionEvent = _onMissionEvent;
     AgvService.ros.onMapMetadata = _onMapMetadata;
+    AgvService.ros.onMapFrame = _onMapFrame;
     AgvService.ros.state.addListener(_onRosConnectionState);
     // GEÇİCİ admin/demo modu: cihaz yokken rapor için örnek veri bas.
     if (kAdminMode) {
@@ -199,15 +206,25 @@ class _ControllerPageState extends State<ControllerPage> {
   void _onMapMetadata(OccupancyGridMetadata? metadata) {
     if (!mounted) return;
     final previous = _mapMetadata;
-    setState(() => _mapMetadata = metadata);
-    if (metadata != null &&
-        (previous == null ||
-            previous.resolution != metadata.resolution ||
-            previous.width != metadata.width ||
-            previous.height != metadata.height ||
-            previous.originX != metadata.originX ||
-            previous.originY != metadata.originY ||
-            previous.originYaw != metadata.originYaw)) {
+    if (metadata == null) {
+      _disposeOccupancyImage();
+      setState(() {
+        _mapMetadata = null;
+        _occupancyImage = null;
+      });
+      return;
+    }
+    final geometryChanged =
+        previous == null || !previous.sameGeometry(metadata);
+    if (geometryChanged) {
+      _occupancyImageGeneration++;
+      _disposeOccupancyImage();
+    }
+    setState(() {
+      _mapMetadata = metadata;
+      if (geometryChanged) _occupancyImage = null;
+    });
+    if (geometryChanged) {
       _onMissionEvent(
         'Harita metadata: ${metadata.width}×${metadata.height}, '
         '${metadata.resolution} m/hücre, '
@@ -215,6 +232,45 @@ class _ControllerPageState extends State<ControllerPage> {
         '${metadata.originYaw})',
       );
     }
+  }
+
+  void _onMapFrame(OccupancyGridFrame? frame) {
+    if (!mounted) return;
+    if (frame == null) {
+      _disposeOccupancyImage();
+      setState(() => _occupancyImage = null);
+      return;
+    }
+    final generation = ++_occupancyImageGeneration;
+    final meta = frame.metadata;
+    final geometryChanged =
+        _mapMetadata == null || !_mapMetadata!.sameGeometry(meta);
+    unawaited(() async {
+      try {
+        final image = await occupancyFrameToImage(frame);
+        if (!mounted || generation != _occupancyImageGeneration) {
+          image.dispose();
+          return;
+        }
+        _disposeOccupancyImage();
+        setState(() {
+          _mapMetadata = meta;
+          _occupancyImage = image;
+        });
+        if (geometryChanged) {
+          _onMissionEvent(
+            'OccupancyGrid görüntü: ${meta.width}×${meta.height}',
+          );
+        }
+      } catch (error) {
+        debugPrint('OccupancyGrid görüntü hatası: $error');
+      }
+    }());
+  }
+
+  void _disposeOccupancyImage() {
+    _occupancyImage?.dispose();
+    _occupancyImage = null;
   }
 
   void _onRosConnectionState() {
@@ -429,6 +485,9 @@ class _ControllerPageState extends State<ControllerPage> {
     AgvService.ros.onRobotStatus = null;
     AgvService.ros.onMissionEvent = null;
     AgvService.ros.onMapMetadata = null;
+    AgvService.ros.onMapFrame = null;
+    _occupancyImageGeneration++;
+    _disposeOccupancyImage();
     AgvService.stopManual();
     unawaited(AgvService.disconnectRos());
     _focusNode.dispose();
@@ -1911,6 +1970,8 @@ class _ControllerPageState extends State<ControllerPage> {
       robotYaw: agv.currYaw,
       points: points,
       routes: routes,
+      occupancyImage: _occupancyImage,
+      mapMeta: metadata,
     );
   }
 

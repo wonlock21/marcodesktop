@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
@@ -74,6 +75,84 @@ class OccupancyGridMetadata {
 
   double get mapWidthMeters => width * resolution;
   double get mapHeightMeters => height * resolution;
+
+  bool sameGeometry(OccupancyGridMetadata other) =>
+      resolution == other.resolution &&
+      width == other.width &&
+      height == other.height &&
+      originX == other.originX &&
+      originY == other.originY &&
+      originYaw == other.originYaw;
+
+  /// Map metre → görüntü pikseli (satır 0 üstte; ROS y=0 altta).
+  Offset mapToPixel(Offset mapXy) {
+    final dx = mapXy.dx - originX;
+    final dy = mapXy.dy - originY;
+    final cosYaw = math.cos(originYaw);
+    final sinYaw = math.sin(originYaw);
+    final localX = cosYaw * dx + sinYaw * dy;
+    final localY = -sinYaw * dx + cosYaw * dy;
+    final cellX = localX / resolution;
+    final cellY = localY / resolution;
+    return Offset(cellX, height - 1.0 - cellY);
+  }
+
+  /// Görüntü pikseli → map metre.
+  Offset pixelToMap(Offset pixel) {
+    final cellX = pixel.dx;
+    final cellY = height - 1.0 - pixel.dy;
+    final localX = cellX * resolution;
+    final localY = cellY * resolution;
+    final cosYaw = math.cos(originYaw);
+    final sinYaw = math.sin(originYaw);
+    return Offset(
+      originX + cosYaw * localX - sinYaw * localY,
+      originY + sinYaw * localX + cosYaw * localY,
+    );
+  }
+
+  /// Occupancy değeri → gri ton (0–255). unknown=-1, free=0, occupied=100.
+  static int occupancyToGray(int value) {
+    if (value < 0) return 0x80;
+    if (value == 0) return 0xF0;
+    if (value >= 100) return 0x18;
+    final t = value.clamp(0, 100) / 100.0;
+    return (0xF0 * (1.0 - t) + 0x18 * t).round().clamp(0, 255);
+  }
+}
+
+/// Tam OccupancyGrid karesi (metadata + hücre verisi).
+class OccupancyGridFrame {
+  final OccupancyGridMetadata metadata;
+  final Int8List data;
+
+  const OccupancyGridFrame({
+    required this.metadata,
+    required this.data,
+  });
+
+  bool get isComplete =>
+      data.length == metadata.width * metadata.height;
+
+  factory OccupancyGridFrame.fromRosMessage(Map<String, dynamic> message) {
+    final metadata = OccupancyGridMetadata.fromRosMessage(message);
+    final raw = message['data'];
+    if (raw is! List) {
+      throw const FormatException('OccupancyGrid.data eksik');
+    }
+    final expected = metadata.width * metadata.height;
+    if (raw.length != expected) {
+      throw FormatException(
+        'OccupancyGrid.data uzunluğu $expected değil: ${raw.length}',
+      );
+    }
+    final data = Int8List(expected);
+    for (var i = 0; i < expected; i++) {
+      final value = raw[i];
+      data[i] = value is int ? value : (value as num).toInt();
+    }
+    return OccupancyGridFrame(metadata: metadata, data: data);
+  }
 }
 
 /// ROS rota grafi ile GCS harita editoru arasındaki sözleşme.
