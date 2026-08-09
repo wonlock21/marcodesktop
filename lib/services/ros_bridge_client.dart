@@ -36,17 +36,20 @@ class RosBridgeClient {
     this.connectTimeout = const Duration(seconds: 5),
     this.messageTimeout = const Duration(seconds: 6),
     this.serviceTimeout = const Duration(seconds: 5),
+    this.saveTimeout = const Duration(seconds: 40),
   });
 
   static const robotStatusTopic = '/robot_status';
   static const missionEventsTopic = '/mission/events';
   static const mapTopic = '/map';
+
   /// Mapping sözleşmesindeki tek kaynak (`RosMappingTopics.cmdVelManual`).
   static const manualVelocityTopic = RosMappingTopics.cmdVelManual;
 
   final Duration connectTimeout;
   final Duration messageTimeout;
   final Duration serviceTimeout;
+  final Duration saveTimeout;
 
   final ValueNotifier<RosConnectionState> state = ValueNotifier(
     const RosConnectionState(RosConnectionStatus.disconnected),
@@ -58,6 +61,7 @@ class RosBridgeClient {
   void Function(OccupancyGridFrame? frame)? onMapFrame;
 
   void Function(MappingStatusSnapshot? status)? onMappingStatus;
+  void Function(LocalizationStatusSnapshot? status)? onLocalizationStatus;
   void Function(Uint8List? pngBytes)? onMapPreviewImage;
   void Function(MapPreviewMetadata? metadata)? onMapPreviewMetadata;
   void Function(MapPreviewRobotPixel? robotPixel)? onMapPreviewRobotPixel;
@@ -80,6 +84,7 @@ class RosBridgeClient {
   DateTime? _lastInbound;
   Uri? _uri;
   bool _manualDisconnect = false;
+
   /// GCS UI manuel modu (fiziksel anahtar yok). `cmd_vel_manual` kapısı.
   bool _gcsManualEnabled = true;
   double _manualLinear = 0;
@@ -237,6 +242,13 @@ class RosBridgeClient {
     });
     _send({
       'op': 'subscribe',
+      'topic': RosMappingTopics.localizationStatus,
+      'type': RosMappingTypes.localizationStatusMsg,
+      'queue_length': 1,
+      'throttle_rate': 100,
+    });
+    _send({
+      'op': 'subscribe',
       'topic': RosMappingTopics.mapPreviewCompressed,
       'type': RosMappingTypes.compressedImageMsg,
       'queue_length': 1,
@@ -305,9 +317,15 @@ class RosBridgeClient {
               ? Map<String, dynamic>.from(values)
               : <String, dynamic>{};
           if (message['result'] == false) {
+            final responseMessage =
+                response['message']?.toString().trim() ?? '';
+            final outerMessage = message['message']?.toString().trim() ?? '';
             completer.completeError(StateError(
-              response['message']?.toString() ??
-                  'ROS servis çağrısı başarısız: ${message['service'] ?? id}',
+              responseMessage.isNotEmpty
+                  ? responseMessage
+                  : outerMessage.isNotEmpty
+                      ? outerMessage
+                      : 'ROS servis çağrısı başarısız: ${message['service'] ?? id}',
             ));
           } else {
             completer.complete(response);
@@ -328,6 +346,8 @@ class RosBridgeClient {
       if (event is String) onMissionEvent?.call(event);
     } else if (topic == RosMappingTopics.mappingStatus && raw is Map) {
       _handleMappingStatus(Map<String, dynamic>.from(raw));
+    } else if (topic == RosMappingTopics.localizationStatus && raw is Map) {
+      _handleLocalizationStatus(Map<String, dynamic>.from(raw));
     } else if (topic == RosMappingTopics.mapPreviewCompressed && raw is Map) {
       _handleMapPreviewCompressed(Map<String, dynamic>.from(raw));
     } else if (topic == RosMappingTopics.mapPreviewMetadata && raw is Map) {
@@ -342,6 +362,16 @@ class RosBridgeClient {
       onMappingStatus?.call(MappingStatusSnapshot.fromRosMessage(msg));
     } catch (error) {
       debugPrint('Geçersiz /mapping/status: $error');
+    }
+  }
+
+  void _handleLocalizationStatus(Map<String, dynamic> msg) {
+    try {
+      onLocalizationStatus?.call(
+        LocalizationStatusSnapshot.fromRosMessage(msg),
+      );
+    } catch (error) {
+      debugPrint('Geçersiz /localization/status: $error');
     }
   }
 
@@ -390,6 +420,7 @@ class RosBridgeClient {
     String service,
     String type, [
     Map<String, dynamic> args = const {},
+    Duration? timeout,
   ]) async {
     if (!state.value.isConnected) throw StateError('ROS bagli degil');
     final id = 'gui_${++_requestId}';
@@ -403,7 +434,7 @@ class RosBridgeClient {
       'args': args
     });
     try {
-      return await completer.future.timeout(serviceTimeout);
+      return await completer.future.timeout(timeout ?? serviceTimeout);
     } finally {
       _serviceCalls.remove(id);
     }
@@ -470,6 +501,7 @@ class RosBridgeClient {
         RosMappingTopics.mappingSave,
         RosMappingTypes.saveMappingSrv,
         args,
+        saveTimeout,
       );
 
   Future<Map<String, dynamic>> listFields() => callService(
@@ -719,6 +751,7 @@ class RosBridgeClient {
 
   void _clearMappingPreviewCallbacks() {
     onMappingStatus?.call(null);
+    onLocalizationStatus?.call(null);
     onMapPreviewImage?.call(null);
     onMapPreviewMetadata?.call(null);
     onMapPreviewRobotPixel?.call(null);

@@ -27,6 +27,44 @@ enum MappingStatus {
 
   /// 4 — hata
   error,
+
+  /// 5 — harita dosyaları kaydediliyor
+  saving,
+
+  /// 6 — harita kaydedildi
+  saved,
+}
+
+/// `/localization/status` sayısal kodları.
+enum LocalizationStatus {
+  idle,
+  starting,
+  waitingInitialPose,
+  localizing,
+  stopping,
+  error,
+  initializing,
+}
+
+extension LocalizationStatusExt on LocalizationStatus {
+  int get code => index;
+
+  String get etiket => switch (this) {
+        LocalizationStatus.idle => 'Hazır',
+        LocalizationStatus.starting => 'Başlatılıyor',
+        LocalizationStatus.waitingInitialPose => 'İlk poz bekleniyor',
+        LocalizationStatus.localizing => 'Lokalizasyon çalışıyor',
+        LocalizationStatus.stopping => 'Durduruluyor',
+        LocalizationStatus.error => 'Hata',
+        LocalizationStatus.initializing => 'Başlangıç pozu uygulanıyor',
+      };
+
+  static LocalizationStatus fromCode(int? code) {
+    if (code == null || code < 0 || code >= LocalizationStatus.values.length) {
+      return LocalizationStatus.error;
+    }
+    return LocalizationStatus.values[code];
+  }
 }
 
 extension MappingStatusExt on MappingStatus {
@@ -38,6 +76,8 @@ extension MappingStatusExt on MappingStatus {
         MappingStatus.mapping => 'Haritalama çalışıyor',
         MappingStatus.stopping => 'Durduruluyor',
         MappingStatus.error => 'Hata',
+        MappingStatus.saving => 'Kaydediliyor',
+        MappingStatus.saved => 'Kaydedildi',
       };
 
   /// Manuel sürüş yalnız mapping sırasında.
@@ -45,14 +85,18 @@ extension MappingStatusExt on MappingStatus {
 
   /// Kullanıcı “Harita Oluştur” basabilir mi?
   bool get canStartMapping =>
-      this == MappingStatus.idle || this == MappingStatus.error;
+      this == MappingStatus.idle ||
+      this == MappingStatus.error ||
+      this == MappingStatus.saved;
 
   /// “Bitir / Kaydet” aktif mi?
   bool get canFinishMapping => this == MappingStatus.mapping;
 
   /// UI kilitli (yükleniyor) mi?
   bool get uiLocked =>
-      this == MappingStatus.starting || this == MappingStatus.stopping;
+      this == MappingStatus.starting ||
+      this == MappingStatus.stopping ||
+      this == MappingStatus.saving;
 
   static MappingStatus fromCode(int? code) {
     if (code == null || code < 0 || code >= MappingStatus.values.length) {
@@ -137,6 +181,7 @@ abstract final class RosMappingTopics {
 
   static const localizationStart = '/localization/start';
   static const localizationStop = '/localization/stop';
+  static const localizationStatus = '/localization/status';
 
   static const stationsAdd = '/stations/add';
   static const stationsUpdate = '/stations/update';
@@ -154,22 +199,22 @@ abstract final class RosMappingTypes {
 
   static const startMappingSrv = 'marco_msgs/srv/StartMapping';
 
-  /// Tip adı ROS ile teyit edilecek; şimdilik Trigger varsayımı.
+  /// `mapping_manager.py` tarafından `std_srvs.srv.Trigger` ile sunulur.
   static const stopMappingSrv = 'std_srvs/srv/Trigger';
 
   static const mappingStatusMsg = 'marco_msgs/msg/MappingStatus';
   static const compressedImageMsg = 'sensor_msgs/msg/CompressedImage';
-  static const mapPreviewMetadataMsg = 'marco_msgs/msg/MapPreviewMetadata';
+  static const mapPreviewMetadataMsg = 'nav_msgs/msg/MapMetaData';
+
   /// ROS wire adı (güncel): `MapPixelPose`.
   static const mapPreviewRobotPixelMsg = 'marco_msgs/msg/MapPixelPose';
   static const twistMsg = 'geometry_msgs/msg/Twist';
 
-  // ── Yakında (isimler hazır; tip ROS gelince netleşir) ─────────────────────
-
   static const saveMappingSrv = 'marco_msgs/srv/SaveMapping';
   static const listFieldsSrv = 'marco_msgs/srv/ListFields';
   static const startLocalizationSrv = 'marco_msgs/srv/StartLocalization';
-  static const stopLocalizationSrv = 'marco_msgs/srv/StopLocalization';
+  static const stopLocalizationSrv = 'std_srvs/srv/Trigger';
+  static const localizationStatusMsg = 'marco_msgs/msg/LocalizationStatus';
 
   static const addStationSrv = 'marco_msgs/srv/AddStation';
   static const updateStationSrv = 'marco_msgs/srv/UpdateStation';
@@ -222,12 +267,15 @@ abstract final class RosFieldNameRules {
 
   static bool isValid(String value) {
     final v = value.trim();
-    return v.isNotEmpty && pattern.hasMatch(v);
+    return v.isNotEmpty && v.length <= 64 && pattern.hasMatch(v);
   }
 
   static String? validate(String? value) {
     if (value == null || value.trim().isEmpty) {
       return 'Saha adı boş olamaz';
+    }
+    if (value.trim().length > 64) {
+      return 'Saha adı en fazla 64 karakter olabilir';
     }
     if (!pattern.hasMatch(value.trim())) {
       return 'Yalnız harf, rakam, _ ve - kullanılabilir';
@@ -287,14 +335,29 @@ abstract final class RosMappingErrors {
 // Wire mesaj modelleri (parse)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Mapping/lokalizasyon servisleri için açık başarı onayı.
+/// Mapping/lokalizasyon servisleri için tipe özgü başarı onayı.
 ///
 /// Rosbridge'in servis seviyesinde `result: true` döndürmesi yalnızca çağrının
-/// işlendiğini gösterir. Uygulama işlemi ancak response içinde `success: true`
-/// veya `accepted: true` varsa başarılı sayar; boş `{}` onay değildir.
+/// işlendiğini gösterir. Her servis yalnız kendi `.srv` response alanıyla
+/// doğrulanır; boş `{}` veya başka servise ait başarı alanı onay değildir.
 abstract final class RosServiceResponse {
-  static bool isConfirmedSuccess(Map<String, dynamic> response) =>
-      response['success'] == true || response['accepted'] == true;
+  static bool mappingStartAccepted(Map<String, dynamic> response) =>
+      response['accepted'] == true;
+
+  static bool mappingStopSucceeded(Map<String, dynamic> response) =>
+      response['success'] == true;
+
+  static bool mappingSaveSucceeded(Map<String, dynamic> response) =>
+      response['success'] == true;
+
+  static bool fieldsListSucceeded(Map<String, dynamic> response) =>
+      response['success'] == true;
+
+  static bool localizationStartAccepted(Map<String, dynamic> response) =>
+      response['accepted'] == true;
+
+  static bool localizationStopSucceeded(Map<String, dynamic> response) =>
+      response['success'] == true;
 
   static String failureMessage(
     Map<String, dynamic> response, {
@@ -304,6 +367,51 @@ abstract final class RosServiceResponse {
     if (raw.isNotEmpty) return RosMappingErrors.toUserMessage(raw);
     if (response.isEmpty) return 'ROS servisi boş cevap döndürdü';
     return fallback;
+  }
+}
+
+typedef RosServiceCall = Future<Map<String, dynamic>> Function();
+
+/// Aktif SLAM çalışırken `/mapping/save` çağrısını doğrular.
+abstract final class RosMappingWorkflow {
+  static Future<Map<String, dynamic>> saveActiveMapping({
+    required RosServiceCall save,
+  }) async {
+    final saveResponse = await save();
+    if (!RosServiceResponse.mappingSaveSucceeded(saveResponse)) {
+      throw StateError(
+        'Harita kaydı başarısız: '
+        '${RosServiceResponse.failureMessage(saveResponse)}',
+      );
+    }
+    return saveResponse;
+  }
+}
+
+/// `/localization/status` anlık görüntüsü.
+class LocalizationStatusSnapshot {
+  final LocalizationStatus status;
+  final String fieldName;
+  final String message;
+  final String mapYaml;
+
+  const LocalizationStatusSnapshot({
+    required this.status,
+    this.fieldName = '',
+    this.message = '',
+    this.mapYaml = '',
+  });
+
+  factory LocalizationStatusSnapshot.fromRosMessage(
+    Map<String, dynamic> msg,
+  ) {
+    final code = (msg['state'] as num?)?.toInt();
+    return LocalizationStatusSnapshot(
+      status: LocalizationStatusExt.fromCode(code),
+      fieldName: msg['field_name']?.toString().trim() ?? '',
+      message: msg['message']?.toString().trim() ?? '',
+      mapYaml: msg['map_yaml']?.toString().trim() ?? '',
+    );
   }
 }
 
@@ -338,7 +446,6 @@ class MapPreviewMetadata {
   final double originX;
   final double originY;
   final double originYaw;
-  final MapPreviewSource source;
 
   const MapPreviewMetadata({
     required this.width,
@@ -347,7 +454,6 @@ class MapPreviewMetadata {
     required this.originX,
     required this.originY,
     this.originYaw = 0,
-    this.source = MapPreviewSource.unknown,
   });
 
   factory MapPreviewMetadata.fromRosMessage(Map<String, dynamic> msg) {
@@ -390,7 +496,6 @@ class MapPreviewMetadata {
       originX: originX,
       originY: originY,
       originYaw: originYaw,
-      source: MapPreviewSourceExt.fromWire(msg['source']?.toString()),
     );
   }
 }
@@ -400,21 +505,36 @@ class MapPreviewRobotPixel {
   final double pixelX;
   final double pixelY;
   final double screenYaw;
+  final int mapWidth;
+  final int mapHeight;
   final bool insideMap;
+  final MapPreviewSource source;
 
   const MapPreviewRobotPixel({
     required this.pixelX,
     required this.pixelY,
     required this.screenYaw,
+    required this.mapWidth,
+    required this.mapHeight,
     required this.insideMap,
+    required this.source,
   });
 
   factory MapPreviewRobotPixel.fromRosMessage(Map<String, dynamic> msg) {
-    final px = (msg['pixel_x'] as num?)?.toDouble() ??
-        (msg['x'] as num?)?.toDouble();
-    final py = (msg['pixel_y'] as num?)?.toDouble() ??
-        (msg['y'] as num?)?.toDouble();
-    if (px == null || py == null || !px.isFinite || !py.isFinite) {
+    final px =
+        (msg['pixel_x'] as num?)?.toDouble() ?? (msg['x'] as num?)?.toDouble();
+    final py =
+        (msg['pixel_y'] as num?)?.toDouble() ?? (msg['y'] as num?)?.toDouble();
+    final mapWidth = (msg['map_width'] as num?)?.toInt();
+    final mapHeight = (msg['map_height'] as num?)?.toInt();
+    if (px == null ||
+        py == null ||
+        !px.isFinite ||
+        !py.isFinite ||
+        mapWidth == null ||
+        mapWidth <= 0 ||
+        mapHeight == null ||
+        mapHeight <= 0) {
       throw const FormatException('MapPixelPose alanları geçersiz');
     }
     return MapPreviewRobotPixel(
@@ -423,7 +543,10 @@ class MapPreviewRobotPixel {
       screenYaw: (msg['screen_yaw'] as num?)?.toDouble() ??
           (msg['yaw'] as num?)?.toDouble() ??
           0,
+      mapWidth: mapWidth,
+      mapHeight: mapHeight,
       insideMap: msg['inside_map'] == true || msg['inside'] == true,
+      source: MapPreviewSourceExt.fromWire(msg['source']?.toString()),
     );
   }
 }

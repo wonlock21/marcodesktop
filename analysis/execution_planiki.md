@@ -32,6 +32,8 @@
 | 2 | MAPPING | Joystick + Bitir/Kaydet aktif |
 | 3 | STOPPING | Butonlar kilitli |
 | 4 | ERROR | Hata + yeniden dene |
+| 5 | SAVING | Butonlar kilitli, kayıt sürüyor |
+| 6 | SAVED | Kayıt tamamlandı |
 
 Manuel sürüş mapping durumundan bağımsızdır. Operatör GCS'teki
 **Manuel/Otonom** anahtarıyla açıp kapatır; ROS bağlantısı yokken komut
@@ -105,7 +107,7 @@ Hedef: buradaki eski OccupancyGrid / “metadata bekleniyor” görünümünün 
   - [x] `/localization/stop`
   - [x] `/stations/add|update|delete|list`
   - [x] `/routes/save|list|delete`
-- [x] Mapping status enum: `0..4` → `MappingStatus.idle|starting|mapping|stopping|error`
+- [x] Mapping status enum: `0..6` → `idle|starting|mapping|stopping|error|saving|saved`
 - [x] Bilinen hata mesajı sabitleri / eşleme tablosu (`RosMappingErrors.toUserMessage`)
 - [x] Bonus: saha adı kuralları, manuel hız limitleri, `FieldNodeType`, `MapPreviewSource`
 
@@ -155,7 +157,7 @@ Hedef: buradaki eski OccupancyGrid / “metadata bekleniyor” görünümünün 
 
 ### B.3 — Harita Oluştur
 - [x] Buton → `/mapping/start` (`field_name: <saha_adı>`).
-- [x] Cevap `success/message` kullanıcıya gösterilsin (olay günlüğü + `RosMappingErrors`).
+- [x] Cevap `accepted/message` kullanıcıya gösterilsin (olay günlüğü + `RosMappingErrors`).
 - [x] Status 1 (STARTING) gelene kadar / gelince butonlar kilitlensin (`startInFlight` + `uiLocked`).
 - [x] ROS bağlı değilken buton pasif (`canStartMapping`).
 
@@ -235,8 +237,8 @@ Hedef: buradaki eski OccupancyGrid / “metadata bekleniyor” görünümünün 
 
 ### E.1 — Bitir ve Kaydet
 - [x] Buton: “Haritalamayı Bitir ve Kaydet”.
-- [x] Önce `/mapping/stop`; cevap kabul edilince canlı status `IDLE` olana kadar bekle; sonra `/mapping/save` (`{}`).
-- [x] `ERROR`, bağlantı kopması veya 12 saniye zaman aşımında save çağrılmaz.
+- [x] SLAM çalışırken doğrudan `/mapping/save` (`{}`) çağır; başarılı yanıttan sonra `SAVED=6` durumunu bekle.
+- [x] `/mapping/stop` yalnız “Kaydetmeden İptal Et” işlemi için kullanılır.
 - [x] Servis yokken: loading + “ROS hazır değil veya servis yanıt vermedi”.
 - [x] Başarı → `/fields/list` ile saha listesi yenilenir (`SavedFieldInfo`).
 
@@ -493,3 +495,22 @@ Paralel: **F UI iskeleti** mock pose ile A–C bitmeden denenebilir; gerçek PNG
 ---
 
 *Bu plan uygulandıkça checkbox’lar işaretlenecek. ROS tarafı servisleri geldikçe stub’lar gerçek `callService` çağrılarına çevrilecek.*
+
+---
+
+## 2026-08-09 mapping/lokalizasyon sözleşme denetimi
+
+- [x] `/mapping/start`: `marco_msgs/srv/StartMapping` — başarı alanı `accepted`.
+- [x] `/mapping/stop`: `std_srvs/srv/Trigger` — başarı alanı `success`.
+- [x] `/mapping/save`: `marco_msgs/srv/SaveMapping` — başarı alanı `success`.
+- [x] `/fields/list`: `marco_msgs/srv/ListFields` — başarı alanı `success`.
+- [x] `/localization/start`: `marco_msgs/srv/StartLocalization` — başarı alanı `accepted`.
+- [x] `/localization/stop`: `std_srvs/srv/Trigger` — başarı alanı `success`; `StopLocalization.srv` yok ve oluşturulmadı.
+- [x] Genel `success || accepted` kontrolü kaldırıldı; her servis kendi response alanıyla doğrulanıyor.
+- [x] Boş `values: {}` ve yalnız rosbridge `result: true` uygulama başarısı sayılmıyor.
+- [x] Save → SAVED sırası tek workflow ile korunuyor; kayıt öncesinde SLAM durdurulmuyor.
+- [x] Kaydetmeden iptal için `/mapping/stop` ayrı bir UI eylemi olarak tutuluyor.
+- [x] `flutter analyze`: temiz.
+- [x] İlgili Flutter testleri: 29 geçti, canlı `ROS_BRIDGE_URL` testi ortam değişkeni olmadığı için atlandı.
+- [x] `colcon build --symlink-install`: 13 paket geçti.
+- [x] `marco_localization` sözleşme testleri: 3 geçti.

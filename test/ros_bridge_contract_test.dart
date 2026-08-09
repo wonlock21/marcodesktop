@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:liftant_v2_bitirme/services/ros_bridge_client.dart';
 import 'package:liftant_v2_bitirme/services/agv_service.dart';
 import 'package:liftant_v2_bitirme/services/ros_gcs_contract.dart';
+import 'package:liftant_v2_bitirme/services/ros_mapping_contract.dart';
 import 'package:liftant_v2_bitirme/data_model.dart';
 
 void main() {
@@ -192,6 +193,20 @@ void main() {
           message['op'] == 'subscribe' && message['topic'] == '/map'),
       isTrue,
     );
+    expect(
+      received.any((message) =>
+          message['op'] == 'subscribe' &&
+          message['topic'] == '/map_preview/metadata' &&
+          message['type'] == 'nav_msgs/msg/MapMetaData'),
+      isTrue,
+    );
+    expect(
+      received.any((message) =>
+          message['op'] == 'subscribe' &&
+          message['topic'] == '/localization/status' &&
+          message['type'] == 'marco_msgs/msg/LocalizationStatus'),
+      isTrue,
+    );
     // GCS manuel varsayılan açık; fiziksel anahtar / robot_status kapısı yok.
     expect(client.publishManualDirection(2), isTrue);
     client.setGcsManualEnabled(false);
@@ -223,6 +238,160 @@ void main() {
     expect(client.state.value.isConnected, isTrue);
     await client.dispose();
     await activeSocket?.close();
+    await server.close(force: true);
+  });
+
+  test('MapPixelPose boyut ve source alanlarını parse eder', () {
+    final pixel = MapPreviewRobotPixel.fromRosMessage({
+      'pixel_x': 12.5,
+      'pixel_y': 8.0,
+      'screen_yaw': 1.2,
+      'map_width': 200,
+      'map_height': 100,
+      'inside_map': true,
+      'source': 'slam_toolbox',
+    });
+    expect(pixel.mapWidth, 200);
+    expect(pixel.mapHeight, 100);
+    expect(pixel.source, MapPreviewSource.slam_toolbox);
+  });
+
+  test('LocalizationStatus state kodlarını parse eder', () {
+    final status = LocalizationStatusSnapshot.fromRosMessage({
+      'state': 3,
+      'field_name': 'saha_01',
+      'message': 'lokalize',
+      'map_yaml': '/data/saha_01/map.yaml',
+    });
+    expect(status.status, LocalizationStatus.localizing);
+    expect(status.fieldName, 'saha_01');
+  });
+
+  test('mapping/lokalizasyon servis zarfları uçtan uca doğrulanır', () async {
+    var scenario = <String, dynamic>{};
+    final received = <Map<String, dynamic>>[];
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((request) async {
+      final socket = await WebSocketTransformer.upgrade(request);
+      socket.listen((data) {
+        if (data is! String) return;
+        final message = Map<String, dynamic>.from(jsonDecode(data));
+        if (message['op'] != 'call_service') return;
+        received.add(message);
+        if (scenario['timeout'] == true) return;
+        socket.add(jsonEncode({
+          'op': 'service_response',
+          'id': message['id'],
+          'service': message['service'],
+          'result': scenario['result'] ?? true,
+          'values': scenario['values'] ?? <String, dynamic>{},
+          if (scenario['message'] != null) 'message': scenario['message'],
+        }));
+      });
+    });
+
+    final client = RosBridgeClient(
+      serviceTimeout: const Duration(milliseconds: 80),
+      saveTimeout: const Duration(milliseconds: 80),
+      messageTimeout: const Duration(seconds: 5),
+    );
+    await client.connect('ws://127.0.0.1:${server.port}');
+
+    final services = <({
+      String name,
+      String type,
+      String key,
+      Future<Map<String, dynamic>> Function() call,
+      bool Function(Map<String, dynamic>) check,
+    })>[
+      (
+        name: '/mapping/start',
+        type: RosMappingTypes.startMappingSrv,
+        key: 'accepted',
+        call: () => client.startMapping(fieldName: 'saha_01'),
+        check: RosServiceResponse.mappingStartAccepted,
+      ),
+      (
+        name: '/mapping/stop',
+        type: RosMappingTypes.stopMappingSrv,
+        key: 'success',
+        call: client.stopMapping,
+        check: RosServiceResponse.mappingStopSucceeded,
+      ),
+      (
+        name: '/mapping/save',
+        type: RosMappingTypes.saveMappingSrv,
+        key: 'success',
+        call: client.saveMapping,
+        check: RosServiceResponse.mappingSaveSucceeded,
+      ),
+      (
+        name: '/fields/list',
+        type: RosMappingTypes.listFieldsSrv,
+        key: 'success',
+        call: client.listFields,
+        check: RosServiceResponse.fieldsListSucceeded,
+      ),
+      (
+        name: '/localization/start',
+        type: RosMappingTypes.startLocalizationSrv,
+        key: 'accepted',
+        call: () => client.startLocalization(fieldName: 'saha_01'),
+        check: RosServiceResponse.localizationStartAccepted,
+      ),
+      (
+        name: '/localization/stop',
+        type: RosMappingTypes.stopLocalizationSrv,
+        key: 'success',
+        call: client.stopLocalization,
+        check: RosServiceResponse.localizationStopSucceeded,
+      ),
+    ];
+
+    for (final service in services) {
+      scenario = {
+        'result': true,
+        'values': {service.key: true, 'message': 'tamam'},
+      };
+      final success = await service.call();
+      expect(service.check(success), isTrue, reason: service.name);
+      expect(received.last['service'], service.name);
+      expect(received.last['type'], service.type);
+
+      scenario = {
+        'result': true,
+        'values': {service.key: false, 'message': 'reddedildi'},
+      };
+      final rejected = await service.call();
+      expect(service.check(rejected), isFalse, reason: service.name);
+      expect(RosServiceResponse.failureMessage(rejected), 'reddedildi');
+
+      scenario = {'result': true, 'values': <String, dynamic>{}};
+      expect(service.check(await service.call()), isFalse,
+          reason: service.name);
+
+      scenario = {
+        'result': false,
+        'values': <String, dynamic>{},
+        'message': '${service.name} bulunamadı',
+      };
+      await expectLater(
+        service.call(),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('bulunamadı'),
+          ),
+        ),
+        reason: service.name,
+      );
+
+      scenario = {'timeout': true};
+      await expectLater(service.call(), throwsA(isA<TimeoutException>()));
+    }
+
+    await client.dispose();
     await server.close(force: true);
   });
 

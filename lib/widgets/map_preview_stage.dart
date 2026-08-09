@@ -54,8 +54,8 @@ class MapPreviewStage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final mapW = metadata?.width;
-    final mapH = metadata?.height;
+    final mapW = robotPixel?.mapWidth ?? metadata?.width;
+    final mapH = robotPixel?.mapHeight ?? metadata?.height;
 
     return ColoredBox(
       color: const Color(0xFF0D0D0D),
@@ -95,81 +95,79 @@ class MapPreviewStage extends StatelessWidget {
                     ),
                   ),
                 ),
-              if (mapW != null &&
-                  mapH != null &&
-                  routePolylinePixels.length >= 2)
-                CustomPaint(
-                  size: view,
-                  painter: _RoutePolylinePainter(
+                if (mapW != null &&
+                    mapH != null &&
+                    routePolylinePixels.length >= 2)
+                  CustomPaint(
+                    size: view,
+                    painter: _RoutePolylinePainter(
+                      view: view,
+                      mapW: mapW,
+                      mapH: mapH,
+                      pixels: routePolylinePixels,
+                    ),
+                  ),
+                if (mapW != null && mapH != null && nodeMarkers.isNotEmpty)
+                  ...nodeMarkers.map(
+                    (m) => _NodeMarkerOverlay(
+                      view: view,
+                      mapW: mapW,
+                      mapH: mapH,
+                      marker: m,
+                      onTap: onNodeMarkerTap == null
+                          ? null
+                          : () => onNodeMarkerTap!(m.label),
+                    ),
+                  ),
+                if (mapW != null &&
+                    mapH != null &&
+                    robotPixel != null &&
+                    robotPixel!.insideMap)
+                  _RobotOverlay(
                     view: view,
                     mapW: mapW,
                     mapH: mapH,
-                    pixels: routePolylinePixels,
+                    robot: robotPixel!,
                   ),
-                ),
-              if (mapW != null &&
-                  mapH != null &&
-                  nodeMarkers.isNotEmpty)
-                ...nodeMarkers.map(
-                  (m) => _NodeMarkerOverlay(
-                    view: view,
-                    mapW: mapW,
-                    mapH: mapH,
-                    marker: m,
-                    onTap: onNodeMarkerTap == null
-                        ? null
-                        : () => onNodeMarkerTap!(m.label),
-                  ),
-                ),
-              if (mapW != null &&
-                  mapH != null &&
-                  robotPixel != null &&
-                  robotPixel!.insideMap)
-                _RobotOverlay(
-                  view: view,
-                  mapW: mapW,
-                  mapH: mapH,
-                  robot: robotPixel!,
-                ),
-              if (robotPixel != null && !robotPixel!.insideMap)
-                Positioned(
-                  left: 2.w,
-                  bottom: 1.h,
-                  child: Text(
-                    'Robot harita dışında',
-                    style: TextStyle(
-                      color: const Color(0xFFB7791F),
-                      fontSize: 2.4.sp,
-                      fontFamily: 'monospace',
+                if (robotPixel != null && !robotPixel!.insideMap)
+                  Positioned(
+                    left: 2.w,
+                    bottom: 1.h,
+                    child: Text(
+                      'Robot harita dışında',
+                      style: TextStyle(
+                        color: const Color(0xFFB7791F),
+                        fontSize: 2.4.sp,
+                        fontFamily: 'monospace',
+                      ),
                     ),
                   ),
-                ),
-              if (sourceLabel != null && sourceLabel!.isNotEmpty)
-                Positioned(
-                  right: 2.w,
-                  top: 1.h,
-                  child: Text(
-                    sourceLabel!,
-                    style: TextStyle(
-                      color: const Color(0xFF666666),
-                      fontSize: 2.2.sp,
-                      fontFamily: 'monospace',
+                if (sourceLabel != null && sourceLabel!.isNotEmpty)
+                  Positioned(
+                    right: 2.w,
+                    top: 1.h,
+                    child: Text(
+                      sourceLabel!,
+                      style: TextStyle(
+                        color: const Color(0xFF666666),
+                        fontSize: 2.2.sp,
+                        fontFamily: 'monospace',
+                      ),
                     ),
                   ),
-                ),
-              if (awaitingFresh)
-                Positioned(
-                  left: 2.w,
-                  top: 1.h,
-                  child: Text(
-                    'Harita güncelleniyor…',
-                    style: TextStyle(
-                      color: const Color(0xFF4A90D9),
-                      fontSize: 2.4.sp,
-                      fontFamily: 'monospace',
+                if (awaitingFresh)
+                  Positioned(
+                    left: 2.w,
+                    top: 1.h,
+                    child: Text(
+                      'Harita güncelleniyor…',
+                      style: TextStyle(
+                        color: const Color(0xFF4A90D9),
+                        fontSize: 2.4.sp,
+                        fontFamily: 'monospace',
+                      ),
                     ),
                   ),
-                ),
               ],
             ),
           );

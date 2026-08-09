@@ -17,6 +17,9 @@ class GcsMappingModel extends ChangeNotifier {
   String mappingMessage = '';
   bool mappingStatusStale = false;
 
+  LocalizationStatus? localizationStatus;
+  String localizationMessage = '';
+
   Uint8List? previewPng;
   MapPreviewMetadata? previewMetadata;
   MapPreviewRobotPixel? robotPixel;
@@ -32,7 +35,7 @@ class GcsMappingModel extends ChangeNotifier {
   /// `/mapping/start` çağrısı sürüyor (cevap veya STARTING status bekleniyor).
   bool startInFlight = false;
 
-  /// Bitir/Kaydet (stop+save) uçuşta.
+  /// Bitir/Kaydet (`/mapping/save`) uçuşta.
   bool finishInFlight = false;
 
   /// `/fields/list` sonucu (E.1 yenileme + E.2 ekranı).
@@ -42,18 +45,19 @@ class GcsMappingModel extends ChangeNotifier {
 
   /// E.3 — aktif lokalizasyon sahası (null = kapalı).
   String? activeLocalizedField;
+  String? pendingLocalizedField;
   bool localizationInFlight = false;
 
-  /// Preview etiketi: ROS metadata yoksa lokalizasyon açıkken `amcl`.
+  /// Preview kaynağı doğrudan `/map_preview/robot_pixel.source` alanından gelir.
   String? get previewSourceLabel {
-    final wire = previewMetadata?.source.wireName;
+    final wire = robotPixel?.source.wireName;
     if (wire != null && wire.isNotEmpty && wire != 'unknown') return wire;
     if (activeLocalizedField != null) return MapPreviewSource.amcl.wireName;
     return wire;
   }
 
   bool _previewNotifyScheduled = false;
-  Completer<void>? _mappingIdleWaiter;
+  Completer<void>? _mappingSavedWaiter;
 
   bool get isFieldNameValid => RosFieldNameRules.isValid(fieldName);
 
@@ -70,7 +74,11 @@ class GcsMappingModel extends ChangeNotifier {
 
   /// Dialog açılabilir mi? (bağlı + IDLE|ERROR; saha adı dialogda sorulur).
   bool get canPromptStartMapping {
-    if (!isConnected || startInFlight || finishInFlight) {
+    if (!isConnected ||
+        startInFlight ||
+        finishInFlight ||
+        localizationInFlight ||
+        localizationActive) {
       return false;
     }
     final status = liveMappingStatus;
@@ -166,28 +174,79 @@ class GcsMappingModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  void beginLocalization() {
+  bool get localizationActive =>
+      localizationStatus != null &&
+      localizationStatus != LocalizationStatus.idle &&
+      localizationStatus != LocalizationStatus.error;
+
+  bool get mappingActive =>
+      liveMappingStatus == MappingStatus.starting ||
+      liveMappingStatus == MappingStatus.mapping ||
+      liveMappingStatus == MappingStatus.saving ||
+      liveMappingStatus == MappingStatus.stopping;
+
+  void beginLocalization([String? fieldName]) {
     if (localizationInFlight) return;
     localizationInFlight = true;
+    if (fieldName != null && fieldName.trim().isNotEmpty) {
+      pendingLocalizedField = fieldName.trim();
+    }
     notifyListeners();
   }
 
   void endLocalizationFlight() {
     if (!localizationInFlight) return;
     localizationInFlight = false;
+    pendingLocalizedField = null;
     notifyListeners();
   }
 
-  void applyLocalizationStarted(String fieldName) {
-    activeLocalizedField = fieldName.trim();
-    localizationInFlight = false;
+  void acknowledgeLocalizationStart(String fieldName) {
+    if (localizationStatus != LocalizationStatus.localizing) {
+      pendingLocalizedField ??= fieldName.trim();
+    }
     awaitingFreshPreview = true;
     notifyListeners();
   }
 
-  void applyLocalizationStopped() {
-    activeLocalizedField = null;
-    localizationInFlight = false;
+  void acknowledgeLocalizationStop() {
+    localizationInFlight = localizationStatus != LocalizationStatus.idle;
+    notifyListeners();
+  }
+
+  void applyLocalizationStatus(LocalizationStatusSnapshot? snap) {
+    if (snap == null) return;
+    localizationStatus = snap.status;
+    localizationMessage = snap.message;
+    final statusField = snap.fieldName.trim();
+    switch (snap.status) {
+      case LocalizationStatus.starting:
+      case LocalizationStatus.waitingInitialPose:
+      case LocalizationStatus.initializing:
+        localizationInFlight = true;
+        if (statusField.isNotEmpty) pendingLocalizedField = statusField;
+        break;
+      case LocalizationStatus.localizing:
+        activeLocalizedField =
+            statusField.isNotEmpty ? statusField : pendingLocalizedField;
+        pendingLocalizedField = null;
+        localizationInFlight = false;
+        awaitingFreshPreview = true;
+        break;
+      case LocalizationStatus.stopping:
+        localizationInFlight = true;
+        break;
+      case LocalizationStatus.idle:
+        activeLocalizedField = null;
+        pendingLocalizedField = null;
+        localizationInFlight = false;
+        break;
+      case LocalizationStatus.error:
+        activeLocalizedField = null;
+        pendingLocalizedField = null;
+        localizationInFlight = false;
+        break;
+    }
     notifyListeners();
   }
 
@@ -259,7 +318,7 @@ class GcsMappingModel extends ChangeNotifier {
     if (!state.isConnected && wasConnected) {
       // Status'u ERROR'a çekme; last-good stale işaretle.
       mappingStatusStale = true;
-      final waiter = _mappingIdleWaiter;
+      final waiter = _mappingSavedWaiter;
       if (waiter != null && !waiter.isCompleted) {
         waiter.completeError(
           StateError('ROS bağlantısı kesildi; harita kaydedilmedi'),
@@ -281,20 +340,18 @@ class GcsMappingModel extends ChangeNotifier {
     mappingStatusStale = false;
     // Status geldiyse start uçuş kilidini bırak (durum makinesi devralır).
     if (startInFlight) startInFlight = false;
-    // IDLE yalnızca save aşamasını başlatır; finish kilidi save ve saha
-    // yenilemesi tamamlanana kadar controller tarafından açık tutulur.
     if (finishInFlight && snap.status == MappingStatus.error) {
       finishInFlight = false;
     }
-    final waiter = _mappingIdleWaiter;
+    final waiter = _mappingSavedWaiter;
     if (waiter != null && !waiter.isCompleted) {
-      if (snap.status == MappingStatus.idle) {
+      if (snap.status == MappingStatus.saved) {
         waiter.complete();
       } else if (snap.status == MappingStatus.error) {
         waiter.completeError(
           StateError(
             snap.message.trim().isEmpty
-                ? 'Haritalama durdurulurken ROS hata durumuna geçti'
+                ? 'Harita kaydedilirken ROS hata durumuna geçti'
                 : snap.message,
           ),
         );
@@ -303,16 +360,15 @@ class GcsMappingModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// `/mapping/stop` kabul edildikten sonra gerçek IDLE durumunu bekler.
-  /// Save, STOPPING veya MAPPING devam ederken çağrılmaz.
-  Future<void> waitUntilMappingIdle({
-    Duration timeout = const Duration(seconds: 12),
+  /// `/mapping/save` cevabından sonra gerçek `SAVED` durumunu bekler.
+  Future<void> waitUntilMappingSaved({
+    Duration timeout = const Duration(seconds: 5),
   }) async {
     if (!isConnected) {
       throw StateError('ROS bağlı değil; harita kaydedilmedi');
     }
     final status = liveMappingStatus;
-    if (status == MappingStatus.idle) return;
+    if (status == MappingStatus.saved) return;
     if (status == MappingStatus.error) {
       throw StateError(
         mappingMessage.trim().isEmpty
@@ -322,18 +378,18 @@ class GcsMappingModel extends ChangeNotifier {
     }
 
     final waiter = Completer<void>();
-    _mappingIdleWaiter = waiter;
+    _mappingSavedWaiter = waiter;
     try {
       await waiter.future.timeout(
         timeout,
         onTimeout: () => throw TimeoutException(
-          'Haritalama IDLE durumuna geçmedi; harita kaydedilmedi',
+          'Haritalama SAVED durumuna geçmedi',
           timeout,
         ),
       );
     } finally {
-      if (identical(_mappingIdleWaiter, waiter)) {
-        _mappingIdleWaiter = null;
+      if (identical(_mappingSavedWaiter, waiter)) {
+        _mappingSavedWaiter = null;
       }
     }
   }
@@ -375,6 +431,11 @@ class GcsMappingModel extends ChangeNotifier {
     awaitingFreshPreview = false;
     startInFlight = false;
     finishInFlight = false;
+    localizationStatus = null;
+    localizationMessage = '';
+    activeLocalizedField = null;
+    pendingLocalizedField = null;
+    localizationInFlight = false;
     notifyListeners();
   }
 }
@@ -382,20 +443,31 @@ class GcsMappingModel extends ChangeNotifier {
 /// Kayıtlı saha özeti (`/fields/list` wire → UI).
 class SavedFieldInfo {
   final String name;
-  final String status;
+  final String fieldDirectory;
+  final String mapYaml;
+  final String previewPng;
   final String? createdAt;
-  final String? thumbnailHint;
+  final bool mapReady;
+  final bool initialPoseReady;
+  final bool localizationReady;
+  final String message;
 
   const SavedFieldInfo({
     required this.name,
-    this.status = 'hazir',
+    this.fieldDirectory = '',
+    this.mapYaml = '',
+    this.previewPng = '',
     this.createdAt,
-    this.thumbnailHint,
+    this.mapReady = false,
+    this.initialPoseReady = false,
+    this.localizationReady = false,
+    this.message = '',
   });
 
-  bool get isReady => status == 'hazir' || status == 'ready';
-  bool get isFaulty =>
-      status == 'hatali' || status == 'error' || status == 'faulty';
+  bool get isReady => localizationReady;
+  bool get isFaulty => !mapReady || !initialPoseReady || !localizationReady;
+  String get status => localizationReady ? 'hazir' : 'hazir_degil';
+  String? get thumbnailHint => previewPng.isEmpty ? null : previewPng;
 
   static List<SavedFieldInfo> fromListFieldsResponse(
     Map<String, dynamic> response,
@@ -419,9 +491,14 @@ class SavedFieldInfo {
         if (name == null || name.isEmpty) continue;
         out.add(SavedFieldInfo(
           name: name,
-          status: (map['status'] ?? map['state'] ?? 'hazir').toString(),
+          fieldDirectory: map['field_directory']?.toString() ?? '',
+          mapYaml: map['map_yaml']?.toString() ?? '',
+          previewPng: map['preview_png']?.toString() ?? '',
           createdAt: map['created_at']?.toString() ?? map['date']?.toString(),
-          thumbnailHint: map['thumbnail']?.toString(),
+          mapReady: map['map_ready'] == true,
+          initialPoseReady: map['initial_pose_ready'] == true,
+          localizationReady: map['localization_ready'] == true,
+          message: map['message']?.toString() ?? '',
         ));
       }
     }

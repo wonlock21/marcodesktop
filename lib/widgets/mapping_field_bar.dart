@@ -10,10 +10,12 @@ class MappingFieldBar extends StatelessWidget {
     super.key,
     required this.model,
     this.onFinishMapping,
+    this.onCancelMapping,
   });
 
   final GcsMappingModel model;
   final VoidCallback? onFinishMapping;
+  final VoidCallback? onCancelMapping;
 
   @override
   Widget build(BuildContext context) {
@@ -48,39 +50,67 @@ class MappingFieldBar extends StatelessWidget {
             if (showFinish) SizedBox(height: 6.h),
           ],
           if (showFinish)
-            SizedBox(
-              height: 40.h,
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: !canFinish ? null : () => onFinishMapping?.call(),
-                style: FilledButton.styleFrom(
-                  backgroundColor: success,
-                  disabledBackgroundColor: const Color(0xFF2A2A2A),
-                  disabledForegroundColor: const Color(0xFF666666),
-                  foregroundColor: Colors.white,
-                  padding: EdgeInsets.symmetric(horizontal: 2.5.w),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(4.r),
-                  ),
-                ),
-                child: model.finishInFlight
-                    ? SizedBox(
-                        width: 3.5.w,
-                        height: 3.5.w,
-                        child: const CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Color(0xFFAAAAAA),
-                        ),
-                      )
-                    : Text(
-                        'Haritalamayı Bitir ve Kaydet',
+            Row(
+              children: [
+                Expanded(
+                  child: SizedBox(
+                    height: 40.h,
+                    child: OutlinedButton(
+                      onPressed:
+                          !canFinish ? null : () => onCancelMapping?.call(),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFFE57373),
+                        side: const BorderSide(color: Color(0xFF9B2C2C)),
+                      ),
+                      child: Text(
+                        'Kaydetmeden İptal Et',
                         style: TextStyle(
-                          fontSize: 2.4.sp,
-                          fontWeight: FontWeight.w600,
+                          fontSize: 2.2.sp,
                           fontFamily: 'monospace',
                         ),
                       ),
-              ),
+                    ),
+                  ),
+                ),
+                SizedBox(width: 2.w),
+                Expanded(
+                  flex: 2,
+                  child: SizedBox(
+                    height: 40.h,
+                    child: FilledButton(
+                      onPressed:
+                          !canFinish ? null : () => onFinishMapping?.call(),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: success,
+                        disabledBackgroundColor: const Color(0xFF2A2A2A),
+                        disabledForegroundColor: const Color(0xFF666666),
+                        foregroundColor: Colors.white,
+                        padding: EdgeInsets.symmetric(horizontal: 2.5.w),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(4.r),
+                        ),
+                      ),
+                      child: model.finishInFlight
+                          ? SizedBox(
+                              width: 3.5.w,
+                              height: 3.5.w,
+                              child: const CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Color(0xFFAAAAAA),
+                              ),
+                            )
+                          : Text(
+                              'Haritalamayı Bitir ve Kaydet',
+                              style: TextStyle(
+                                fontSize: 2.4.sp,
+                                fontWeight: FontWeight.w600,
+                                fontFamily: 'monospace',
+                              ),
+                            ),
+                    ),
+                  ),
+                ),
+              ],
             ),
         ],
       ),
@@ -103,9 +133,11 @@ class _StatusChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = switch (status) {
       MappingStatus.idle => const Color(0xFF4A90D9),
-      MappingStatus.starting || MappingStatus.stopping =>
+      MappingStatus.starting ||
+      MappingStatus.stopping ||
+      MappingStatus.saving =>
         const Color(0xFFB7791F),
-      MappingStatus.mapping => const Color(0xFF2F6F4E),
+      MappingStatus.mapping || MappingStatus.saved => const Color(0xFF2F6F4E),
       MappingStatus.error => const Color(0xFFC53030),
       null => const Color(0xFF888888),
     };
@@ -121,9 +153,11 @@ class _StatusChip extends StatelessWidget {
           Icon(
             switch (status) {
               MappingStatus.idle => Icons.radio_button_checked,
-              MappingStatus.starting || MappingStatus.stopping =>
+              MappingStatus.starting ||
+              MappingStatus.stopping ||
+              MappingStatus.saving =>
                 Icons.hourglass_top,
-              MappingStatus.mapping => Icons.map,
+              MappingStatus.mapping || MappingStatus.saved => Icons.map,
               MappingStatus.error => Icons.error_outline,
               null => Icons.info_outline,
             },

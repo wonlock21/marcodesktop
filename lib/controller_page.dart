@@ -85,6 +85,7 @@ class _ControllerPageState extends State<ControllerPage>
     AgvService.ros.onMapMetadata = _onMapMetadata;
     AgvService.ros.onMapFrame = _onMapFrame;
     AgvService.ros.onMappingStatus = _onMappingStatus;
+    AgvService.ros.onLocalizationStatus = _onLocalizationStatus;
     AgvService.ros.onMapPreviewImage = _onMapPreviewImage;
     AgvService.ros.onMapPreviewMetadata = _onMapPreviewMetadata;
     AgvService.ros.onMapPreviewRobotPixel = _onMapPreviewRobotPixel;
@@ -323,6 +324,23 @@ class _ControllerPageState extends State<ControllerPage>
     }
   }
 
+  void _onLocalizationStatus(LocalizationStatusSnapshot? status) {
+    if (!mounted) return;
+    final previous = _mappingModel.localizationStatus;
+    _mappingModel.applyLocalizationStatus(status);
+    if (status == null || previous == status.status) return;
+    final message = status.message.trim();
+    _onMissionEvent(
+      'Lokalizasyon: ${status.status.etiket}'
+      '${message.isEmpty ? '' : ' — ${RosMappingErrors.toUserMessage(message)}'}',
+    );
+    if (status.status == LocalizationStatus.error) {
+      _showUserError(
+        message.isEmpty ? 'Lokalizasyon hatası' : message,
+      );
+    }
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // Pause / arka plan / detach: dead-man — hız sıfır.
@@ -454,7 +472,7 @@ class _ControllerPageState extends State<ControllerPage>
     try {
       final response = await AgvService.startMapping(fieldName: fieldName);
       if (!mounted) return;
-      final success = RosServiceResponse.isConfirmedSuccess(response);
+      final success = RosServiceResponse.mappingStartAccepted(response);
       final rawMsg = response['message']?.toString().trim() ?? '';
       final message = rawMsg.isEmpty
           ? (success ? 'OK' : 'Bilinmeyen hata')
@@ -498,6 +516,9 @@ class _ControllerPageState extends State<ControllerPage>
     try {
       final response = await AgvService.listFields();
       if (!mounted) return;
+      if (!RosServiceResponse.fieldsListSucceeded(response)) {
+        throw StateError(RosServiceResponse.failureMessage(response));
+      }
       final fields = SavedFieldInfo.fromListFieldsResponse(response);
       mapping.applyFieldsList(fields);
       _onMissionEvent(
@@ -519,50 +540,19 @@ class _ControllerPageState extends State<ControllerPage>
     final fieldName = mapping.fieldName.trim();
     mapping.beginFinishMapping();
     try {
-      // 1) Stop
-      final stop = await AgvService.stopMapping();
-      if (!mounted) return;
-      final stopOk = RosServiceResponse.isConfirmedSuccess(stop);
-      final stopMsg = stop['message']?.toString().trim() ?? '';
-      if (!stopOk) {
-        mapping.endFinishMapping();
-        _onMissionEvent(
-          'Haritalama durdurulamadı: '
-          '${RosServiceResponse.failureMessage(stop)}',
-        );
-        return;
-      }
-      _onMissionEvent(
-        'Haritalama durdurma isteği kabul edildi'
-        '${stopMsg.isEmpty ? '' : ': ${RosMappingErrors.toUserMessage(stopMsg)}'}',
+      final save = await RosMappingWorkflow.saveActiveMapping(
+        save: AgvService.saveMapping,
       );
-
-      // 2) Stop servisi yalnız isteği kabul etmiş olabilir. ROS gerçekten
-      // IDLE olmadan save çağrılmaz.
-      await mapping.waitUntilMappingIdle();
       if (!mounted) return;
-      _onMissionEvent('Haritalama durdu (IDLE); kayıt başlatılıyor');
-
-      // 3) Save — ROS sözleşmesi boş args
-      final save = await AgvService.saveMapping();
+      await mapping.waitUntilMappingSaved();
       if (!mounted) return;
-      final saveOk = RosServiceResponse.isConfirmedSuccess(save);
       final saveMsg = save['message']?.toString().trim() ?? '';
-      if (!saveOk) {
-        mapping.endFinishMapping();
-        _onMissionEvent(
-          'Harita kaydı başarısız: '
-          '${RosServiceResponse.failureMessage(save)}',
-        );
-        return;
-      }
       _onMissionEvent(
         'Harita kaydedildi'
         '${fieldName.isEmpty ? '' : ' ($fieldName)'}'
         '${saveMsg.isEmpty ? '' : ': ${RosMappingErrors.toUserMessage(saveMsg)}'}',
       );
 
-      // 4) Saha listesini yenile (E.2 için hazır)
       await _refreshSavedFields();
       if (!mounted) return;
       // Status IDLE gelmezse UI kilidi takılı kalmasın.
@@ -571,6 +561,30 @@ class _ControllerPageState extends State<ControllerPage>
       if (!mounted) return;
       mapping.endFinishMapping();
       _onMissionEvent('Bitir/Kaydet: ${_rosServiceUserError(error)}');
+    }
+  }
+
+  Future<void> _cancelMappingWithoutSave() async {
+    final mapping = _mappingModel;
+    if (!mapping.canFinishMapping) return;
+    mapping.beginFinishMapping();
+    try {
+      final response = await AgvService.stopMapping();
+      if (!mounted) return;
+      if (!RosServiceResponse.mappingStopSucceeded(response)) {
+        throw StateError(RosServiceResponse.failureMessage(response));
+      }
+      final message = response['message']?.toString().trim() ?? '';
+      _onMissionEvent(
+        'Haritalama kaydedilmeden iptal edildi'
+        '${message.isEmpty ? '' : ': ${RosMappingErrors.toUserMessage(message)}'}',
+      );
+      mapping.endFinishMapping();
+    } catch (error) {
+      if (!mounted) return;
+      mapping.endFinishMapping();
+      _showUserError(
+          'Haritalama iptal edilemedi: ${_rosServiceUserError(error)}');
     }
   }
 
@@ -820,6 +834,7 @@ class _ControllerPageState extends State<ControllerPage>
     AgvService.ros.onMapMetadata = null;
     AgvService.ros.onMapFrame = null;
     AgvService.ros.onMappingStatus = null;
+    AgvService.ros.onLocalizationStatus = null;
     AgvService.ros.onMapPreviewImage = null;
     AgvService.ros.onMapPreviewMetadata = null;
     AgvService.ros.onMapPreviewRobotPixel = null;
@@ -2464,6 +2479,7 @@ class _ControllerPageState extends State<ControllerPage>
             MappingFieldBar(
               model: mapping,
               onFinishMapping: () => unawaited(_finishAndSaveMapping()),
+              onCancelMapping: () => unawaited(_cancelMappingWithoutSave()),
             ),
             Expanded(child: body),
           ],

@@ -45,6 +45,11 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
     try {
       final response = await AgvService.listFields();
       if (!mounted) return;
+      if (!RosServiceResponse.fieldsListSucceeded(response)) {
+        mapping
+            .applyFieldsListError(RosServiceResponse.failureMessage(response));
+        return;
+      }
       mapping.applyFieldsList(SavedFieldInfo.fromListFieldsResponse(response));
     } catch (error) {
       if (!mounted) return;
@@ -54,7 +59,9 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
 
   String _userError(Object error) {
     final text = error.toString().toLowerCase();
-    if (text.contains('not connected') ||
+    if (text.contains('bagli degil') ||
+        text.contains('bağlı değil') ||
+        text.contains('not connected') ||
         text.contains('timeout') ||
         text.contains('zaman asim') ||
         text.contains('servis') ||
@@ -73,17 +80,21 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
 
   Future<void> _loadField(SavedFieldInfo field) async {
     final mapping = context.read<GcsMappingModel>();
-    if (field.isFaulty || mapping.localizationInFlight) return;
+    if (!field.localizationReady ||
+        mapping.localizationInFlight ||
+        mapping.mappingActive) {
+      return;
+    }
     if (!AgvService.ros.state.value.isConnected) {
       _toast('ROS hazır değil veya servis yanıt vermedi');
       return;
     }
-    mapping.beginLocalization();
+    mapping.beginLocalization(field.name);
     try {
-      // E.3 stub: ROS servisi yoksa kullanıcı dostu mesaj.
-      final response = await AgvService.startLocalization(fieldName: field.name);
+      final response =
+          await AgvService.startLocalization(fieldName: field.name);
       if (!mounted) return;
-      final ok = RosServiceResponse.isConfirmedSuccess(response);
+      final ok = RosServiceResponse.localizationStartAccepted(response);
       final msg = response['message']?.toString().trim() ?? '';
       if (!ok) {
         mapping.endLocalizationFlight();
@@ -93,11 +104,11 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
         );
         return;
       }
-      mapping.applyLocalizationStarted(field.name);
+      mapping.acknowledgeLocalizationStart(field.name);
       _toast(
-        'Lokalizasyon başlatıldı (${field.name})'
+        'Lokalizasyon başlatılıyor (${field.name})'
         '${msg.isEmpty ? '' : ': ${RosMappingErrors.toUserMessage(msg)}'}'
-        ' — önizleme source=amcl',
+        ' — LOCALIZING durumu bekleniyor',
       );
     } catch (error) {
       if (!mounted) return;
@@ -110,15 +121,14 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
     final mapping = context.read<GcsMappingModel>();
     if (mapping.localizationInFlight) return;
     if (!AgvService.ros.state.value.isConnected) {
-      mapping.applyLocalizationStopped();
-      _toast('ROS bağlı değil — lokalizasyon durumu temizlendi');
+      _toast('ROS hazır değil veya servis yanıt vermedi');
       return;
     }
     mapping.beginLocalization();
     try {
       final response = await AgvService.stopLocalization();
       if (!mounted) return;
-      final ok = RosServiceResponse.isConfirmedSuccess(response);
+      final ok = RosServiceResponse.localizationStopSucceeded(response);
       final msg = response['message']?.toString().trim() ?? '';
       if (!ok) {
         mapping.endLocalizationFlight();
@@ -128,9 +138,9 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
         );
         return;
       }
-      mapping.applyLocalizationStopped();
+      mapping.acknowledgeLocalizationStop();
       _toast(
-        'Lokalizasyon durduruldu'
+        'Lokalizasyon durduruluyor'
         '${msg.isEmpty ? '' : ': ${RosMappingErrors.toUserMessage(msg)}'}',
       );
     } catch (error) {
@@ -193,7 +203,7 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
               color: const Color(0xFF1E2A1E),
               padding: EdgeInsets.symmetric(horizontal: 3.w, vertical: 0.8.h),
               child: Text(
-                'Aktif lokalizasyon: $active · HARİTA önizlemesi source=amcl',
+                'Aktif lokalizasyon: $active · ${mapping.localizationStatus?.etiket ?? 'durum bekleniyor'}',
                 style: TextStyle(color: _success, fontSize: 3.sp),
               ),
             ),
@@ -248,7 +258,9 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
             field: field,
             isActive: isActive,
             busy: mapping.localizationInFlight,
-            onLoad: field.isFaulty || mapping.localizationInFlight
+            onLoad: !field.localizationReady ||
+                    mapping.localizationInFlight ||
+                    mapping.mappingActive
                 ? null
                 : () => unawaited(_loadField(field)),
           );
@@ -273,17 +285,13 @@ class _SavedFieldCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ready = field.isReady && !field.isFaulty;
+    final ready = field.localizationReady;
     final statusColor = field.isFaulty
         ? _danger
         : ready
             ? _success
             : _muted;
-    final statusLabel = field.isFaulty
-        ? 'Hatalı'
-        : ready
-            ? 'Hazır'
-            : field.status;
+    final statusLabel = ready ? 'Lokalizasyona Hazır' : 'Hazır Değil';
 
     return Container(
       decoration: BoxDecoration(
