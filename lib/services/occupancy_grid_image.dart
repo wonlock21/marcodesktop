@@ -1,10 +1,18 @@
 import 'dart:async';
-import 'dart:typed_data';
+import 'dart:convert';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 
 import 'ros_gcs_contract.dart';
+
+/// Isolate çıktısı: metadata her zaman (mümkünse); frame yalnız data tam ise.
+class OccupancyParseResult {
+  final OccupancyGridMetadata? metadata;
+  final OccupancyGridFrame? frame;
+
+  const OccupancyParseResult({this.metadata, this.frame});
+}
 
 /// Isolate'e gönderilebilir OccupancyGrid → RGBA paketı.
 class OccupancyRgbaPayload {
@@ -36,7 +44,7 @@ class OccupancyRgbaPayload {
       );
 }
 
-/// Top-level: rosbridge OccupancyGrid JSON → frame (compute uyumlu).
+/// Top-level: rosbridge OccupancyGrid `msg` map → frame (compute uyumlu).
 OccupancyGridFrame? occupancyMessageToFrame(Map<String, dynamic> message) {
   try {
     final frame = OccupancyGridFrame.fromRosMessage(message);
@@ -45,6 +53,40 @@ OccupancyGridFrame? occupancyMessageToFrame(Map<String, dynamic> message) {
     return null;
   }
 }
+
+/// Top-level: ham rosbridge publish envelope string → parse (UI thread yok).
+///
+/// Ana isolate'de `jsonDecode` yapılmaz; büyük `/map` JSON'u burada açılır.
+OccupancyParseResult occupancyEnvelopeToResult(String raw) {
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) return const OccupancyParseResult();
+    final msg = decoded['msg'];
+    if (msg is! Map) return const OccupancyParseResult();
+    final message = Map<String, dynamic>.from(msg);
+
+    OccupancyGridMetadata? metadata;
+    try {
+      metadata = OccupancyGridMetadata.fromRosMessage(message);
+    } catch (_) {
+      return const OccupancyParseResult();
+    }
+
+    OccupancyGridFrame? frame;
+    try {
+      final parsed = OccupancyGridFrame.fromRosMessage(message);
+      if (parsed.isComplete) frame = parsed;
+    } catch (_) {
+      // Metadata geçerli, data eksik/bozuk olabilir.
+    }
+    return OccupancyParseResult(metadata: metadata, frame: frame);
+  } catch (_) {
+    return const OccupancyParseResult();
+  }
+}
+
+Future<OccupancyParseResult> parseOccupancyEnvelopeInIsolate(String raw) =>
+    compute(occupancyEnvelopeToResult, raw);
 
 Future<OccupancyGridFrame?> parseOccupancyInIsolate(
   Map<String, dynamic> message,

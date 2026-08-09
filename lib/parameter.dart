@@ -53,8 +53,6 @@ class _ParameterPageState extends State<ParameterPage> {
   String liftd = '';
   String lifts = '';
 
-  String _site = '';
-
   @override
   void initState() {
     super.initState();
@@ -92,7 +90,7 @@ class _ParameterPageState extends State<ParameterPage> {
     super.dispose();
   }
 
-  Future<void> veriBas(String veri) => AgvService.veriBas(_site, veri);
+  bool veriBas(String veri) => AgvService.sendHardwareCommand(veri);
 
   // ── GCS stili TextField dekorasyon yardımcısı ─────────────────────────
   InputDecoration _gcsInput(String label, String hint) {
@@ -163,8 +161,6 @@ class _ParameterPageState extends State<ParameterPage> {
 
   @override
   Widget build(BuildContext context) {
-    _site = ModalRoute.of(context)!.settings.arguments as String;
-
     return Scaffold(
       backgroundColor: _bg,
       appBar: AppBar(

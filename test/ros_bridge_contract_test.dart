@@ -192,13 +192,11 @@ void main() {
           message['op'] == 'subscribe' && message['topic'] == '/map'),
       isTrue,
     );
+    // GCS manuel varsayılan açık; fiziksel anahtar / robot_status kapısı yok.
+    expect(client.publishManualDirection(2), isTrue);
+    client.setGcsManualEnabled(false);
     expect(client.publishManualDirection(2), isFalse);
-    activeSocket?.add(jsonEncode({
-      'op': 'publish',
-      'topic': '/robot_status',
-      'msg': {'manual_mode_enabled': true},
-    }));
-    await Future<void>.delayed(const Duration(milliseconds: 100));
+    client.setGcsManualEnabled(true);
     expect(client.publishManualDirection(2), isTrue);
     client.stopManual();
     await Future<void>.delayed(const Duration(milliseconds: 100));

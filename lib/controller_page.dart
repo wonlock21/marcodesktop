@@ -16,7 +16,9 @@ import 'models/gcs_alarm_model.dart';
 import 'models/gcs_connection_model.dart';
 import 'models/gcs_event_log_model.dart';
 import 'models/gcs_map_model.dart';
+import 'models/gcs_mapping_model.dart';
 import 'models/gcs_mission_model.dart';
+import 'models/gcs_node_model.dart';
 import 'mock/gcs_mock_data.dart';
 import 'parameter_model.dart';
 import 'scenerio_page.dart';
@@ -24,9 +26,13 @@ import 'services/agv_service.dart';
 import 'services/occupancy_grid_image.dart';
 import 'services/ros_bridge_client.dart';
 import 'services/ros_gcs_contract.dart';
+import 'services/ros_mapping_contract.dart';
 import 'widgets/control_buttons.dart';
 import 'widgets/gcs_map_view.dart';
 import 'widgets/live_map.dart';
+import 'widgets/map_preview_stage.dart';
+import 'widgets/mapping_connection_banner.dart';
+import 'widgets/mapping_field_bar.dart';
 
 class ControllerPage extends StatefulWidget {
   const ControllerPage({super.key});
@@ -37,11 +43,9 @@ class ControllerPage extends StatefulWidget {
   }
 }
 
-class _ControllerPageState extends State<ControllerPage> {
-  bool oto = false;
-  bool lidarDurum = false;
+class _ControllerPageState extends State<ControllerPage>
+    with WidgetsBindingObserver {
   int speed = 0;
-  String manuelOrOtonom = "Otonom";
   String _site = '';
   bool isConnected = false;
   String nextQR = "null";
@@ -52,6 +56,11 @@ class _ControllerPageState extends State<ControllerPage> {
   OccupancyGridMetadata? _mapMetadata;
   ui.Image? _occupancyImage;
   int _occupancyImageGeneration = 0;
+
+  /// Nokta/rota dönüşümü cache — robot pose her tick'te yeniden hesaplanmaz.
+  List<MapPoint> _cachedMapPoints = const [];
+  List<MapRoute> _cachedMapRoutes = const [];
+  int? _cachedMapStaticKey;
 
   // Orta alan sekme indeksi: 0=Harita 1=Kamera 2=LiDAR 3=3D
   int _selectedWorkTab = 0;
@@ -64,6 +73,7 @@ class _ControllerPageState extends State<ControllerPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _agvModel = Provider.of<AgvSensorModel>(context, listen: false);
     parameterModel = Provider.of<ParameterModel>(context, listen: false);
     Provider.of<DataModel>(context, listen: false).loadDataPoints();
@@ -74,7 +84,18 @@ class _ControllerPageState extends State<ControllerPage> {
     AgvService.ros.onMissionEvent = _onMissionEvent;
     AgvService.ros.onMapMetadata = _onMapMetadata;
     AgvService.ros.onMapFrame = _onMapFrame;
+    AgvService.ros.onMappingStatus = _onMappingStatus;
+    AgvService.ros.onMapPreviewImage = _onMapPreviewImage;
+    AgvService.ros.onMapPreviewMetadata = _onMapPreviewMetadata;
+    AgvService.ros.onMapPreviewRobotPixel = _onMapPreviewRobotPixel;
+    AgvService.ros.onMappingSubscriptionsReady = _onMappingSubscriptionsReady;
     AgvService.ros.state.addListener(_onRosConnectionState);
+    // Build bitmeden notifyListeners yasak — ilk durumu sonraki frame'de bas.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _mappingModel.applyConnectionState(AgvService.ros.state.value);
+      AgvService.setGcsManualEnabled(_connModel.fizikselManuelMod);
+    });
     // GEÇİCİ admin/demo modu: cihaz yokken rapor için örnek veri bas.
     if (kAdminMode) {
       isConnected = true;
@@ -113,7 +134,6 @@ class _ControllerPageState extends State<ControllerPage> {
     final estop = status['estop_active'] == true;
     final obstacle = status['obstacle_detected'] == true;
     final plcConnected = status['plc_connected'] == true;
-    final manualEnabled = status['manual_mode_enabled'] == true;
     final qr = status['last_qr_data']?.toString() ?? '';
 
     _agvModel
@@ -173,12 +193,11 @@ class _ControllerPageState extends State<ControllerPage> {
       },
       kapiIzni: status['gate_permission_granted'] == true,
     );
+    // Çalışma modu (manuel/otonom) ROS fiziksel anahtarından gelmez; GCS UI seçer.
     _connModel.topluGuncelle(
       sistem: ConnDurum.bagli,
       robot: ConnDurum.bagli,
       plc: plcConnected ? ConnDurum.bagli : ConnDurum.cevrimdisi,
-      manuelMod: manualEnabled,
-      uzaktanKontrol: manualEnabled,
     );
     final alarms = Provider.of<GcsAlarmModel>(context, listen: false);
     alarms.topluGuncelle(
@@ -193,8 +212,6 @@ class _ControllerPageState extends State<ControllerPage> {
     );
     setState(() {
       isConnected = true;
-      oto = !manualEnabled;
-      manuelOrOtonom = manualEnabled ? 'Manuel' : 'Otonom';
     });
   }
 
@@ -203,17 +220,35 @@ class _ControllerPageState extends State<ControllerPage> {
     Provider.of<GcsEventLogModel>(context, listen: false).ekle(event);
   }
 
+  /// I.1 — Türkçe hata: olay günlüğü + SnackBar.
+  void _showUserError(String message) {
+    final text = RosMappingErrors.toUserMessage(message);
+    _onMissionEvent(text);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(text),
+        backgroundColor: const Color(0xFFB71C1C),
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
+
   void _onMapMetadata(OccupancyGridMetadata? metadata) {
     if (!mounted) return;
-    final previous = _mapMetadata;
+    // null: yalnız bilinçli yeni oturum temizliği (geçici kopmada client null göndermez).
     if (metadata == null) {
       _disposeOccupancyImage();
       setState(() {
         _mapMetadata = null;
         _occupancyImage = null;
+        _cachedMapStaticKey = null;
+        _cachedMapPoints = const [];
+        _cachedMapRoutes = const [];
       });
       return;
     }
+    final previous = _mapMetadata;
     final geometryChanged =
         previous == null || !previous.sameGeometry(metadata);
     if (geometryChanged) {
@@ -224,6 +259,7 @@ class _ControllerPageState extends State<ControllerPage> {
       _mapMetadata = metadata;
       if (geometryChanged) _occupancyImage = null;
     });
+    _mappingModel.markFreshMapArrived();
     if (geometryChanged) {
       _onMissionEvent(
         'Harita metadata: ${metadata.width}×${metadata.height}, '
@@ -237,8 +273,7 @@ class _ControllerPageState extends State<ControllerPage> {
   void _onMapFrame(OccupancyGridFrame? frame) {
     if (!mounted) return;
     if (frame == null) {
-      _disposeOccupancyImage();
-      setState(() => _occupancyImage = null);
+      // Geçici kopmada last-good occupancy görüntüsünü tut.
       return;
     }
     final generation = ++_occupancyImageGeneration;
@@ -257,6 +292,7 @@ class _ControllerPageState extends State<ControllerPage> {
           _mapMetadata = meta;
           _occupancyImage = image;
         });
+        _mappingModel.markFreshMapArrived();
         if (geometryChanged) {
           _onMissionEvent(
             'OccupancyGrid görüntü: ${meta.width}×${meta.height}',
@@ -268,6 +304,276 @@ class _ControllerPageState extends State<ControllerPage> {
     }());
   }
 
+  void _onMappingStatus(MappingStatusSnapshot? status) {
+    if (!mounted) return;
+    final previous = _mappingModel.mappingStatus;
+    final previousMsg = _mappingModel.mappingMessage;
+    _mappingModel.applyMappingStatus(status);
+    if (status == null) return;
+    if (previous != status.status || previousMsg != status.message) {
+      final line = _mappingModel.mappingStatusLine;
+      if (line != null) _onMissionEvent('Mapping: $line');
+      // I.1: ERROR → SnackBar; Yeniden Dene butonu startButtonLabel ile açık.
+      if (status.status == MappingStatus.error) {
+        final msg = status.message.trim().isEmpty
+            ? 'Haritalama hatası — Yeniden Dene ile tekrar deneyin'
+            : status.message;
+        _showUserError(msg);
+      }
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Pause / arka plan / detach: dead-man — hız sıfır.
+    switch (state) {
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+      case AppLifecycleState.hidden:
+        AgvService.stopManual();
+        break;
+      case AppLifecycleState.resumed:
+        break;
+    }
+  }
+
+  void _onMapPreviewImage(Uint8List? bytes) {
+    if (!mounted) return;
+    _mappingModel.applyPreviewImage(bytes);
+  }
+
+  void _onMapPreviewMetadata(MapPreviewMetadata? metadata) {
+    if (!mounted) return;
+    _mappingModel.applyPreviewMetadata(metadata);
+  }
+
+  void _onMapPreviewRobotPixel(MapPreviewRobotPixel? pixel) {
+    if (!mounted) return;
+    _mappingModel.applyRobotPixel(pixel);
+  }
+
+  void _onMappingSubscriptionsReady() {
+    if (!mounted) return;
+    _mappingModel.onSubscriptionsReady();
+  }
+
+  Future<void> _promptAndStartMapping() async {
+    final mapping = _mappingModel;
+    if (!mapping.isConnected) {
+      _showUserError('ROS bağlı değil');
+      return;
+    }
+    if (!mapping.canPromptStartMapping) {
+      _showUserError('Haritalama şu an başlatılamaz');
+      return;
+    }
+
+    final nameController = TextEditingController(
+      text: mapping.fieldName.trim().isEmpty
+          ? 'saha_01'
+          : mapping.fieldName.trim(),
+    );
+    final fieldName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A1A),
+        title: Text(
+          'Saha adı',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 3.sp,
+            fontFamily: 'monospace',
+          ),
+        ),
+        content: TextField(
+          controller: nameController,
+          autofocus: true,
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 2.8.sp,
+            fontFamily: 'monospace',
+          ),
+          cursorColor: const Color(0xFF4A90D9),
+          inputFormatters: [
+            FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9_-]')),
+          ],
+          decoration: InputDecoration(
+            hintText: 'saha_01',
+            hintStyle: const TextStyle(color: Color(0xFF555555)),
+            helperText: 'Yalnız harf, rakam, _ ve -',
+            helperStyle:
+                TextStyle(color: const Color(0xFF666666), fontSize: 2.2.sp),
+            enabledBorder: const OutlineInputBorder(
+              borderSide: BorderSide(color: Color(0xFF333333)),
+            ),
+            focusedBorder: const OutlineInputBorder(
+              borderSide: BorderSide(color: Color(0xFF4A90D9)),
+            ),
+          ),
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(
+              'İptal',
+              style:
+                  TextStyle(color: const Color(0xFF888888), fontSize: 2.6.sp),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, nameController.text.trim()),
+            child: Text(
+              'Başlat',
+              style:
+                  TextStyle(color: const Color(0xFF4A90D9), fontSize: 2.6.sp),
+            ),
+          ),
+        ],
+      ),
+    );
+    nameController.dispose();
+    if (!mounted || fieldName == null) return;
+
+    final validationError = RosFieldNameRules.validate(fieldName);
+    if (validationError != null) {
+      _showUserError(validationError);
+      return;
+    }
+
+    mapping.setFieldName(fieldName);
+    await _startMapping();
+  }
+
+  Future<void> _startMapping() async {
+    final mapping = _mappingModel;
+    if (!mapping.canStartMapping) return;
+    final fieldName = mapping.fieldName.trim();
+    mapping.beginStartMapping();
+    try {
+      final response = await AgvService.startMapping(fieldName: fieldName);
+      if (!mounted) return;
+      final success = RosServiceResponse.isConfirmedSuccess(response);
+      final rawMsg = response['message']?.toString().trim() ?? '';
+      final message = rawMsg.isEmpty
+          ? (success ? 'OK' : 'Bilinmeyen hata')
+          : RosMappingErrors.toUserMessage(rawMsg);
+      if (success) {
+        _onMissionEvent('Haritalama başlatıldı ($fieldName): $message');
+      } else {
+        mapping.endStartMapping();
+        _showUserError('Haritalama başlatılamadı: $message');
+      }
+    } catch (error) {
+      if (!mounted) return;
+      mapping.endStartMapping();
+      _showUserError(
+        'Haritalama başlatma hatası: ${_rosServiceUserError(error)}',
+      );
+    }
+  }
+
+  String _rosServiceUserError(Object error) {
+    final text = error.toString().toLowerCase();
+    if (text.contains('bagli degil') ||
+        text.contains('bağlı değil') ||
+        text.contains('not connected') ||
+        text.contains('timeout') ||
+        text.contains('zaman asim') ||
+        text.contains('servis') ||
+        text.contains('service')) {
+      return 'ROS hazır değil veya servis yanıt vermedi';
+    }
+    return RosMappingErrors.toUserMessage(error.toString());
+  }
+
+  Future<void> _refreshSavedFields() async {
+    final mapping = _mappingModel;
+    if (!AgvService.ros.state.value.isConnected) {
+      mapping.applyFieldsListError('ROS bağlı değil — saha listesi alınamadı');
+      return;
+    }
+    mapping.beginFieldsListLoad();
+    try {
+      final response = await AgvService.listFields();
+      if (!mounted) return;
+      final fields = SavedFieldInfo.fromListFieldsResponse(response);
+      mapping.applyFieldsList(fields);
+      _onMissionEvent(
+        fields.isEmpty
+            ? 'Saha listesi yenilendi (kayıt yok)'
+            : 'Saha listesi yenilendi (${fields.length})',
+      );
+    } catch (error) {
+      if (!mounted) return;
+      final msg = _rosServiceUserError(error);
+      mapping.applyFieldsListError(msg);
+      _onMissionEvent('Saha listesi alınamadı: $msg');
+    }
+  }
+
+  Future<void> _finishAndSaveMapping() async {
+    final mapping = _mappingModel;
+    if (!mapping.canFinishMapping) return;
+    final fieldName = mapping.fieldName.trim();
+    mapping.beginFinishMapping();
+    try {
+      // 1) Stop
+      final stop = await AgvService.stopMapping();
+      if (!mounted) return;
+      final stopOk = RosServiceResponse.isConfirmedSuccess(stop);
+      final stopMsg = stop['message']?.toString().trim() ?? '';
+      if (!stopOk) {
+        mapping.endFinishMapping();
+        _onMissionEvent(
+          'Haritalama durdurulamadı: '
+          '${RosServiceResponse.failureMessage(stop)}',
+        );
+        return;
+      }
+      _onMissionEvent(
+        'Haritalama durdurma isteği kabul edildi'
+        '${stopMsg.isEmpty ? '' : ': ${RosMappingErrors.toUserMessage(stopMsg)}'}',
+      );
+
+      // 2) Stop servisi yalnız isteği kabul etmiş olabilir. ROS gerçekten
+      // IDLE olmadan save çağrılmaz.
+      await mapping.waitUntilMappingIdle();
+      if (!mounted) return;
+      _onMissionEvent('Haritalama durdu (IDLE); kayıt başlatılıyor');
+
+      // 3) Save — ROS sözleşmesi boş args
+      final save = await AgvService.saveMapping();
+      if (!mounted) return;
+      final saveOk = RosServiceResponse.isConfirmedSuccess(save);
+      final saveMsg = save['message']?.toString().trim() ?? '';
+      if (!saveOk) {
+        mapping.endFinishMapping();
+        _onMissionEvent(
+          'Harita kaydı başarısız: '
+          '${RosServiceResponse.failureMessage(save)}',
+        );
+        return;
+      }
+      _onMissionEvent(
+        'Harita kaydedildi'
+        '${fieldName.isEmpty ? '' : ' ($fieldName)'}'
+        '${saveMsg.isEmpty ? '' : ': ${RosMappingErrors.toUserMessage(saveMsg)}'}',
+      );
+
+      // 4) Saha listesini yenile (E.2 için hazır)
+      await _refreshSavedFields();
+      if (!mounted) return;
+      // Status IDLE gelmezse UI kilidi takılı kalmasın.
+      mapping.endFinishMapping();
+    } catch (error) {
+      if (!mounted) return;
+      mapping.endFinishMapping();
+      _onMissionEvent('Bitir/Kaydet: ${_rosServiceUserError(error)}');
+    }
+  }
+
   void _disposeOccupancyImage() {
     _occupancyImage?.dispose();
     _occupancyImage = null;
@@ -276,6 +582,7 @@ class _ControllerPageState extends State<ControllerPage> {
   void _onRosConnectionState() {
     if (!mounted) return;
     final rosState = AgvService.ros.state.value;
+    _mappingModel.applyConnectionState(rosState);
     final durum = switch (rosState.status) {
       RosConnectionStatus.connected => ConnDurum.bagli,
       RosConnectionStatus.connecting ||
@@ -285,13 +592,27 @@ class _ControllerPageState extends State<ControllerPage> {
       RosConnectionStatus.disconnected => ConnDurum.cevrimdisi,
     };
     setState(() => isConnected = rosState.isConnected);
-    _connModel.topluGuncelle(sistem: durum, robot: durum);
+    // PLC durumu yalnızca robot /robot_status üzerinden gelir.
+    // WiFi/ROS kopunca eski "PLC Bağlı" bilgisini tutma.
+    if (rosState.isConnected) {
+      _connModel.topluGuncelle(sistem: durum, robot: durum);
+    } else {
+      _connModel.topluGuncelle(
+        sistem: durum,
+        robot: durum,
+        plc: ConnDurum.cevrimdisi,
+        stm32: ConnDurum.cevrimdisi,
+        bt: ConnDurum.cevrimdisi,
+      );
+      _agvModel.updatePlc(durum: 'bağlantı yok');
+    }
     final alarms = Provider.of<GcsAlarmModel>(context, listen: false);
     if (rosState.status == RosConnectionStatus.error) {
-      alarms.setAlarm(AlarmTur.robotBaglantiHata,
-          mesaj: rosState.message);
+      alarms.setAlarm(AlarmTur.robotBaglantiHata, mesaj: rosState.message);
     } else if (rosState.status == RosConnectionStatus.connected) {
       alarms.clearAlarm(AlarmTur.robotBaglantiHata);
+    } else {
+      alarms.clearAlarm(AlarmTur.plcBaglantiHata);
     }
     final logText = '${rosState.status.name}:${rosState.message}';
     if (rosState.message.isNotEmpty && logText != _lastRosStateLog) {
@@ -310,6 +631,9 @@ class _ControllerPageState extends State<ControllerPage> {
   // Kısa yol: model erişimi (listen: false — sadece write için)
   GcsConnectionModel get _connModel =>
       Provider.of<GcsConnectionModel>(context, listen: false);
+
+  GcsMappingModel get _mappingModel =>
+      Provider.of<GcsMappingModel>(context, listen: false);
 
   /// "Bağlan" butonuna basıldığında çağrılır.
   ///
@@ -340,6 +664,8 @@ class _ControllerPageState extends State<ControllerPage> {
       robot: ConnDurum.baglaniyor,
       plc: ConnDurum.baglaniyor,
     );
+    // Yeni adres oturumu: eski preview/status temizlenir (last-good burada bitmez).
+    _mappingModel.clearPreviewForNewSession();
     try {
       await AgvService.connectRos(normalized);
     } catch (_) {
@@ -371,7 +697,8 @@ class _ControllerPageState extends State<ControllerPage> {
         log.ekle('Güvenli durdurma gönderilemedi: $error');
       }
     } else {
-      log.ekle('Manuel hareket durduruldu; ROS bağlı olmadığı için görev iptali gönderilmedi');
+      log.ekle(
+          'Manuel hareket durduruldu; ROS bağlı olmadığı için görev iptali gönderilmedi');
     }
   }
 
@@ -433,41 +760,46 @@ class _ControllerPageState extends State<ControllerPage> {
     }
   }
 
-  void _manualDrive(double linear, double angular) {
-    final sent = AgvService.publishManual(linear, angular);
+  /// UI kademesinden birimsiz komut ölçeği (m/s değil — D.1).
+  double get _manualCommandScale =>
+      RosManualDriveLimits.scaleFromSpeedStep(speed);
+
+  void _manualDrive(double linearScale, double angularScale) {
+    final sent = AgvService.publishManual(
+      RosManualDriveLimits.clampCommandScale(linearScale),
+      RosManualDriveLimits.clampCommandScale(angularScale),
+    );
     if (!sent) {
       _onMissionEvent(
           'Manuel hareket reddedildi: ROS bağlantısını ve fiziksel manuel modu kontrol edin');
     }
   }
 
-  Future<void> veriBas(String veri) {
-    if (_site.startsWith('ws://') || _site.startsWith('wss://')) {
-      _onMissionEvent(
-          'Komut gönderilmedi ($veri): bu eski buton için ROS karşılığı henüz tanımlı değil');
-      return Future<void>.value();
-    }
-    return AgvService.veriBas(_site, veri);
-  }
-
   Future<void> _navigateToScenarioPage(List<DataPoint> dataPoints) async {
-    if (dataPoints.isEmpty && !kAdminMode) {
-      return;
-    } else {
-      final result = await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => ScenarioPage(
-              dataPoints: dataPoints, site: _site, rota: _scenarioData),
-        ),
+    // F.3: harita noktaları veya öğretilmiş alma/bırakma düğümleri yeterli.
+    final hasTaughtRoute = context.read<GcsNodeModel>().hasRouteEligibleNodes;
+    if (dataPoints.isEmpty && !hasTaughtRoute && !kAdminMode) {
+      _onMissionEvent(
+        'Senaryo için harita noktası veya Düğümler’de alma/bırakma gerekli',
       );
+      return;
+    }
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ScenarioPage(
+          dataPoints: dataPoints,
+          site: _site,
+          rota: _scenarioData,
+        ),
+      ),
+    );
 
-      if (!mounted) return;
-      if (result != null) {
-        setState(() {
-          _scenarioData = result;
-        });
-      }
+    if (!mounted) return;
+    if (result != null) {
+      setState(() {
+        _scenarioData = result;
+      });
     }
   }
 
@@ -481,11 +813,17 @@ class _ControllerPageState extends State<ControllerPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     AgvService.ros.state.removeListener(_onRosConnectionState);
     AgvService.ros.onRobotStatus = null;
     AgvService.ros.onMissionEvent = null;
     AgvService.ros.onMapMetadata = null;
     AgvService.ros.onMapFrame = null;
+    AgvService.ros.onMappingStatus = null;
+    AgvService.ros.onMapPreviewImage = null;
+    AgvService.ros.onMapPreviewMetadata = null;
+    AgvService.ros.onMapPreviewRobotPixel = null;
+    AgvService.ros.onMappingSubscriptionsReady = null;
     _occupancyImageGeneration++;
     _disposeOccupancyImage();
     AgvService.stopManual();
@@ -501,8 +839,12 @@ class _ControllerPageState extends State<ControllerPage> {
     final mission = context.watch<GcsMissionModel>();
     final alarms = context.watch<GcsAlarmModel>();
     final conn = context.watch<GcsConnectionModel>();
+    final mapping = context.watch<GcsMappingModel>();
     final eventLog = context.watch<GcsEventLogModel>();
     final dataPoints = context.watch<DataModel>().dataPoints;
+    // Tek kaynak: GCS çalışma modu (Manuel / Otonom)
+    final oto = !conn.fizikselManuelMod;
+    final calismaModu = conn.fizikselManuelMod ? 'Manuel' : 'Otonom';
 
     const Color bg = Color(0xFF121212);
     const Color panelBg = Color(0xFF1A1A1A);
@@ -581,8 +923,11 @@ class _ControllerPageState extends State<ControllerPage> {
               label: "ARAÇ 3D",
               onTap: () => Navigator.pushNamed(context, '3d-page')),
           _NavBtn(
-              label: "HARİTA",
-              onTap: () => Navigator.pushNamed(context, 'map-page')),
+              label: "KAYITLI HARİTALAR",
+              onTap: () => Navigator.pushNamed(context, 'saved-fields-page')),
+          _NavBtn(
+              label: "DÜĞÜMLER",
+              onTap: () => Navigator.pushNamed(context, 'node-teach-page')),
           _NavBtn(
               label: "QR LİSTESİ",
               onTap: () => Navigator.pushNamed(context, 'QR-page')),
@@ -648,6 +993,7 @@ class _ControllerPageState extends State<ControllerPage> {
                                   flex: 8,
                                   child: _buildWorkAreaContent(
                                     agv,
+                                    mapping,
                                     panelBg,
                                     borderC,
                                     muted,
@@ -683,60 +1029,10 @@ class _ControllerPageState extends State<ControllerPage> {
                                       SizedBox(width: 2.w),
                                       Expanded(
                                           child: NormalButton(
-                                        text: "Haritalandır",
+                                        text: mapping.startButtonLabel,
                                         assignedKey: LogicalKeyboardKey.keyM,
                                         onPressed: () {
-                                          showDialog(
-                                            context: context,
-                                            builder: (ctx) => AlertDialog(
-                                              title: Text('Başlangıç Alanı',
-                                                  style: TextStyle(
-                                                      color: Colors.black,
-                                                      fontSize: 7.sp)),
-                                              backgroundColor: Colors.grey,
-                                              content: Row(
-                                                mainAxisAlignment:
-                                                    MainAxisAlignment
-                                                        .spaceEvenly,
-                                                children: [
-                                                  Row(children: [
-                                                    IconButton(
-                                                      icon: Icon(
-                                                          Icons.location_on,
-                                                          color: Colors.black,
-                                                          size: 7.sp),
-                                                      onPressed: () {
-                                                        Navigator.of(ctx).pop();
-                                                        veriBas("k005");
-                                                      },
-                                                    ),
-                                                    Text("S1",
-                                                        style: TextStyle(
-                                                            fontSize: 4.sp,
-                                                            color:
-                                                                Colors.black)),
-                                                  ]),
-                                                  Row(children: [
-                                                    IconButton(
-                                                      icon: Icon(
-                                                          Icons.location_on,
-                                                          color: Colors.black,
-                                                          size: 7.sp),
-                                                      onPressed: () {
-                                                        Navigator.of(ctx).pop();
-                                                        veriBas("k006");
-                                                      },
-                                                    ),
-                                                    Text("S2",
-                                                        style: TextStyle(
-                                                            fontSize: 4.sp,
-                                                            color:
-                                                                Colors.black)),
-                                                  ]),
-                                                ],
-                                              ),
-                                            ),
-                                          );
+                                          unawaited(_promptAndStartMapping());
                                         },
                                       )),
                                       SizedBox(width: 1.5.w),
@@ -755,7 +1051,11 @@ class _ControllerPageState extends State<ControllerPage> {
                                         text: "Led",
                                         assignedKey: LogicalKeyboardKey.keyL,
                                         onPressed: () {
-                                          veriBas("k312");
+                                          if (!AgvService.setLed()) {
+                                            _onMissionEvent(
+                                              'LED komutu gönderilemedi: ROS bağlı değil',
+                                            );
+                                          }
                                         },
                                       )),
                                       SizedBox(width: 1.5.w),
@@ -764,21 +1064,10 @@ class _ControllerPageState extends State<ControllerPage> {
                                         text: "Buzzer",
                                         assignedKey: LogicalKeyboardKey.keyB,
                                         onPressed: () {
-                                          veriBas("k313");
-                                        },
-                                      )),
-                                      SizedBox(width: 1.5.w),
-                                      Expanded(
-                                          child: NormalButton(
-                                        text: "LiDAR A/K",
-                                        assignedKey: LogicalKeyboardKey.keyV,
-                                        onPressed: () {
-                                          if (lidarDurum) {
-                                            veriBas("k316");
-                                            lidarDurum = false;
-                                          } else {
-                                            veriBas("k311");
-                                            lidarDurum = true;
+                                          if (!AgvService.triggerBuzzer()) {
+                                            _onMissionEvent(
+                                              'Buzzer komutu gönderilemedi: ROS bağlı değil',
+                                            );
                                           }
                                         },
                                       )),
@@ -827,7 +1116,7 @@ class _ControllerPageState extends State<ControllerPage> {
                               SizedBox(height: 0.8.h),
                               _statusRow(
                                 'ÇALIŞMA MODU',
-                                manuelOrOtonom,
+                                calismaModu,
                                 oto ? accent : bright,
                                 muted,
                                 bright,
@@ -1009,7 +1298,7 @@ class _ControllerPageState extends State<ControllerPage> {
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      Text("FİZİKSEL MOD",
+                                      Text('ÇALIŞMA MODU',
                                           style: TextStyle(
                                               color: muted,
                                               fontSize: 2.5.sp,
@@ -1017,7 +1306,7 @@ class _ControllerPageState extends State<ControllerPage> {
                                       Text(
                                         conn.fizikselManuelMod
                                             ? 'Manuel'
-                                            : 'Otomatik',
+                                            : 'Otonom',
                                         style: TextStyle(
                                           color: conn.fizikselManuelMod
                                               ? bright
@@ -1038,12 +1327,33 @@ class _ControllerPageState extends State<ControllerPage> {
                                         child: Switch(
                                           value: oto,
                                           activeThumbColor: accent,
-                                          onChanged: null,
+                                          onChanged: (isOtonom) {
+                                            final manuel = !isOtonom;
+                                            conn.topluGuncelle(
+                                              manuelMod: manuel,
+                                              uzaktanKontrol: manuel,
+                                            );
+                                            AgvService.setGcsManualEnabled(
+                                                manuel);
+                                          },
                                         ),
                                       ),
                                     ),
                                   ),
                                 ],
+                              ),
+                              Padding(
+                                padding: EdgeInsets.only(top: 0.8.h),
+                                child: Text(
+                                  oto
+                                      ? 'Otonom: WASD kapalı'
+                                      : 'Manuel: WASD / cmd_vel_manual açık',
+                                  style: TextStyle(
+                                    color: muted,
+                                    fontSize: 2.2.sp,
+                                    fontStyle: FontStyle.italic,
+                                  ),
+                                ),
                               ),
                               SizedBox(height: 1.2.h),
                               _statusRow(
@@ -1119,174 +1429,213 @@ class _ControllerPageState extends State<ControllerPage> {
                             ),
                           ),
                         SizedBox(height: 0.5.h),
-                        IgnorePointer(
-                          ignoring: oto || !conn.robotBaglanti.aktif,
-                          child: AnimatedOpacity(
-                            opacity:
-                                oto || !conn.robotBaglanti.aktif ? 0.35 : 1.0,
-                            duration: const Duration(milliseconds: 200),
-                            child: Column(
-                              children: [
-                                Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Expanded(
-                                      child: Container(
-                                        padding: EdgeInsets.all(2.w),
-                                        decoration: _flatBox(panelBg, borderC),
-                                        child: Column(
-                                          children: [
-                                            Text("LİFT",
-                                                style: TextStyle(
-                                                    color: muted,
-                                                    fontSize: 3.sp,
-                                                    letterSpacing: 1)),
-                                            SizedBox(height: 2.h),
-                                            ControlButton(
-                                              onPressed:
-                                                  _manualLiftUnavailable,
-                                              onReleased: () {},
-                                              assignedKey:
-                                                  LogicalKeyboardKey.keyQ,
-                                              child: Icon(
-                                                  Icons.arrow_upward_rounded,
-                                                  size: 7.sp),
-                                            ),
-                                            SizedBox(height: 3.h),
-                                            ControlButton(
-                                              onPressed:
-                                                  _manualLiftUnavailable,
-                                              onReleased: () {},
-                                              assignedKey:
-                                                  LogicalKeyboardKey.keyE,
-                                              child: Icon(
-                                                  Icons.arrow_downward_rounded,
-                                                  size: 7.sp),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                    SizedBox(width: 2.w),
-                                    Expanded(
-                                      child: Container(
-                                        padding: EdgeInsets.all(2.w),
-                                        decoration: _flatBox(panelBg, borderC),
-                                        child: Column(
-                                          children: [
-                                            Text("ARAÇ",
-                                                style: TextStyle(
-                                                    color: muted,
-                                                    fontSize: 3.sp,
-                                                    letterSpacing: 1)),
-                                            SizedBox(height: 1.h),
-                                            ControlButton(
-                                              onPressed: () {
-                                                _manualDrive(
-                                                    (speed + 1) / 5, 0);
-                                              },
-                                              onReleased: () {
-                                                AgvService.stopManual();
-                                              },
-                                              assignedKey:
-                                                  LogicalKeyboardKey.keyW,
-                                              child: Icon(Icons.arrow_drop_up,
-                                                  size: 7.sp),
-                                            ),
-                                            Row(
-                                              mainAxisAlignment:
-                                                  MainAxisAlignment.center,
-                                              children: [
-                                                ControlButton(
-                                                  onPressed: () {
-                                                    _manualDrive(
-                                                        0, (speed + 1) / 5);
-                                                  },
-                                                  onReleased: () {
-                                                    AgvService.stopManual();
-                                                  },
-                                                  assignedKey:
-                                                      LogicalKeyboardKey.keyA,
-                                                  child: Icon(Icons.arrow_left,
-                                                      size: 7.sp),
-                                                ),
-                                                SizedBox(width: 8.w),
-                                                ControlButton(
-                                                  onPressed: () {
-                                                    _manualDrive(
-                                                        0, -(speed + 1) / 5);
-                                                  },
-                                                  onReleased: () {
-                                                    AgvService.stopManual();
-                                                  },
-                                                  assignedKey:
-                                                      LogicalKeyboardKey.keyD,
-                                                  child: Icon(Icons.arrow_right,
-                                                      size: 7.sp),
-                                                ),
-                                              ],
-                                            ),
-                                            ControlButton(
-                                              onPressed: () {
-                                                _manualDrive(
-                                                    -(speed + 1) / 5, 0);
-                                              },
-                                              onReleased: () {
-                                                AgvService.stopManual();
-                                              },
-                                              assignedKey:
-                                                  LogicalKeyboardKey.keyS,
-                                              child: Icon(Icons.arrow_drop_down,
-                                                  size: 7.sp),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ), // Row (lift + araç butonları)
-                                SizedBox(height: 1.5.h),
-                                Container(
-                                  padding: EdgeInsets.symmetric(
-                                      horizontal: 2.w, vertical: 1.h),
-                                  decoration: _flatBox(panelBg, borderC),
-                                  child: Column(
+                        // WASD/QE: yalnız Otonom veya bağlantı yokken kapalı.
+                        // Mapping durumu operatörün manuel sürüş tercihini kilitlemez.
+                        Builder(builder: (context) {
+                          final joystickBlocked =
+                              oto || !conn.robotBaglanti.aktif;
+                          final joystickKeysEnabled =
+                              !joystickBlocked && !isConnectionPanelOpen;
+                          return IgnorePointer(
+                            ignoring: joystickBlocked,
+                            child: AnimatedOpacity(
+                              opacity: joystickBlocked ? 0.35 : 1.0,
+                              duration: const Duration(milliseconds: 200),
+                              child: Column(
+                                children: [
+                                  Row(
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      Text(
-                                        "HIZ: $speed",
-                                        style: TextStyle(
-                                          color: bright,
-                                          fontSize: 3.sp,
-                                          fontFamily: 'monospace',
-                                          fontWeight: FontWeight.bold,
+                                      Expanded(
+                                        child: Container(
+                                          padding: EdgeInsets.all(2.w),
+                                          decoration:
+                                              _flatBox(panelBg, borderC),
+                                          child: Column(
+                                            children: [
+                                              Text("LİFT",
+                                                  style: TextStyle(
+                                                      color: muted,
+                                                      fontSize: 3.sp,
+                                                      letterSpacing: 1)),
+                                              SizedBox(height: 2.h),
+                                              ControlButton(
+                                                shortcutsEnabled:
+                                                    joystickKeysEnabled,
+                                                onPressed:
+                                                    _manualLiftUnavailable,
+                                                onReleased: () {},
+                                                assignedKey:
+                                                    LogicalKeyboardKey.keyQ,
+                                                child: Icon(
+                                                    Icons.arrow_upward_rounded,
+                                                    size: 7.sp),
+                                              ),
+                                              SizedBox(height: 3.h),
+                                              ControlButton(
+                                                shortcutsEnabled:
+                                                    joystickKeysEnabled,
+                                                onPressed:
+                                                    _manualLiftUnavailable,
+                                                onReleased: () {},
+                                                assignedKey:
+                                                    LogicalKeyboardKey.keyE,
+                                                child: Icon(
+                                                    Icons
+                                                        .arrow_downward_rounded,
+                                                    size: 7.sp),
+                                              ),
+                                            ],
+                                          ),
                                         ),
                                       ),
-                                      ExcludeSemantics(
-                                        child: Slider(
-                                          value: speed.toDouble(),
-                                          divisions: 4,
-                                          min: 0.0,
-                                          max: 4,
-                                          activeColor: accent,
-                                          inactiveColor: borderC,
-                                          label: speed.toString(),
-                                          onChanged: (val) {
-                                            setState(() {
-                                              speed = val.toInt();
-                                            });
-                                          },
+                                      SizedBox(width: 2.w),
+                                      Expanded(
+                                        child: Container(
+                                          padding: EdgeInsets.all(2.w),
+                                          decoration:
+                                              _flatBox(panelBg, borderC),
+                                          child: Column(
+                                            children: [
+                                              Text("ARAÇ",
+                                                  style: TextStyle(
+                                                      color: muted,
+                                                      fontSize: 3.sp,
+                                                      letterSpacing: 1)),
+                                              SizedBox(height: 1.h),
+                                              ControlButton(
+                                                shortcutsEnabled:
+                                                    joystickKeysEnabled,
+                                                onPressed: () {
+                                                  _manualDrive(
+                                                      _manualCommandScale, 0);
+                                                },
+                                                onReleased: () {
+                                                  AgvService.stopManual();
+                                                },
+                                                assignedKey:
+                                                    LogicalKeyboardKey.keyW,
+                                                child: Icon(Icons.arrow_drop_up,
+                                                    size: 7.sp),
+                                              ),
+                                              Row(
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment.center,
+                                                children: [
+                                                  ControlButton(
+                                                    shortcutsEnabled:
+                                                        joystickKeysEnabled,
+                                                    onPressed: () {
+                                                      _manualDrive(0,
+                                                          _manualCommandScale);
+                                                    },
+                                                    onReleased: () {
+                                                      AgvService.stopManual();
+                                                    },
+                                                    assignedKey:
+                                                        LogicalKeyboardKey.keyA,
+                                                    child: Icon(
+                                                        Icons.arrow_left,
+                                                        size: 7.sp),
+                                                  ),
+                                                  SizedBox(width: 8.w),
+                                                  ControlButton(
+                                                    shortcutsEnabled:
+                                                        joystickKeysEnabled,
+                                                    onPressed: () {
+                                                      _manualDrive(0,
+                                                          -_manualCommandScale);
+                                                    },
+                                                    onReleased: () {
+                                                      AgvService.stopManual();
+                                                    },
+                                                    assignedKey:
+                                                        LogicalKeyboardKey.keyD,
+                                                    child: Icon(
+                                                        Icons.arrow_right,
+                                                        size: 7.sp),
+                                                  ),
+                                                ],
+                                              ),
+                                              ControlButton(
+                                                shortcutsEnabled:
+                                                    joystickKeysEnabled,
+                                                onPressed: () {
+                                                  _manualDrive(
+                                                      -_manualCommandScale, 0);
+                                                },
+                                                onReleased: () {
+                                                  AgvService.stopManual();
+                                                },
+                                                assignedKey:
+                                                    LogicalKeyboardKey.keyS,
+                                                child: Icon(
+                                                    Icons.arrow_drop_down,
+                                                    size: 7.sp),
+                                              ),
+                                            ],
+                                          ),
                                         ),
                                       ),
                                     ],
+                                  ), // Row (lift + araç butonları)
+                                  SizedBox(height: 1.5.h),
+                                  Container(
+                                    padding: EdgeInsets.symmetric(
+                                        horizontal: 2.w, vertical: 1.h),
+                                    decoration: _flatBox(panelBg, borderC),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'KOMUT: $speed'
+                                          ' (${_manualCommandScale.toStringAsFixed(1)})',
+                                          style: TextStyle(
+                                            color: bright,
+                                            fontSize: 3.sp,
+                                            fontFamily: 'monospace',
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        ExcludeSemantics(
+                                          child: Slider(
+                                            value: speed
+                                                .clamp(
+                                                  RosManualDriveLimits
+                                                      .speedStepMin,
+                                                  RosManualDriveLimits
+                                                      .speedStepMax,
+                                                )
+                                                .toDouble(),
+                                            divisions: RosManualDriveLimits
+                                                .speedStepMax,
+                                            min: RosManualDriveLimits
+                                                .speedStepMin
+                                                .toDouble(),
+                                            max: RosManualDriveLimits
+                                                .speedStepMax
+                                                .toDouble(),
+                                            activeColor: accent,
+                                            inactiveColor: borderC,
+                                            label: speed.toString(),
+                                            onChanged: (val) {
+                                              setState(() {
+                                                speed = val.toInt();
+                                              });
+                                            },
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                ),
-                                SizedBox(height: 3.h),
-                              ],
-                            ), // Column inside AnimatedOpacity
-                          ), // AnimatedOpacity
-                        ), // IgnorePointer
+                                  SizedBox(height: 3.h),
+                                ],
+                              ), // Column inside AnimatedOpacity
+                            ), // AnimatedOpacity
+                          ); // IgnorePointer
+                        }), // Builder (joystickKeysEnabled)
                       ],
                     ),
                   ),
@@ -1522,11 +1871,14 @@ class _ControllerPageState extends State<ControllerPage> {
   ) {
     String safe(String v) => (v.isEmpty || v == 'null') ? '--' : v;
 
-    final alarmColor = alarms.kritikAlarmVar
-        ? danger
-        : alarms.temiz
-            ? success
-            : const Color(0xFFFF9800);
+    final robotBagli = conn.robotBaglanti.aktif;
+    final alarmColor = !robotBagli
+        ? muted
+        : alarms.kritikAlarmVar
+            ? danger
+            : alarms.temiz
+                ? success
+                : const Color(0xFFFF9800);
 
     final rota = mission.rotaDugumleri.isNotEmpty
         ? mission.rotaDugumleri.join(' → ')
@@ -1534,11 +1886,10 @@ class _ControllerPageState extends State<ControllerPage> {
             ? '${safe(mission.almaNoktasi)} → ${safe(mission.birakNoktasi)}'
             : '--';
 
-    final plcEtiket = conn.plcBaglanti.aktif
-        ? 'Bağlı'
-        : (conn.plcBaglanti == ConnDurum.baglaniyor
-            ? 'Bağlanıyor'
-            : safe(agv.plcDurum));
+    // Robot/WiFi yokken eski agv.plcDurum ("bağlı") gösterilmesin.
+    final plcEtiket = !robotBagli
+        ? 'Bağlı Değil'
+        : (conn.plcBaglanti.aktif ? 'Bağlı' : conn.plcBaglanti.etiket);
 
     return Container(
       decoration: BoxDecoration(
@@ -1599,16 +1950,26 @@ class _ControllerPageState extends State<ControllerPage> {
             bright: bright,
             rows: [
               _SRow('PLC', plcEtiket,
-                  valueColor: conn.plcBaglanti.aktif ? success : danger),
-              _SRow('KAPI İZNİ', mission.kapiIzni ? 'Serbest' : 'Kapalı',
-                  valueColor: mission.kapiIzni ? success : muted),
+                  valueColor:
+                      robotBagli && conn.plcBaglanti.aktif ? success : danger),
+              _SRow(
+                  'KAPI İZNİ',
+                  !robotBagli
+                      ? '--'
+                      : (mission.kapiIzni ? 'Serbest' : 'Kapalı'),
+                  valueColor: !robotBagli
+                      ? muted
+                      : (mission.kapiIzni ? success : muted)),
               _SRow(
                   'GELEN',
-                  safe(mission.sonOtomasyonMesaj.isNotEmpty
-                      ? mission.sonOtomasyonMesaj
-                      : agv.plcSonMesaj),
+                  !robotBagli
+                      ? '--'
+                      : safe(mission.sonOtomasyonMesaj.isNotEmpty
+                          ? mission.sonOtomasyonMesaj
+                          : agv.plcSonMesaj),
                   truncate: true),
-              _SRow('GÖNDERİLEN', safe(mission.sonGonderilenMesaj),
+              _SRow('GÖNDERİLEN',
+                  !robotBagli ? '--' : safe(mission.sonGonderilenMesaj),
                   truncate: true),
             ],
           )),
@@ -1621,22 +1982,33 @@ class _ControllerPageState extends State<ControllerPage> {
             borderC: borderC,
             muted: muted,
             bright: bright,
-            rows: [
-              _SRow('POZ',
-                  '${agv.currX.toStringAsFixed(2)}, ${agv.currY.toStringAsFixed(2)}'),
-              _SRow('LOKAL', agv.lokalizasyonGecerli ? 'Geçerli' : 'Geçersiz',
-                  valueColor: agv.lokalizasyonGecerli ? success : danger),
-              _SRow('EDGE', safe(agv.aktifRotaEdge), truncate: true),
-              _SRow('SONRAKİ', safe(agv.sonrakiNode), truncate: true),
-              _SRow(
-                  'SAPMA',
-                  agv.rotaSapmasi.isFinite
-                      ? '${agv.rotaSapmasi.toStringAsFixed(3)} m'
-                      : '--'),
-              _SRow('ENGEL', agv.engelAlgilandi ? 'VAR' : 'Yok',
-                  valueColor: agv.engelAlgilandi ? danger : success),
-              _SRow('SON QR', safe(agv.sonQR)),
-            ],
+            rows: robotBagli
+                ? [
+                    _SRow('POZ',
+                        '${agv.currX.toStringAsFixed(2)}, ${agv.currY.toStringAsFixed(2)}'),
+                    _SRow('LOKAL',
+                        agv.lokalizasyonGecerli ? 'Geçerli' : 'Geçersiz',
+                        valueColor: agv.lokalizasyonGecerli ? success : danger),
+                    _SRow('EDGE', safe(agv.aktifRotaEdge), truncate: true),
+                    _SRow('SONRAKİ', safe(agv.sonrakiNode), truncate: true),
+                    _SRow(
+                        'SAPMA',
+                        agv.rotaSapmasi.isFinite
+                            ? '${agv.rotaSapmasi.toStringAsFixed(3)} m'
+                            : '--'),
+                    _SRow('ENGEL', agv.engelAlgilandi ? 'VAR' : 'Yok',
+                        valueColor: agv.engelAlgilandi ? danger : success),
+                    _SRow('SON QR', safe(agv.sonQR)),
+                  ]
+                : [
+                    const _SRow('POZ', '--'),
+                    _SRow('LOKAL', 'İzlenmiyor', valueColor: muted),
+                    const _SRow('EDGE', '--'),
+                    const _SRow('SONRAKİ', '--'),
+                    const _SRow('SAPMA', '--'),
+                    _SRow('ENGEL', 'İzlenmiyor', valueColor: muted),
+                    const _SRow('SON QR', '--'),
+                  ],
           )),
           SizedBox(width: 1.5.w),
 
@@ -1648,38 +2020,50 @@ class _ControllerPageState extends State<ControllerPage> {
             borderC: borderC,
             muted: muted,
             bright: bright,
-            rows: [
-              _SRow(
-                  'DURUM',
-                  alarms.temiz && !alarms.guvenliDurusAktif
-                      ? 'Güvenli'
-                      : 'Uyarı',
-                  valueColor: alarms.temiz && !alarms.guvenliDurusAktif
-                      ? success
-                      : danger),
-              _SRow('ACİL STOP',
-                  alarms.isAktif(AlarmTur.acilStop) ? 'AKTİF' : 'Normal',
-                  valueColor:
-                      alarms.isAktif(AlarmTur.acilStop) ? danger : success),
-              _SRow('GÜV. DURUŞ', alarms.guvenliDurusAktif ? 'Aktif' : 'Normal',
-                  valueColor: alarms.guvenliDurusAktif ? danger : success),
-              _SRow(
-                  'ALARM',
-                  alarms.temiz
-                      ? 'Yok'
-                      : (alarms.aktifAlarmlar.isNotEmpty
-                          ? alarms.aktifAlarmlar.first.tur.etiket
-                          : 'Aktif'),
-                  valueColor: alarms.temiz ? success : const Color(0xFFFF9800),
-                  truncate: true),
-              _SRow(
-                  'KRİTİK',
-                  alarms.kritikAlarmVar
-                      ? (alarms.enKritik?.etiket ?? 'Var')
-                      : 'Yok',
-                  valueColor: alarms.kritikAlarmVar ? danger : success,
-                  truncate: true),
-            ],
+            rows: robotBagli
+                ? [
+                    _SRow(
+                        'DURUM',
+                        alarms.temiz && !alarms.guvenliDurusAktif
+                            ? 'Güvenli'
+                            : 'Uyarı',
+                        valueColor: alarms.temiz && !alarms.guvenliDurusAktif
+                            ? success
+                            : danger),
+                    _SRow('ACİL STOP',
+                        alarms.isAktif(AlarmTur.acilStop) ? 'AKTİF' : 'Normal',
+                        valueColor: alarms.isAktif(AlarmTur.acilStop)
+                            ? danger
+                            : success),
+                    _SRow('GÜV. DURUŞ',
+                        alarms.guvenliDurusAktif ? 'Aktif' : 'Normal',
+                        valueColor:
+                            alarms.guvenliDurusAktif ? danger : success),
+                    _SRow(
+                        'ALARM',
+                        alarms.temiz
+                            ? 'Yok'
+                            : (alarms.aktifAlarmlar.isNotEmpty
+                                ? alarms.aktifAlarmlar.first.tur.etiket
+                                : 'Aktif'),
+                        valueColor:
+                            alarms.temiz ? success : const Color(0xFFFF9800),
+                        truncate: true),
+                    _SRow(
+                        'KRİTİK',
+                        alarms.kritikAlarmVar
+                            ? (alarms.enKritik?.etiket ?? 'Var')
+                            : 'Yok',
+                        valueColor: alarms.kritikAlarmVar ? danger : success,
+                        truncate: true),
+                  ]
+                : [
+                    _SRow('DURUM', 'Bağlı Değil', valueColor: danger),
+                    const _SRow('ACİL STOP', '--'),
+                    const _SRow('GÜV. DURUŞ', '--'),
+                    _SRow('ALARM', 'İzlenmiyor', valueColor: muted),
+                    const _SRow('KRİTİK', '--'),
+                  ],
           )),
         ],
       ),
@@ -1800,6 +2184,7 @@ class _ControllerPageState extends State<ControllerPage> {
   }
 
   String _komutDurumu(bool connected, bool uzaktanAktif) {
+    final oto = !_connModel.fizikselManuelMod;
     if (!connected) return 'Pasif';
     // Otomatik modda uzaktan kontrol kilitlidir ama komut gönderimi sistem tarafından aktiftir.
     if (oto) return 'Aktif (Otonom)';
@@ -1814,6 +2199,7 @@ class _ControllerPageState extends State<ControllerPage> {
     Color muted,
     Color danger,
   ) {
+    final oto = !_connModel.fizikselManuelMod;
     if (!connected) return danger;
     if (oto) return success;
     if (!uzaktanAktif) return muted;
@@ -1906,13 +2292,28 @@ class _ControllerPageState extends State<ControllerPage> {
     );
   }
 
-  GcsMapData _mapDataFromSavedPoints(AgvSensorModel agv) {
-    final metadata = _mapMetadata!;
-    final dataPoints =
-        Provider.of<DataModel>(context, listen: false).dataPoints;
-    final mission = Provider.of<GcsMissionModel>(context, listen: false);
-    final points = <MapPoint>[];
+  int _fingerprintDataPoints(List<DataPoint> dataPoints) {
+    var hash = dataPoints.length;
+    for (final point in dataPoints) {
+      hash = Object.hash(
+        hash,
+        point.type,
+        point.x,
+        point.y,
+        point.rosNodeName,
+        point.yaw,
+      );
+    }
+    return hash;
+  }
 
+  void _rebuildCachedMapLayers({
+    required OccupancyGridMetadata metadata,
+    required List<DataPoint> dataPoints,
+    required GcsMissionModel mission,
+    required String aktifRotaEdge,
+  }) {
+    final points = <MapPoint>[];
     for (final point in dataPoints) {
       MapPointType? type;
       String label = '';
@@ -1951,25 +2352,59 @@ class _ControllerPageState extends State<ControllerPage> {
                 nodeName == mission.birakNoktasi),
       ));
     }
+
     final routes = <MapRoute>[];
-    final edge = agv.aktifRotaEdge.split('->');
+    final edge = aktifRotaEdge.split('->');
     if (edge.length == 2) {
       final from = RosGcsContract.graphNodes[edge[0]];
       final to = RosGcsContract.graphNodes[edge[1]];
       if (from != null && to != null) {
         routes.add(MapRoute(
-          id: agv.aktifRotaEdge,
-          label: agv.aktifRotaEdge,
+          id: aktifRotaEdge,
+          label: aktifRotaEdge,
           waypoints: [from, to],
         ));
       }
+    }
+
+    _cachedMapPoints = points;
+    _cachedMapRoutes = routes;
+  }
+
+  /// Robot pose her tick güncellenir; nokta/rota dönüşümü yalnız key değişince.
+  GcsMapData _mapDataFromSavedPoints(AgvSensorModel agv) {
+    final metadata = _mapMetadata!;
+    final dataPoints =
+        Provider.of<DataModel>(context, listen: false).dataPoints;
+    final mission = Provider.of<GcsMissionModel>(context, listen: false);
+    final key = Object.hash(
+      metadata.width,
+      metadata.height,
+      metadata.resolution,
+      metadata.originX,
+      metadata.originY,
+      metadata.originYaw,
+      _fingerprintDataPoints(dataPoints),
+      mission.almaNoktasi,
+      mission.birakNoktasi,
+      agv.aktifRotaEdge,
+      identityHashCode(_occupancyImage),
+    );
+    if (_cachedMapStaticKey != key) {
+      _cachedMapStaticKey = key;
+      _rebuildCachedMapLayers(
+        metadata: metadata,
+        dataPoints: dataPoints,
+        mission: mission,
+        aktifRotaEdge: agv.aktifRotaEdge,
+      );
     }
     return GcsMapData(
       robotX: agv.currX,
       robotY: agv.currY,
       robotYaw: agv.currYaw,
-      points: points,
-      routes: routes,
+      points: _cachedMapPoints,
+      routes: _cachedMapRoutes,
       occupancyImage: _occupancyImage,
       mapMeta: metadata,
     );
@@ -1978,6 +2413,7 @@ class _ControllerPageState extends State<ControllerPage> {
   /// Seçili sekmeye göre içerik döndürür.
   Widget _buildWorkAreaContent(
     AgvSensorModel agv,
+    GcsMappingModel mapping,
     Color panelBg,
     Color borderC,
     Color muted,
@@ -1986,21 +2422,52 @@ class _ControllerPageState extends State<ControllerPage> {
     switch (_selectedWorkTab) {
       // ── Harita ─────────────────────────────────────────────────────────
       case 0:
-        final metadata = _mapMetadata;
-        if (metadata == null) {
-          return _workAreaPlaceholder(
+        final Widget body;
+        if (mapping.hasPreviewPng) {
+          // Öncelik: /map_preview PNG (+ robot_pixel). Last-good kopunca kalır.
+          body = MapPreviewStage(
+            pngBytes: mapping.previewPng!,
+            metadata: mapping.previewMetadata,
+            robotPixel: mapping.robotPixel,
+            awaitingFresh: mapping.awaitingFreshPreview,
+            sourceLabel: mapping.previewSourceLabel,
+          );
+        } else if (_mapMetadata != null) {
+          // Geçici fallback: eski OccupancyGrid.
+          body = GcsMapView(data: _mapDataFromSavedPoints(agv));
+        } else {
+          final idleHint = mapping.liveMappingStatus == MappingStatus.idle ||
+              mapping.mappingStatus == null;
+          body = _workAreaPlaceholder(
             'HARİTA',
             Icons.map_outlined,
-            'ROS /map metadata bekleniyor...',
-            'Noktalar resolution, origin, width ve height alınmadan '
-                'dönüştürülmez.',
+            mapping.awaitingFreshPreview
+                ? 'Bağlandı — harita güncelleniyor…'
+                : 'Harita önizlemesi bekleniyor…',
+            mapping.isConnected
+                ? (idleHint
+                    ? 'Harita Oluştur ile mapping başlatın; '
+                        'PNG /map_preview üzerinden gelecek.'
+                    : 'Mapping çalışıyor — ilk PNG karesi bekleniyor.')
+                : 'ROS bağlı değil',
             panelBg,
             borderC,
             muted,
           );
         }
-        final mapData = _mapDataFromSavedPoints(agv);
-        return GcsMapView(data: mapData);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Kopuk şeridi yok; metin merkez placeholder altında.
+            if (mapping.isConnected || mapping.isConnecting)
+              MappingConnectionBanner(model: mapping),
+            MappingFieldBar(
+              model: mapping,
+              onFinishMapping: () => unawaited(_finishAndSaveMapping()),
+            ),
+            Expanded(child: body),
+          ],
+        );
 
       // ── Kamera ─────────────────────────────────────────────────────────
       case 1:
@@ -2088,16 +2555,18 @@ class _ControllerPageState extends State<ControllerPage> {
               mainMsg,
               style: TextStyle(color: muted, fontSize: 3.sp),
             ),
-            SizedBox(height: 0.8.h),
-            Text(
-              subMsg,
-              style: TextStyle(
-                color: const Color(0xFF3A3A3A),
-                fontSize: 2.5.sp,
-                fontFamily: 'monospace',
+            if (subMsg.trim().isNotEmpty) ...[
+              SizedBox(height: 0.8.h),
+              Text(
+                subMsg,
+                style: TextStyle(
+                  color: muted,
+                  fontSize: 2.8.sp,
+                  fontFamily: 'monospace',
+                ),
+                textAlign: TextAlign.center,
               ),
-              textAlign: TextAlign.center,
-            ),
+            ],
           ],
         ),
       ),

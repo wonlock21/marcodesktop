@@ -1,8 +1,12 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:provider/provider.dart';
+
+import 'data_model.dart';
+import 'models/gcs_node_model.dart';
 import 'services/agv_service.dart';
 import 'services/ros_gcs_contract.dart';
-import 'data_model.dart';
+import 'services/ros_mapping_contract.dart';
 
 // ─── Renk sabitleri (ana GCS ekranıyla birebir) ────────────────────────────
 const _bg = Color(0xFF121212);
@@ -78,6 +82,11 @@ class _ScenarioPageState extends State<ScenarioPage> {
     'CS': 'CS1.1',
   };
 
+  /// F.3 — öğretilmiş düğüm türü (etiket → tip); legacy A/B için boş.
+  final Map<String, FieldNodeType> _taughtTypeByLabel = {};
+  final Set<String> _taughtLabels = {};
+  bool _taughtMerged = false;
+
   @override
   void initState() {
     super.initState();
@@ -113,6 +122,46 @@ class _ScenarioPageState extends State<ScenarioPage> {
     }
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_taughtMerged) return;
+    _taughtMerged = true;
+    _mergeTaughtNodes(context.read<GcsNodeModel>());
+  }
+
+  /// Eski harita noktalarının yanına öğretilmiş alma/bırakma ekler (F.3).
+  void _mergeTaughtNodes(GcsNodeModel model) {
+    var layoutIndex = 0;
+    for (final node in model.routeEligibleNodes) {
+      final label = node.name;
+      final isNew = !_nodeByLabel.containsKey(label);
+      // Aynı etiket varsa legacy ROS node id korunur; tür yine öğretilmişten gelir.
+      _nodeByLabel.putIfAbsent(label, () => node.name);
+      _taughtTypeByLabel[label] = node.type;
+      _taughtLabels.add(label);
+      if (isNew || !_stationPositions.containsKey(label)) {
+        _stationPositions[label] = Offset(
+          1.5 + (layoutIndex % 4) * 2.5,
+          6.5 + (layoutIndex ~/ 4) * 1.5,
+        );
+        layoutIndex++;
+      }
+    }
+  }
+
+  bool _isAlma(String code) {
+    final taught = _taughtTypeByLabel[code];
+    if (taught != null) return taught == FieldNodeType.alma;
+    return code.startsWith('A');
+  }
+
+  bool _isBirak(String code) {
+    final taught = _taughtTypeByLabel[code];
+    if (taught != null) return taught == FieldNodeType.birakma;
+    return code.startsWith('B');
+  }
+
   String _mapPointLabel(DataPoint point) {
     if (point.type.startsWith('pickupPoint')) {
       return point.type.substring('pickupPoint'.length);
@@ -125,12 +174,12 @@ class _ScenarioPageState extends State<ScenarioPage> {
 
   void _addPlace(String code) {
     final pickupExpected = _selected.length.isEven;
-    final valid = pickupExpected ? code.startsWith('A') : code.startsWith('B');
+    final valid = pickupExpected ? _isAlma(code) : _isBirak(code);
     if (!valid) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(pickupExpected
-            ? 'Siradaki durak bir alma noktasi (A) olmali.'
-            : 'Siradaki durak bir birakma noktasi (B) olmali.'),
+            ? 'Sıradaki durak bir alma noktası olmalı.'
+            : 'Sıradaki durak bir bırakma noktası olmalı.'),
       ));
       return;
     }
@@ -155,6 +204,17 @@ class _ScenarioPageState extends State<ScenarioPage> {
   String _displayName(String code) => code == 'CS' ? 'Şarj İstasyonu' : code;
 
   _StationType _tipOf(String code) {
+    final taught = _taughtTypeByLabel[code];
+    if (taught != null) {
+      return switch (taught) {
+        FieldNodeType.alma => _stationTypes['A']!,
+        FieldNodeType.birakma => _stationTypes['B']!,
+        FieldNodeType.baslangic => _stationTypes['S']!,
+        FieldNodeType.sarj => _stationTypes['C']!,
+        FieldNodeType.kapi => _stationTypes['S']!,
+        FieldNodeType.qr => _stationTypes['S']!,
+      };
+    }
     if (code.startsWith('A')) return _stationTypes['A']!;
     if (code.startsWith('B')) return _stationTypes['B']!;
     if (code.startsWith('S')) return _stationTypes['S']!;
@@ -165,11 +225,12 @@ class _ScenarioPageState extends State<ScenarioPage> {
     if (_selected.isEmpty || _submitting || _submitted) return;
     if (_selected.length.isOdd ||
         _selected.asMap().entries.any((entry) => entry.key.isEven
-            ? !entry.value.startsWith('A')
-            : !entry.value.startsWith('B'))) {
+            ? !_isAlma(entry.value)
+            : !_isBirak(entry.value))) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content:
-            Text('Durakları A (alma), B (bırakma) çiftleri halinde seçin.'),
+        content: Text(
+          'Durakları alma → bırakma çiftleri halinde seçin.',
+        ),
       ));
       return;
     }
@@ -254,9 +315,28 @@ class _ScenarioPageState extends State<ScenarioPage> {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         SizedBox(height: 1.5.h),
-                        _panelLabel('YAPILAR'),
+                        _panelLabel(
+                          _taughtLabels.isEmpty
+                              ? 'YAPILAR'
+                              : 'YAPILAR (harita + öğretilmiş)',
+                        ),
+                        if (_taughtLabels.isNotEmpty) ...[
+                          SizedBox(height: 0.6.h),
+                          Text(
+                            'Öğretilmiş alma/bırakma düğümleri seçilebilir; '
+                            'sıra alma → bırakma korunur.',
+                            style: TextStyle(color: _muted, fontSize: 2.4.sp),
+                          ),
+                        ],
                         SizedBox(height: 1.5.h),
-                        _buildStationGrid(),
+                        if (_allPlaces.isEmpty)
+                          Text(
+                            'Seçilebilir durak yok. Harita noktaları yükleyin '
+                            'veya Düğümler’de alma/bırakma öğretin.',
+                            style: TextStyle(color: _muted, fontSize: 2.8.sp),
+                          )
+                        else
+                          _buildStationGrid(),
                         SizedBox(height: 3.h),
                         _panelLabel('SEÇİLİ ÖĞE BİLGİSİ'),
                         SizedBox(height: 1.5.h),
@@ -673,6 +753,17 @@ class _ScenarioPageState extends State<ScenarioPage> {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
+                  if (_taughtLabels.contains(code)) ...[
+                    SizedBox(height: 0.3.h),
+                    Text(
+                      'öğretilmiş',
+                      style: TextStyle(
+                        color: _accent,
+                        fontSize: 1.9.sp,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),

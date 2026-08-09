@@ -296,7 +296,7 @@ class _MapPageState extends State<MapPage> {
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
-          'HARITA OLUŞTURMA',
+          'HARİTA EDİTÖRÜ (ESKİ)',
           style: TextStyle(
             color: _mpBright,
             fontSize: 4.sp,
@@ -305,6 +305,17 @@ class _MapPageState extends State<MapPage> {
             letterSpacing: 0.8,
           ),
         ),
+        actions: [
+          Padding(
+            padding: EdgeInsets.only(right: 3.w),
+            child: Center(
+              child: Text(
+                'Yedek grid editör — düğüm öğretme: DÜĞÜMLER',
+                style: TextStyle(color: _mpMuted, fontSize: 2.4.sp),
+              ),
+            ),
+          ),
+        ],
       ),
       body: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,

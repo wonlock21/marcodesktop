@@ -59,9 +59,10 @@ class GcsConnectionModel extends ChangeNotifier {
   /// Bluetooth bağlantısı (yedek/manuel kontrol).
   ConnDurum bluetooth = ConnDurum.cevrimdisi;
 
-  // ── 5. Manuel kontrol güvenliği ──────────────────────────────────────────
+  // ── 5. Manuel kontrol (GCS seçimi) ───────────────────────────────────────
 
-  /// Fiziksel mod anahtarı: `true` = Manuel, `false` = Otomatik.
+  /// GCS çalışma modu: `true` = Manuel, `false` = Otonom.
+  /// Fiziksel araç anahtarına bağlı değildir; operatör UI’dan seçer.
   bool fizikselManuelMod = true;
 
   /// Uzaktan kontrol yetkisi: `true` = Aktif, `false` = Kilitli.

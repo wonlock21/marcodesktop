@@ -261,6 +261,10 @@ class ControlButton extends StatefulWidget {
   final LogicalKeyboardKey assignedKey;
   final FocusNode? customFocusNode;
 
+  /// WASD/QE kısayolları: false iken klavye ile tetiklenmez
+  /// (başka sayfa, bağlantı paneli, otonom mod vb.).
+  final bool shortcutsEnabled;
+
   const ControlButton({
     super.key,
     required this.child,
@@ -268,6 +272,7 @@ class ControlButton extends StatefulWidget {
     required this.onReleased,
     required this.assignedKey,
     this.customFocusNode,
+    this.shortcutsEnabled = true,
   });
 
   @override
@@ -283,25 +288,57 @@ class _ControlButtonState extends State<ControlButton> {
   void initState() {
     super.initState();
     _focusNode = widget.customFocusNode ?? FocusNode();
-    _focusNode.requestFocus();
     HardwareKeyboard.instance.addHandler(_handleKeyEvent);
+  }
+
+  @override
+  void didUpdateWidget(covariant ControlButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Kısayollar kapanırken basılı tuş kaldıysa bırak
+    if (oldWidget.shortcutsEnabled && !widget.shortcutsEnabled && isPressed) {
+      _handleRelease();
+    }
   }
 
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_handleKeyEvent);
-    _focusNode.dispose();
+    if (widget.customFocusNode == null) {
+      _focusNode.dispose();
+    }
     _debounceTimer?.cancel();
     super.dispose();
   }
 
+  /// Ana kontrol sayfası üstte değilse, metin girişi odaktaysa veya
+  /// parent kısayolları kapattıysa WASD/QE çalışmasın.
+  bool _shortcutsAllowed() {
+    if (!mounted || !widget.shortcutsEnabled) return false;
+    final route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) return false;
+    final primary = FocusManager.instance.primaryFocus;
+    final focusCtx = primary?.context;
+    if (focusCtx != null &&
+        focusCtx.findAncestorWidgetOfExactType<EditableText>() != null) {
+      return false;
+    }
+    return true;
+  }
+
   bool _handleKeyEvent(KeyEvent event) {
-    if (event is KeyDownEvent && event.logicalKey == widget.assignedKey) {
+    if (event.logicalKey != widget.assignedKey) return false;
+
+    if (event is KeyDownEvent) {
+      if (!_shortcutsAllowed()) return false;
       _handlePress();
       return true;
-    } else if (event is KeyUpEvent && event.logicalKey == widget.assignedKey) {
-      _handleRelease();
-      return true;
+    }
+    if (event is KeyUpEvent) {
+      // Güvenlik: tuş bırakılınca her zaman release (komut takılı kalmasın)
+      if (isPressed) {
+        _handleRelease();
+        return true;
+      }
     }
     return false;
   }
@@ -332,7 +369,7 @@ class _ControlButtonState extends State<ControlButton> {
   Widget build(BuildContext context) {
     return Focus(
       focusNode: _focusNode,
-      autofocus: true,
+      autofocus: false,
       child: GestureDetector(
         onTapDown: (_) => _handlePress(),
         onTapUp: (_) => _handleRelease(),

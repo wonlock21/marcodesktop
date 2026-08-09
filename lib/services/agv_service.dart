@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import 'ros_bridge_client.dart';
+import 'ros_hardware_contract.dart';
 
 class AgvService {
   static final RosBridgeClient ros = RosBridgeClient();
@@ -42,10 +43,105 @@ class AgvService {
 
   static Future<Map<String, dynamic>> emergencyStop() => ros.emergencyStop();
 
+  static Future<Map<String, dynamic>> startMapping({required String fieldName}) =>
+      ros.startMapping(fieldName: fieldName);
+
+  static Future<Map<String, dynamic>> stopMapping() => ros.stopMapping();
+
+  static Future<Map<String, dynamic>> saveMapping([
+    Map<String, dynamic> args = const {},
+  ]) =>
+      ros.saveMapping(args);
+
+  static Future<Map<String, dynamic>> listFields() => ros.listFields();
+
+  static Future<Map<String, dynamic>> startLocalization({
+    required String fieldName,
+  }) =>
+      ros.startLocalization(fieldName: fieldName);
+
+  static Future<Map<String, dynamic>> stopLocalization() =>
+      ros.stopLocalization();
+
+  // ── G.2 stations stubs ───────────────────────────────────────────────────
+
+  static Future<Map<String, dynamic>> addStation({
+    required String name,
+    required String type,
+    required double pixelX,
+    required double pixelY,
+    required double screenYaw,
+    required String fieldName,
+  }) =>
+      ros.addStation(
+        name: name,
+        type: type,
+        pixelX: pixelX,
+        pixelY: pixelY,
+        screenYaw: screenYaw,
+        fieldName: fieldName,
+      );
+
+  static Future<Map<String, dynamic>> updateStation({
+    required String name,
+    required String type,
+    required double pixelX,
+    required double pixelY,
+    required double screenYaw,
+    required String fieldName,
+  }) =>
+      ros.updateStation(
+        name: name,
+        type: type,
+        pixelX: pixelX,
+        pixelY: pixelY,
+        screenYaw: screenYaw,
+        fieldName: fieldName,
+      );
+
+  static Future<Map<String, dynamic>> deleteStation({required String name}) =>
+      ros.deleteStation(name: name);
+
+  static Future<Map<String, dynamic>> listStations([
+    Map<String, dynamic> args = const {},
+  ]) =>
+      ros.listStations(args);
+
+  // ── H.2 routes stubs ─────────────────────────────────────────────────────
+
+  static Future<Map<String, dynamic>> saveRoute({
+    required String name,
+    required List<String> nodeNames,
+  }) =>
+      ros.saveRoute(name: name, nodeNames: nodeNames);
+
+  static Future<Map<String, dynamic>> listRoutes([
+    Map<String, dynamic> args = const {},
+  ]) =>
+      ros.listRoutes(args);
+
+  static Future<Map<String, dynamic>> deleteRoute({required String name}) =>
+      ros.deleteRoute(name: name);
+
+  /// Birimsiz yön/ölçek komutu (`/cmd_vel_manual`). Gerçek hız STM32’de.
   static bool publishManual(double linearX, double angularZ) =>
       ros.publishManualTwist(linearX, angularZ);
 
   static void stopManual() => ros.stopManual();
+
+  /// GCS Manuel/Otonom seçimi (fiziksel anahtar yok).
+  static void setGcsManualEnabled(bool enabled) =>
+      ros.setGcsManualEnabled(enabled);
+
+  /// Ham donanım komutu → `/cmd_hardware` (UI wire kodu bilmez; parametre sayfası).
+  static bool sendHardwareCommand(String command) =>
+      ros.publishHardwareCommand(command);
+
+  static bool setLed() =>
+      ros.publishHardwareCommand(RosHardwareCommands.led);
+
+  static bool triggerBuzzer() =>
+      ros.publishHardwareCommand(RosHardwareCommands.buzzer);
 
   static Future<bool> checkConnection(String site) async {
     if (site.isEmpty) return false;
@@ -120,13 +216,6 @@ class AgvService {
     return null;
   }
 
-  static Future<void> veriBas(String site, String veri) async {
-    if (site.isEmpty) return;
-    try {
-      await http.get(Uri.parse('$site/$veri'));
-    } catch (_) {}
-  }
-
   /// Tek /telemetri endpoint'inden tüm durum verisini çeker.
   ///
   /// Beklenen JSON sözleşmesi (robot tarafı):
@@ -160,11 +249,8 @@ class AgvService {
     return null;
   }
 
-  /// Belirtilen komutu süre boyunca 50ms aralıklarla fire-and-forget gönderir.
-  /// Polling döngüsünü veya UI thread'i BLOKLAMAZ.
-  static Future<void> startSendingData(
-      String site, String command, Duration duration) {
-    if (site.isEmpty) return Future.value();
+  /// Belirtilen komutu süre boyunca 50ms aralıklarla ROS üzerinden gönderir.
+  static Future<void> startSendingData(String command, Duration duration) {
     final endMs =
         DateTime.now().millisecondsSinceEpoch + duration.inMilliseconds;
     final completer = Completer<void>();
@@ -175,7 +261,7 @@ class AgvService {
         if (!completer.isCompleted) completer.complete();
         return;
       }
-      veriBas(site, command); // fire-and-forget — await yok
+      sendHardwareCommand(command);
     });
     return completer.future;
   }

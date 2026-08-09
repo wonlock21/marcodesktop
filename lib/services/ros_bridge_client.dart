@@ -6,6 +6,8 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'occupancy_grid_image.dart';
 import 'ros_gcs_contract.dart';
+import 'ros_hardware_contract.dart';
+import 'ros_mapping_contract.dart';
 
 enum RosConnectionStatus {
   disconnected,
@@ -39,7 +41,8 @@ class RosBridgeClient {
   static const robotStatusTopic = '/robot_status';
   static const missionEventsTopic = '/mission/events';
   static const mapTopic = '/map';
-  static const manualVelocityTopic = '/cmd_vel_manual';
+  /// Mapping sözleşmesindeki tek kaynak (`RosMappingTopics.cmdVelManual`).
+  static const manualVelocityTopic = RosMappingTopics.cmdVelManual;
 
   final Duration connectTimeout;
   final Duration messageTimeout;
@@ -53,6 +56,15 @@ class RosBridgeClient {
   void Function(String message)? onMissionEvent;
   void Function(OccupancyGridMetadata? metadata)? onMapMetadata;
   void Function(OccupancyGridFrame? frame)? onMapFrame;
+
+  void Function(MappingStatusSnapshot? status)? onMappingStatus;
+  void Function(Uint8List? pngBytes)? onMapPreviewImage;
+  void Function(MapPreviewMetadata? metadata)? onMapPreviewMetadata;
+  void Function(MapPreviewRobotPixel? robotPixel)? onMapPreviewRobotPixel;
+
+  /// Mapping/preview abonelikleri (yeniden) gönderildikten sonra.
+  /// UI last-good tutar; ilk taze preview gelene kadar "güncelleniyor" gösterebilir.
+  void Function()? onMappingSubscriptionsReady;
 
   int _mapParseGeneration = 0;
 
@@ -68,12 +80,19 @@ class RosBridgeClient {
   DateTime? _lastInbound;
   Uri? _uri;
   bool _manualDisconnect = false;
-  bool _manualModeEnabled = false;
+  /// GCS UI manuel modu (fiziksel anahtar yok). `cmd_vel_manual` kapısı.
+  bool _gcsManualEnabled = true;
   double _manualLinear = 0;
   double _manualAngular = 0;
 
-  bool get manualModeEnabled => _manualModeEnabled;
+  bool get manualModeEnabled => _gcsManualEnabled;
   String get url => _uri?.toString() ?? '';
+
+  /// Operatör GCS’ten Manuel/Otonom seçince çağrılır.
+  void setGcsManualEnabled(bool enabled) {
+    if (_gcsManualEnabled && !enabled) stopManual();
+    _gcsManualEnabled = enabled;
+  }
 
   static Uri normalizeAddress(String input) {
     var value = input.trim();
@@ -125,7 +144,9 @@ class RosBridgeClient {
     if (_channel != null) await disconnect();
     _manualDisconnect = false;
     _uri = nextUri;
-    _clearMapCallbacks();
+    // Yeni adrese bilinçli bağlanış: eski preview/occupancy temizlenir.
+    _clearOccupancyCallbacks();
+    _clearMappingPreviewCallbacks();
     await _open(reconnecting: false);
   }
 
@@ -208,15 +229,64 @@ class RosBridgeClient {
       'queue_length': 20,
     });
     _send({
+      'op': 'subscribe',
+      'topic': RosMappingTopics.mappingStatus,
+      'type': RosMappingTypes.mappingStatusMsg,
+      'queue_length': 1,
+      'throttle_rate': 100,
+    });
+    _send({
+      'op': 'subscribe',
+      'topic': RosMappingTopics.mapPreviewCompressed,
+      'type': RosMappingTypes.compressedImageMsg,
+      'queue_length': 1,
+      'throttle_rate': 200,
+    });
+    _send({
+      'op': 'subscribe',
+      'topic': RosMappingTopics.mapPreviewMetadata,
+      'type': RosMappingTypes.mapPreviewMetadataMsg,
+      'queue_length': 1,
+      'throttle_rate': 200,
+    });
+    _send({
+      'op': 'subscribe',
+      'topic': RosMappingTopics.mapPreviewRobotPixel,
+      'type': RosMappingTypes.mapPreviewRobotPixelMsg,
+      'queue_length': 1,
+      'throttle_rate': 50,
+    });
+    _send({
       'op': 'advertise',
       'topic': manualVelocityTopic,
-      'type': 'geometry_msgs/msg/Twist',
+      'type': RosMappingTypes.twistMsg,
     });
+    _send({
+      'op': 'advertise',
+      'topic': RosHardwareTopics.cmdHardware,
+      'type': RosHardwareTypes.stringMsg,
+    });
+    onMappingSubscriptionsReady?.call();
   }
+
+  /// OccupancyGrid publish'i: ana thread'de jsonDecode yok.
+  /// `/map_preview/*` ile karışmasın diye topic tam `/map` olmalı.
+  static final RegExp _occupancyMapTopicRe =
+      RegExp(r'"topic"\s*:\s*"/map"\s*[,}]');
+
+  static bool _isOccupancyMapPublish(String data) =>
+      _occupancyMapTopicRe.hasMatch(data);
 
   void _onMessage(dynamic data, int generation) {
     if (generation != _generation || data is! String) return;
     _lastInbound = DateTime.now();
+
+    // Büyük OccupancyGrid: ham string'i isolate'e at; UI'yi kilitleme.
+    if (_isOccupancyMapPublish(data)) {
+      unawaited(_handleMapEnvelope(data, generation));
+      return;
+    }
+
     final dynamic decoded;
     try {
       decoded = jsonDecode(data);
@@ -251,49 +321,69 @@ class RosBridgeClient {
     final raw = message['msg'];
     if (topic == robotStatusTopic && raw is Map) {
       final status = Map<String, dynamic>.from(raw);
-      final nextManual = status['manual_mode_enabled'] == true;
-      if (_manualModeEnabled && !nextManual) stopManual();
-      _manualModeEnabled = nextManual;
+      // Fiziksel / ROS manual_mode_enabled kapısı kullanılmıyor; GCS UI seçer.
       onRobotStatus?.call(status);
     } else if (topic == missionEventsTopic && raw is Map) {
       final event = raw['data'];
       if (event is String) onMissionEvent?.call(event);
-    } else if (topic == mapTopic && raw is Map) {
-      unawaited(_handleMapMessage(Map<String, dynamic>.from(raw), generation));
+    } else if (topic == RosMappingTopics.mappingStatus && raw is Map) {
+      _handleMappingStatus(Map<String, dynamic>.from(raw));
+    } else if (topic == RosMappingTopics.mapPreviewCompressed && raw is Map) {
+      _handleMapPreviewCompressed(Map<String, dynamic>.from(raw));
+    } else if (topic == RosMappingTopics.mapPreviewMetadata && raw is Map) {
+      _handleMapPreviewMetadata(Map<String, dynamic>.from(raw));
+    } else if (topic == RosMappingTopics.mapPreviewRobotPixel && raw is Map) {
+      _handleMapPreviewRobotPixel(Map<String, dynamic>.from(raw));
     }
   }
 
-  Future<void> _handleMapMessage(
-    Map<String, dynamic> raw,
-    int generation,
-  ) async {
-    // Nested Map'leri isolate için JSON-safe hale getir.
-    final Map<String, dynamic> message;
+  void _handleMappingStatus(Map<String, dynamic> msg) {
     try {
-      message = Map<String, dynamic>.from(
-        jsonDecode(jsonEncode(raw)) as Map,
-      );
+      onMappingStatus?.call(MappingStatusSnapshot.fromRosMessage(msg));
     } catch (error) {
-      debugPrint('Geçersiz /map JSON: $error');
+      debugPrint('Geçersiz /mapping/status: $error');
+    }
+  }
+
+  void _handleMapPreviewCompressed(Map<String, dynamic> msg) {
+    final bytes = RosCompressedImageCodec.decodeData(msg['data']);
+    if (bytes == null || bytes.isEmpty) {
+      debugPrint('Geçersiz /map_preview/compressed data');
       return;
     }
+    onMapPreviewImage?.call(bytes);
+  }
 
+  void _handleMapPreviewMetadata(Map<String, dynamic> msg) {
     try {
-      final meta = OccupancyGridMetadata.fromRosMessage(message);
-      if (generation == _generation) onMapMetadata?.call(meta);
+      onMapPreviewMetadata?.call(MapPreviewMetadata.fromRosMessage(msg));
     } on FormatException catch (error) {
-      debugPrint('Geçersiz /map metadata: $error');
+      debugPrint('Geçersiz /map_preview/metadata: $error');
+    }
+  }
+
+  void _handleMapPreviewRobotPixel(Map<String, dynamic> msg) {
+    try {
+      onMapPreviewRobotPixel?.call(MapPreviewRobotPixel.fromRosMessage(msg));
+    } on FormatException catch (error) {
+      debugPrint('Geçersiz /map_preview/robot_pixel: $error');
+    }
+  }
+
+  Future<void> _handleMapEnvelope(String rawEnvelope, int generation) async {
+    final parseId = ++_mapParseGeneration;
+    final result = await parseOccupancyEnvelopeInIsolate(rawEnvelope);
+    if (generation != _generation || parseId != _mapParseGeneration) return;
+    if (result.metadata == null) {
+      debugPrint('Geçersiz /map metadata (isolate parse)');
       return;
     }
-
+    onMapMetadata?.call(result.metadata);
     if (onMapFrame == null) return;
-    final parseId = ++_mapParseGeneration;
-    final frame = await parseOccupancyInIsolate(message);
-    if (generation != _generation || parseId != _mapParseGeneration) return;
-    if (frame == null) {
+    if (result.frame == null) {
       debugPrint('Geçersiz /map data (parse başarısız)');
     }
-    onMapFrame?.call(frame);
+    onMapFrame?.call(result.frame);
   }
 
   Future<Map<String, dynamic>> callService(
@@ -357,26 +447,169 @@ class RosBridgeClient {
   Future<Map<String, dynamic>> emergencyStop() =>
       callService('/mission/emergency_stop', 'std_srvs/srv/Trigger');
 
+  Future<Map<String, dynamic>> startMapping({required String fieldName}) {
+    final error = RosFieldNameRules.validate(fieldName);
+    if (error != null) throw ArgumentError(error);
+    return callService(
+      RosMappingTopics.mappingStart,
+      RosMappingTypes.startMappingSrv,
+      {'field_name': fieldName.trim()},
+    );
+  }
+
+  Future<Map<String, dynamic>> stopMapping() => callService(
+        RosMappingTopics.mappingStop,
+        RosMappingTypes.stopMappingSrv,
+      );
+
+  /// `/mapping/save` — ROS sözleşmesi boş args (`{}`).
+  Future<Map<String, dynamic>> saveMapping([
+    Map<String, dynamic> args = const {},
+  ]) =>
+      callService(
+        RosMappingTopics.mappingSave,
+        RosMappingTypes.saveMappingSrv,
+        args,
+      );
+
+  Future<Map<String, dynamic>> listFields() => callService(
+        RosMappingTopics.fieldsList,
+        RosMappingTypes.listFieldsSrv,
+      );
+
+  Future<Map<String, dynamic>> startLocalization({required String fieldName}) {
+    final error = RosFieldNameRules.validate(fieldName);
+    if (error != null) throw ArgumentError(error);
+    return callService(
+      RosMappingTopics.localizationStart,
+      RosMappingTypes.startLocalizationSrv,
+      {'field_name': fieldName.trim()},
+    );
+  }
+
+  Future<Map<String, dynamic>> stopLocalization() => callService(
+        RosMappingTopics.localizationStop,
+        RosMappingTypes.stopLocalizationSrv,
+      );
+
+  // ── G.2 stations stubs ───────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> addStation({
+    required String name,
+    required String type,
+    required double pixelX,
+    required double pixelY,
+    required double screenYaw,
+    required String fieldName,
+  }) =>
+      callService(
+        RosMappingTopics.stationsAdd,
+        RosMappingTypes.addStationSrv,
+        {
+          'name': name.trim(),
+          'type': type,
+          'pixel_x': pixelX,
+          'pixel_y': pixelY,
+          'screen_yaw': screenYaw,
+          'field_name': fieldName.trim(),
+        },
+      );
+
+  Future<Map<String, dynamic>> updateStation({
+    required String name,
+    required String type,
+    required double pixelX,
+    required double pixelY,
+    required double screenYaw,
+    required String fieldName,
+  }) =>
+      callService(
+        RosMappingTopics.stationsUpdate,
+        RosMappingTypes.updateStationSrv,
+        {
+          'name': name.trim(),
+          'type': type,
+          'pixel_x': pixelX,
+          'pixel_y': pixelY,
+          'screen_yaw': screenYaw,
+          'field_name': fieldName.trim(),
+        },
+      );
+
+  Future<Map<String, dynamic>> deleteStation({required String name}) =>
+      callService(
+        RosMappingTopics.stationsDelete,
+        RosMappingTypes.deleteStationSrv,
+        {'name': name.trim()},
+      );
+
+  Future<Map<String, dynamic>> listStations([
+    Map<String, dynamic> args = const {},
+  ]) =>
+      callService(
+        RosMappingTopics.stationsList,
+        RosMappingTypes.listStationsSrv,
+        args,
+      );
+
+  // ── H.2 routes stubs ─────────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> saveRoute({
+    required String name,
+    required List<String> nodeNames,
+  }) =>
+      callService(
+        RosMappingTopics.routesSave,
+        RosMappingTypes.saveRouteSrv,
+        {
+          'name': name.trim(),
+          'nodes': nodeNames,
+        },
+      );
+
+  Future<Map<String, dynamic>> listRoutes([
+    Map<String, dynamic> args = const {},
+  ]) =>
+      callService(
+        RosMappingTopics.routesList,
+        RosMappingTypes.listRoutesSrv,
+        args,
+      );
+
+  Future<Map<String, dynamic>> deleteRoute({required String name}) =>
+      callService(
+        RosMappingTopics.routesDelete,
+        RosMappingTypes.deleteRouteSrv,
+        {'name': name.trim()},
+      );
+
+  /// Birimsiz komut ölçeği yayınlar (−1…+1). m/s tavanı STM32’dedir.
   bool publishManualTwist(double linearX, double angularZ) {
-    if (!state.value.isConnected || !_manualModeEnabled) return false;
-    _manualLinear = linearX;
-    _manualAngular = angularZ;
-    _publishTwist(linearX, angularZ);
+    if (!state.value.isConnected || !_gcsManualEnabled) return false;
+    final lx = RosManualDriveLimits.clampCommandScale(linearX);
+    final az = RosManualDriveLimits.clampCommandScale(angularZ);
+    _manualLinear = lx;
+    _manualAngular = az;
+    _publishTwist(lx, az);
     _manualHeartbeat?.cancel();
-    if (linearX != 0 || angularZ != 0) {
-      _manualHeartbeat = Timer.periodic(const Duration(milliseconds: 100), (_) {
-        if (!state.value.isConnected || !_manualModeEnabled) {
-          _manualHeartbeat?.cancel();
-          return;
-        }
-        _publishTwist(_manualLinear, _manualAngular);
-      });
+    if (lx != 0 || az != 0) {
+      _manualHeartbeat = Timer.periodic(
+        const Duration(milliseconds: RosManualDriveLimits.heartbeatDefaultMs),
+        (_) {
+          if (!state.value.isConnected || !_gcsManualEnabled) {
+            _manualHeartbeat?.cancel();
+            return;
+          }
+          _publishTwist(_manualLinear, _manualAngular);
+        },
+      );
     }
     return true;
   }
 
+  /// Yön indeksi + ölçek (0…1) → `/cmd_vel_manual` komut ölçeği.
   bool publishManualDirection(int direction, {double scale = 1}) {
-    final value = scale.clamp(0.0, 1.0).toDouble();
+    final value = RosManualDriveLimits.clampCommandScale(scale.abs());
     final command = switch (direction) {
       0 => (0.0, -value),
       1 => (0.7 * value, -0.7 * value),
@@ -396,7 +629,19 @@ class RosBridgeClient {
     _manualHeartbeat = null;
     _manualLinear = 0;
     _manualAngular = 0;
-    if (state.value.isConnected && _manualModeEnabled) _publishTwist(0, 0);
+    if (state.value.isConnected && _gcsManualEnabled) _publishTwist(0, 0);
+  }
+
+  /// Donanım komutu (`/cmd_hardware` ← `std_msgs/String`).
+  bool publishHardwareCommand(String command) {
+    final data = command.trim();
+    if (data.isEmpty || !state.value.isConnected) return false;
+    _send({
+      'op': 'publish',
+      'topic': RosHardwareTopics.cmdHardware,
+      'msg': {'data': data},
+    });
+    return true;
   }
 
   void _publishTwist(double linearX, double angularZ) {
@@ -439,8 +684,8 @@ class RosBridgeClient {
       unawaited(_closeSink(channel));
     }
     _channel = null;
-    _manualModeEnabled = false;
-    _clearMapCallbacks();
+    // Geçici kopma: harita last-good kalsın (preview + occupancy silinmez).
+    // GCS manuel tercih (_gcsManualEnabled) korunur.
     for (final call in _serviceCalls.values) {
       if (!call.isCompleted) call.completeError(StateError(reason));
     }
@@ -466,10 +711,17 @@ class RosBridgeClient {
     });
   }
 
-  void _clearMapCallbacks() {
+  void _clearOccupancyCallbacks() {
     _mapParseGeneration++;
     onMapMetadata?.call(null);
     onMapFrame?.call(null);
+  }
+
+  void _clearMappingPreviewCallbacks() {
+    onMappingStatus?.call(null);
+    onMapPreviewImage?.call(null);
+    onMapPreviewMetadata?.call(null);
+    onMapPreviewRobotPixel?.call(null);
   }
 
   Future<void> disconnect() async {
@@ -477,8 +729,7 @@ class RosBridgeClient {
     _reconnectTimer?.cancel();
     _watchdogTimer?.cancel();
     stopManual();
-    _manualModeEnabled = false;
-    _clearMapCallbacks();
+    // Manuel kes: komutlar durur; last-good harita UI'da kalabilir.
     _generation++;
     await _subscription?.cancel();
     _subscription = null;
