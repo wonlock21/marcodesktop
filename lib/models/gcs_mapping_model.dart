@@ -20,6 +20,15 @@ class GcsMappingModel extends ChangeNotifier {
   LocalizationStatus? localizationStatus;
   String localizationMessage = '';
 
+  DemoStatus? demoStatus;
+  String demoMessage = '';
+  String demoActiveTarget = '';
+  DemoPointPose? demoPointA;
+  DemoPointPose? demoPointB;
+  String? demoPointsField;
+  bool obstacleDetected = false;
+  bool demoCommandInFlight = false;
+
   Uint8List? previewPng;
   MapPreviewMetadata? previewMetadata;
   MapPreviewRobotPixel? robotPixel;
@@ -47,6 +56,7 @@ class GcsMappingModel extends ChangeNotifier {
   String? activeLocalizedField;
   String? pendingLocalizedField;
   bool localizationInFlight = false;
+  bool localizationStartAccepted = false;
 
   /// Preview kaynağı doğrudan `/map_preview/robot_pixel.source` alanından gelir.
   String? get previewSourceLabel {
@@ -179,6 +189,102 @@ class GcsMappingModel extends ChangeNotifier {
       localizationStatus != LocalizationStatus.idle &&
       localizationStatus != LocalizationStatus.error;
 
+  bool get localizationReady =>
+      isConnected &&
+      !localizationInFlight &&
+      localizationStartAccepted &&
+      localizationStatus == LocalizationStatus.localizing;
+
+  bool get canSaveDemoPoint => localizationReady;
+
+  /// Harita üzerinde kullanılabilecek robot pozu.
+  ///
+  /// Mapping sırasında yalnız SLAM, kayıtlı harita lokalizasyonunda ise yalnız
+  /// LOCALIZING=3 durumundaki AMCL pozu kabul edilir. Böylece mapping bittikten
+  /// sonra son `slam_toolbox` değeri ekranda donmuş bir robot gibi gösterilmez.
+  MapPreviewRobotPixel? get visibleRobotPixel {
+    final pixel = robotPixel;
+    if (pixel == null || !pixel.insideMap) return null;
+    if (!isConnected) return null;
+    if (liveMappingStatus == MappingStatus.mapping) {
+      return pixel.source == MapPreviewSource.slam_toolbox ? pixel : null;
+    }
+    if (localizationReady) {
+      return pixel.source == MapPreviewSource.amcl ? pixel : null;
+    }
+    return null;
+  }
+
+  bool get demoPointsReady =>
+      demoPointA != null &&
+      demoPointB != null &&
+      demoPointsField != null &&
+      demoPointsField == activeLocalizedField;
+
+  bool get demoRunning => demoStatus?.isRunning == true;
+
+  bool get canStartDemo =>
+      localizationReady &&
+      demoPointsReady &&
+      !demoRunning &&
+      !demoCommandInFlight;
+
+  bool get canContinueDemo =>
+      isConnected &&
+      demoStatus == DemoStatus.waitingLoad &&
+      !obstacleDetected &&
+      !demoCommandInFlight;
+
+  bool get canCancelDemo => isConnected && demoRunning && !demoCommandInFlight;
+
+  String get demoStatusLine {
+    if (obstacleDetected) return 'Engel algılandı, araç bekliyor';
+    final message = demoMessage.trim();
+    if (message.isNotEmpty) return message;
+    return demoStatus?.etiket ?? 'Demo durumu bekleniyor';
+  }
+
+  void markDemoPointSaved(String pointName, DemoPointSaveResult result) {
+    if (!result.success || result.pose == null) return;
+    final normalized = pointName.trim().toUpperCase();
+    if (normalized == 'A') demoPointA = result.pose;
+    if (normalized == 'B') demoPointB = result.pose;
+    demoPointsField = activeLocalizedField;
+    notifyListeners();
+  }
+
+  void applyDemoStatus(DemoStatusSnapshot? snap) {
+    if (snap == null) return;
+    demoStatus = snap.status;
+    demoMessage = snap.message;
+    demoActiveTarget = snap.activeTarget;
+    if (snap.status != DemoStatus.idle) {
+      demoPointA = snap.pointA;
+      demoPointB = snap.pointB;
+      demoPointsField ??= activeLocalizedField;
+    }
+    demoCommandInFlight = false;
+    notifyListeners();
+  }
+
+  void applyObstacleDetected(bool? detected) {
+    if (detected == null || obstacleDetected == detected) return;
+    obstacleDetected = detected;
+    notifyListeners();
+  }
+
+  void beginDemoCommand() {
+    if (demoCommandInFlight) return;
+    demoCommandInFlight = true;
+    notifyListeners();
+  }
+
+  void endDemoCommand() {
+    if (!demoCommandInFlight) return;
+    demoCommandInFlight = false;
+    notifyListeners();
+  }
+
   bool get mappingActive =>
       liveMappingStatus == MappingStatus.starting ||
       liveMappingStatus == MappingStatus.mapping ||
@@ -188,8 +294,18 @@ class GcsMappingModel extends ChangeNotifier {
   void beginLocalization([String? fieldName]) {
     if (localizationInFlight) return;
     localizationInFlight = true;
+    robotPixel = null;
     if (fieldName != null && fieldName.trim().isNotEmpty) {
+      localizationStartAccepted = false;
+      localizationStatus = null;
+      localizationMessage = '';
+      activeLocalizedField = null;
       pendingLocalizedField = fieldName.trim();
+      if (demoPointsField != pendingLocalizedField) {
+        demoPointA = null;
+        demoPointB = null;
+        demoPointsField = null;
+      }
     }
     notifyListeners();
   }
@@ -197,13 +313,17 @@ class GcsMappingModel extends ChangeNotifier {
   void endLocalizationFlight() {
     if (!localizationInFlight) return;
     localizationInFlight = false;
+    localizationStartAccepted = false;
     pendingLocalizedField = null;
     notifyListeners();
   }
 
   void acknowledgeLocalizationStart(String fieldName) {
+    localizationStartAccepted = true;
     if (localizationStatus != LocalizationStatus.localizing) {
       pendingLocalizedField ??= fieldName.trim();
+    } else {
+      localizationInFlight = false;
     }
     awaitingFreshPreview = true;
     notifyListeners();
@@ -230,18 +350,20 @@ class GcsMappingModel extends ChangeNotifier {
         activeLocalizedField =
             statusField.isNotEmpty ? statusField : pendingLocalizedField;
         pendingLocalizedField = null;
-        localizationInFlight = false;
+        localizationInFlight = !localizationStartAccepted;
         awaitingFreshPreview = true;
         break;
       case LocalizationStatus.stopping:
         localizationInFlight = true;
         break;
       case LocalizationStatus.idle:
+        localizationStartAccepted = false;
         activeLocalizedField = null;
         pendingLocalizedField = null;
         localizationInFlight = false;
         break;
       case LocalizationStatus.error:
+        localizationStartAccepted = false;
         activeLocalizedField = null;
         pendingLocalizedField = null;
         localizationInFlight = false;
@@ -436,6 +558,15 @@ class GcsMappingModel extends ChangeNotifier {
     activeLocalizedField = null;
     pendingLocalizedField = null;
     localizationInFlight = false;
+    localizationStartAccepted = false;
+    demoStatus = null;
+    demoMessage = '';
+    demoActiveTarget = '';
+    demoPointA = null;
+    demoPointB = null;
+    demoPointsField = null;
+    obstacleDetected = false;
+    demoCommandInFlight = false;
     notifyListeners();
   }
 }

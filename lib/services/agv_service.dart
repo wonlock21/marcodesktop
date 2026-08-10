@@ -43,7 +43,8 @@ class AgvService {
 
   static Future<Map<String, dynamic>> emergencyStop() => ros.emergencyStop();
 
-  static Future<Map<String, dynamic>> startMapping({required String fieldName}) =>
+  static Future<Map<String, dynamic>> startMapping(
+          {required String fieldName}) =>
       ros.startMapping(fieldName: fieldName);
 
   static Future<Map<String, dynamic>> stopMapping() => ros.stopMapping();
@@ -62,6 +63,18 @@ class AgvService {
 
   static Future<Map<String, dynamic>> stopLocalization() =>
       ros.stopLocalization();
+
+  static Future<Map<String, dynamic>> saveDemoPoint(String pointName) =>
+      ros.saveDemoPoint(pointName);
+
+  static Future<Map<String, dynamic>> startSavedDemo() =>
+      ros.startSavedDemo();
+
+  static Future<Map<String, dynamic>> continueDemo() => ros.continueDemo();
+
+  static Future<Map<String, dynamic>> cancelDemo() => ros.cancelDemo();
+
+  static bool prepareSavedDemoStart() => ros.prepareSavedDemoStart();
 
   // ── G.2 stations stubs ───────────────────────────────────────────────────
 
@@ -137,8 +150,7 @@ class AgvService {
   static bool sendHardwareCommand(String command) =>
       ros.publishHardwareCommand(command);
 
-  static bool setLed() =>
-      ros.publishHardwareCommand(RosHardwareCommands.led);
+  static bool setLed() => ros.publishHardwareCommand(RosHardwareCommands.led);
 
   static bool triggerBuzzer() =>
       ros.publishHardwareCommand(RosHardwareCommands.buzzer);

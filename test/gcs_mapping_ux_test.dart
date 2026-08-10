@@ -56,6 +56,10 @@ void main() {
         check: RosServiceResponse.localizationStopSucceeded,
         key: 'success',
       ),
+      '/demo/point/save': (
+        check: RosServiceResponse.demoPointSaveSucceeded,
+        key: 'success',
+      ),
     };
 
     for (final entry in cases.entries) {
@@ -225,6 +229,125 @@ void main() {
       ));
       expect(m.activeLocalizedField, 'saha_01');
       expect(m.localizationInFlight, isFalse);
+      expect(m.canSaveDemoPoint, isFalse);
+      m.applyConnectionState(
+        const RosConnectionState(RosConnectionStatus.connected),
+      );
+      expect(m.canSaveDemoPoint, isTrue);
+    });
+
+    test('robot ikonu lokalizasyonda yalnız geçerli AMCL pozunu kullanır', () {
+      final m = GcsMappingModel();
+      m.applyConnectionState(
+        const RosConnectionState(RosConnectionStatus.connected),
+      );
+      const slamPixel = MapPreviewRobotPixel(
+        pixelX: 10,
+        pixelY: 20,
+        screenYaw: 0,
+        mapWidth: 100,
+        mapHeight: 100,
+        insideMap: true,
+        source: MapPreviewSource.slam_toolbox,
+      );
+      const amclPixel = MapPreviewRobotPixel(
+        pixelX: 30,
+        pixelY: 40,
+        screenYaw: 1,
+        mapWidth: 100,
+        mapHeight: 100,
+        insideMap: true,
+        source: MapPreviewSource.amcl,
+      );
+
+      m.applyRobotPixel(slamPixel);
+      expect(m.visibleRobotPixel, isNull);
+      m.beginLocalization('saha_01');
+      m.acknowledgeLocalizationStart('saha_01');
+      m.applyLocalizationStatus(const LocalizationStatusSnapshot(
+        status: LocalizationStatus.initializing,
+        fieldName: 'saha_01',
+      ));
+      expect(m.visibleRobotPixel, isNull);
+      m.applyLocalizationStatus(const LocalizationStatusSnapshot(
+        status: LocalizationStatus.localizing,
+        fieldName: 'saha_01',
+      ));
+      expect(m.visibleRobotPixel, isNull);
+      m.applyRobotPixel(amclPixel);
+      expect(m.visibleRobotPixel, same(amclPixel));
+    });
+
+    test('demo point servis cevabındaki pose parse edilir', () {
+      final result = DemoPointSaveResult.fromServiceResponse({
+        'success': true,
+        'message': 'A noktası kaydedildi',
+        'pose': {'x': 1.25, 'y': -0.5, 'theta': 1.57},
+        'points_file': '/data/demo_points.yaml',
+      });
+      expect(result.success, isTrue);
+      expect(result.pose?.x, 1.25);
+      expect(result.pose?.theta, 1.57);
+      expect(result.pointsFile, endsWith('demo_points.yaml'));
+    });
+
+    test('demo kapıları lokalizasyon, A/B, WAITING_LOAD ve engele bağlıdır',
+        () {
+      final m = GcsMappingModel();
+      m.applyConnectionState(
+        const RosConnectionState(RosConnectionStatus.connected),
+      );
+      m.beginLocalization('saha_01');
+      m.acknowledgeLocalizationStart('saha_01');
+      m.applyLocalizationStatus(const LocalizationStatusSnapshot(
+        status: LocalizationStatus.localizing,
+        fieldName: 'saha_01',
+      ));
+      expect(m.canStartDemo, isFalse);
+
+      m.markDemoPointSaved(
+        'A',
+        const DemoPointSaveResult(
+          success: true,
+          pose: DemoPointPose(x: 1, y: 2, theta: 0),
+        ),
+      );
+      m.markDemoPointSaved(
+        'B',
+        const DemoPointSaveResult(
+          success: true,
+          pose: DemoPointPose(x: 3, y: 4, theta: 1),
+        ),
+      );
+      expect(m.canStartDemo, isTrue);
+
+      m.applyDemoStatus(const DemoStatusSnapshot(
+        status: DemoStatus.waitingLoad,
+        message: 'Yük yerleştirilmesi bekleniyor',
+        pointA: DemoPointPose(x: 1, y: 2, theta: 0),
+        pointB: DemoPointPose(x: 3, y: 4, theta: 1),
+      ));
+      expect(m.canContinueDemo, isTrue);
+      expect(m.canCancelDemo, isTrue);
+      m.applyObstacleDetected(true);
+      expect(m.canContinueDemo, isFalse);
+      expect(m.demoStatusLine, 'Engel algılandı, araç bekliyor');
+      m.applyObstacleDetected(false);
+      expect(m.canContinueDemo, isTrue);
+    });
+
+    test('/demo/status alanları parse edilir', () {
+      final status = DemoStatusSnapshot.fromRosMessage({
+        'state': 6,
+        'message': 'B noktasına gidiliyor',
+        'active_target': 'B',
+        'point_a': {'x': 1.0, 'y': 2.0, 'theta': 0.1},
+        'point_b': {'x': 3.0, 'y': 4.0, 'theta': 0.2},
+      });
+      expect(status.status, DemoStatus.navigatingB);
+      expect(status.activeTarget, 'B');
+      expect(status.pointA.x, 1.0);
+      expect(status.pointB.theta, 0.2);
     });
 
     test('fields/list localization_ready alanını korur', () {

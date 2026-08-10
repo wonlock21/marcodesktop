@@ -137,6 +137,26 @@ void main() {
     await client.dispose();
   });
 
+  test('sessiz fakat acik websocket transport baglantisi koparilmaz', () async {
+    WebSocket? socket;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((request) async {
+      socket = await WebSocketTransformer.upgrade(request);
+      socket!.listen((_) {});
+    });
+
+    final client = RosBridgeClient();
+    await client.connect('ws://127.0.0.1:${server.port}');
+
+    // Eski watchdog 6 saniye topic mesaji gelmeyince saglam socket'i kapatiyordu.
+    await Future<void>.delayed(const Duration(milliseconds: 6500));
+    expect(client.state.value.isConnected, isTrue);
+
+    await client.dispose();
+    await socket?.close();
+    await server.close(force: true);
+  });
+
   test('kopunca yeniden baglanir ve manuel dead-man sifir yollar', () async {
     WebSocket? activeSocket;
     final received = <Map<String, dynamic>>[];
@@ -178,7 +198,7 @@ void main() {
 
     var server = await startServer();
     final port = server.port;
-    final client = RosBridgeClient(messageTimeout: const Duration(seconds: 2));
+    final client = RosBridgeClient();
     final firstMap = Completer<OccupancyGridMetadata>();
     client.onMapMetadata = (metadata) {
       if (metadata != null && !firstMap.isCompleted) {
@@ -207,6 +227,20 @@ void main() {
           message['type'] == 'marco_msgs/msg/LocalizationStatus'),
       isTrue,
     );
+    expect(
+      received.any((message) =>
+          message['op'] == 'subscribe' &&
+          message['topic'] == '/demo/status' &&
+          message['type'] == 'marco_msgs/msg/DemoStatus'),
+      isTrue,
+    );
+    expect(
+      received.any((message) =>
+          message['op'] == 'subscribe' &&
+          message['topic'] == '/safety/obstacle_detected' &&
+          message['type'] == 'std_msgs/msg/Bool'),
+      isTrue,
+    );
     // GCS manuel varsayılan açık; fiziksel anahtar / robot_status kapısı yok.
     expect(client.publishManualDirection(2), isTrue);
     client.setGcsManualEnabled(false);
@@ -222,6 +256,13 @@ void main() {
         final msg = m['msg'] as Map;
         return (msg['linear'] as Map)['x'] == 0.0;
       }),
+      isTrue,
+    );
+    expect(
+      received.any((message) =>
+          message['op'] == 'publish' &&
+          message['topic'] == '/base/manual_mode' &&
+          (message['msg'] as Map)['data'] == false),
       isTrue,
     );
 
@@ -293,7 +334,6 @@ void main() {
     final client = RosBridgeClient(
       serviceTimeout: const Duration(milliseconds: 80),
       saveTimeout: const Duration(milliseconds: 80),
-      messageTimeout: const Duration(seconds: 5),
     );
     await client.connect('ws://127.0.0.1:${server.port}');
 
@@ -346,6 +386,34 @@ void main() {
         call: client.stopLocalization,
         check: RosServiceResponse.localizationStopSucceeded,
       ),
+      (
+        name: '/demo/point/save',
+        type: RosMappingTypes.saveDemoPointSrv,
+        key: 'success',
+        call: () => client.saveDemoPoint('A'),
+        check: RosServiceResponse.demoPointSaveSucceeded,
+      ),
+      (
+        name: '/demo/start_saved',
+        type: RosMappingTypes.triggerSrv,
+        key: 'success',
+        call: client.startSavedDemo,
+        check: RosServiceResponse.triggerSucceeded,
+      ),
+      (
+        name: '/demo/continue',
+        type: RosMappingTypes.triggerSrv,
+        key: 'success',
+        call: client.continueDemo,
+        check: RosServiceResponse.triggerSucceeded,
+      ),
+      (
+        name: '/demo/cancel',
+        type: RosMappingTypes.triggerSrv,
+        key: 'success',
+        call: client.cancelDemo,
+        check: RosServiceResponse.triggerSucceeded,
+      ),
     ];
 
     for (final service in services) {
@@ -357,6 +425,19 @@ void main() {
       expect(service.check(success), isTrue, reason: service.name);
       expect(received.last['service'], service.name);
       expect(received.last['type'], service.type);
+      if (service.name == '/demo/point/save') {
+        expect(received.last['args'], {'point_name': 'A'});
+        expect(received.last['id'], startsWith('save_demo_point_A_'));
+      }
+      const demoIds = {
+        '/demo/start_saved': 'demo_start',
+        '/demo/continue': 'demo_continue',
+        '/demo/cancel': 'demo_cancel',
+      };
+      if (demoIds[service.name] case final expectedId?) {
+        expect(received.last['args'], <String, dynamic>{});
+        expect(received.last['id'], expectedId);
+      }
 
       scenario = {
         'result': true,

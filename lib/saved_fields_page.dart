@@ -99,7 +99,7 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
       if (!ok) {
         mapping.endLocalizationFlight();
         _toast(
-          'Harita yüklenemedi: '
+          'Lokalizasyon başlatılamadı: '
           '${RosServiceResponse.failureMessage(response)}',
         );
         return;
@@ -113,7 +113,7 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
     } catch (error) {
       if (!mounted) return;
       mapping.endLocalizationFlight();
-      _toast('Haritayı Yükle: ${_userError(error)}');
+      _toast('Lokalizasyonu Başlat: ${_userError(error)}');
     }
   }
 
@@ -345,7 +345,7 @@ class _SavedFieldCard extends StatelessWidget {
           ),
           SizedBox(height: 0.6.h),
           SizedBox(
-            height: 3.2.h,
+            height: 38.h,
             child: TextButton(
               onPressed: onLoad,
               style: TextButton.styleFrom(
@@ -364,7 +364,7 @@ class _SavedFieldCard extends StatelessWidget {
                       child: const CircularProgressIndicator(strokeWidth: 2),
                     )
                   : Text(
-                      isActive ? 'Yüklü' : 'Haritayı Yükle',
+                      isActive ? 'Lokalizasyon Aktif' : 'Lokalizasyonu Başlat',
                       style: TextStyle(fontSize: 2.8.sp),
                     ),
             ),

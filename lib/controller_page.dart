@@ -86,6 +86,8 @@ class _ControllerPageState extends State<ControllerPage>
     AgvService.ros.onMapFrame = _onMapFrame;
     AgvService.ros.onMappingStatus = _onMappingStatus;
     AgvService.ros.onLocalizationStatus = _onLocalizationStatus;
+    AgvService.ros.onDemoStatus = _onDemoStatus;
+    AgvService.ros.onObstacleDetected = _onObstacleDetected;
     AgvService.ros.onMapPreviewImage = _onMapPreviewImage;
     AgvService.ros.onMapPreviewMetadata = _onMapPreviewMetadata;
     AgvService.ros.onMapPreviewRobotPixel = _onMapPreviewRobotPixel;
@@ -338,6 +340,162 @@ class _ControllerPageState extends State<ControllerPage>
       _showUserError(
         message.isEmpty ? 'Lokalizasyon hatası' : message,
       );
+    }
+  }
+
+  void _onDemoStatus(DemoStatusSnapshot? status) {
+    if (!mounted) return;
+    final previous = _mappingModel.demoStatus;
+    final previousMessage = _mappingModel.demoMessage;
+    _mappingModel.applyDemoStatus(status);
+    if (status == null ||
+        (previous == status.status && previousMessage == status.message)) {
+      return;
+    }
+    _onMissionEvent(
+        'Demo: ${status.message.isNotEmpty ? status.message : status.status.etiket}');
+    if (status.status == DemoStatus.error) {
+      _showUserError(
+        status.message.isEmpty ? 'Demo hata durumuna geçti' : status.message,
+      );
+    }
+  }
+
+  void _onObstacleDetected(bool? detected) {
+    if (!mounted || detected == null) return;
+    final previous = _mappingModel.obstacleDetected;
+    _mappingModel.applyObstacleDetected(detected);
+    if (detected && !previous) {
+      _onMissionEvent('Engel algılandı, araç bekliyor');
+    } else if (!detected && previous) {
+      _onMissionEvent('Engel kalktı; ROS hareketi otomatik sürdürecek');
+    }
+  }
+
+  Future<void> _startSavedDemo() async {
+    final mapping = _mappingModel;
+    if (!mapping.isConnected) {
+      _showUserError('ROS bağlı değil');
+      return;
+    }
+    if (mapping.localizationStatus != LocalizationStatus.localizing) {
+      _showUserError('Demodan önce lokalizasyon LOCALIZING olmalı');
+      return;
+    }
+    if (!mapping.demoPointsReady) {
+      _showUserError('Demodan önce A ve B noktalarını kaydedin');
+      return;
+    }
+    if (mapping.demoRunning || mapping.demoCommandInFlight) return;
+
+    mapping.beginDemoCommand();
+    try {
+      if (!AgvService.prepareSavedDemoStart()) {
+        throw StateError('ROS bağlı değil; otonom moda geçilemedi');
+      }
+      _connModel.topluGuncelle(
+        manuelMod: false,
+        uzaktanKontrol: false,
+      );
+      final response = await AgvService.startSavedDemo();
+      if (!RosServiceResponse.triggerSucceeded(response)) {
+        throw StateError(RosServiceResponse.failureMessage(
+          response,
+          fallback: 'Demo başlatılamadı',
+        ));
+      }
+      _onMissionEvent(
+        response['message']?.toString().trim().isNotEmpty == true
+            ? response['message'].toString()
+            : 'Demo başlatıldı',
+      );
+    } catch (error) {
+      _showUserError('Demo başlatılamadı: ${_rosServiceUserError(error)}');
+    } finally {
+      mapping.endDemoCommand();
+    }
+  }
+
+  Future<bool> _confirmDemoAreaClear() async {
+    if (!mounted) return false;
+    return await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Hareket alanı güvenli mi?'),
+            content: const Text(
+              'Kullanıcının ve yükü yerleştiren kişinin aracın hareket '
+              'alanından çekildiğini doğrulayın.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Vazgeç'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Alan Boş — Devam Et'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  Future<void> _continueDemo() async {
+    final mapping = _mappingModel;
+    if (mapping.demoStatus != DemoStatus.waitingLoad) {
+      _showUserError('Demo şu anda yük onayı beklemiyor');
+      return;
+    }
+    if (mapping.obstacleDetected) {
+      _showUserError('Engel algılandı; devam komutu gönderilemez');
+      return;
+    }
+    if (!await _confirmDemoAreaClear() || !mounted) return;
+    if (!mapping.canContinueDemo) return;
+
+    mapping.beginDemoCommand();
+    try {
+      final response = await AgvService.continueDemo();
+      if (!RosServiceResponse.triggerSucceeded(response)) {
+        throw StateError(RosServiceResponse.failureMessage(
+          response,
+          fallback: 'Demo devam ettirilemedi',
+        ));
+      }
+      _onMissionEvent(
+        response['message']?.toString().trim().isNotEmpty == true
+            ? response['message'].toString()
+            : 'Yük onayı alındı; araç B’ye hareket ediyor',
+      );
+    } catch (error) {
+      _showUserError('Demo devam ettirilemedi: ${_rosServiceUserError(error)}');
+    } finally {
+      mapping.endDemoCommand();
+    }
+  }
+
+  Future<void> _cancelDemo() async {
+    final mapping = _mappingModel;
+    if (!mapping.canCancelDemo) return;
+    mapping.beginDemoCommand();
+    try {
+      final response = await AgvService.cancelDemo();
+      if (!RosServiceResponse.triggerSucceeded(response)) {
+        throw StateError(RosServiceResponse.failureMessage(
+          response,
+          fallback: 'Demo iptal edilemedi',
+        ));
+      }
+      _onMissionEvent(
+        response['message']?.toString().trim().isNotEmpty == true
+            ? response['message'].toString()
+            : 'Demo iptal edildi',
+      );
+    } catch (error) {
+      _showUserError('Demo iptal edilemedi: ${_rosServiceUserError(error)}');
+    } finally {
+      mapping.endDemoCommand();
     }
   }
 
@@ -835,6 +993,8 @@ class _ControllerPageState extends State<ControllerPage>
     AgvService.ros.onMapFrame = null;
     AgvService.ros.onMappingStatus = null;
     AgvService.ros.onLocalizationStatus = null;
+    AgvService.ros.onDemoStatus = null;
+    AgvService.ros.onObstacleDetected = null;
     AgvService.ros.onMapPreviewImage = null;
     AgvService.ros.onMapPreviewMetadata = null;
     AgvService.ros.onMapPreviewRobotPixel = null;
@@ -1025,6 +1185,15 @@ class _ControllerPageState extends State<ControllerPage>
                                     muted,
                                     bright,
                                   ),
+                                ),
+                                _buildDemoControlBar(
+                                  mapping,
+                                  panelBg,
+                                  borderC,
+                                  muted,
+                                  bright,
+                                  success,
+                                  danger,
                                 ),
                                 // Alt buton şeridi
                                 Container(
@@ -2426,6 +2595,102 @@ class _ControllerPageState extends State<ControllerPage>
   }
 
   /// Seçili sekmeye göre içerik döndürür.
+  Widget _buildDemoControlBar(
+    GcsMappingModel mapping,
+    Color panelBg,
+    Color borderC,
+    Color muted,
+    Color bright,
+    Color success,
+    Color danger,
+  ) {
+    final statusColor =
+        mapping.demoStatus == DemoStatus.complete ? success : bright;
+    final demoStatusText = mapping.demoMessage.trim().isNotEmpty
+        ? mapping.demoMessage.trim()
+        : mapping.demoStatus?.etiket ?? 'Demo durumu bekleniyor';
+    final points = mapping.demoPointsReady ? 'A/B hazır' : 'A/B eksik';
+    return Container(
+      padding: EdgeInsets.fromLTRB(3.w, 0.6.h, 3.w, 0.8.h),
+      decoration: BoxDecoration(
+        color: panelBg,
+        border: Border(top: BorderSide(color: borderC)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.route_outlined, color: statusColor, size: 3.5.sp),
+              SizedBox(width: 1.w),
+              Expanded(
+                child: Text(
+                  demoStatusText,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: statusColor, fontSize: 2.5.sp),
+                ),
+              ),
+              Text(
+                '$points${mapping.demoActiveTarget.isEmpty ? '' : ' · Hedef ${mapping.demoActiveTarget}'}',
+                style: TextStyle(color: muted, fontSize: 2.2.sp),
+              ),
+            ],
+          ),
+          SizedBox(height: 0.5.h),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton(
+                  onPressed: mapping.canStartDemo
+                      ? () => unawaited(_startSavedDemo())
+                      : null,
+                  style: FilledButton.styleFrom(
+                    disabledBackgroundColor: const Color(0xFF2A2A2A),
+                    disabledForegroundColor: muted,
+                  ),
+                  child: const Text('Demoyu Başlat'),
+                ),
+              ),
+              SizedBox(width: 1.w),
+              Expanded(
+                flex: 2,
+                child: FilledButton(
+                  onPressed: mapping.canContinueDemo
+                      ? () => unawaited(_continueDemo())
+                      : null,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: success,
+                    disabledBackgroundColor: const Color(0xFF2A2A2A),
+                    disabledForegroundColor: muted,
+                  ),
+                  child: const Text('Yük Yerleştirildi / Devam Et'),
+                ),
+              ),
+              SizedBox(width: 1.w),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: mapping.canCancelDemo
+                      ? () => unawaited(_cancelDemo())
+                      : null,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: danger,
+                    disabledForegroundColor: muted,
+                    side: BorderSide(
+                      color: mapping.canCancelDemo ? danger : borderC,
+                    ),
+                  ),
+                  child: const Text('Demoyu İptal Et'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Seçili sekmeye göre içerik döndürür.
   Widget _buildWorkAreaContent(
     AgvSensorModel agv,
     GcsMappingModel mapping,
@@ -2443,7 +2708,7 @@ class _ControllerPageState extends State<ControllerPage>
           body = MapPreviewStage(
             pngBytes: mapping.previewPng!,
             metadata: mapping.previewMetadata,
-            robotPixel: mapping.robotPixel,
+            robotPixel: mapping.visibleRobotPixel,
             awaitingFresh: mapping.awaitingFreshPreview,
             sourceLabel: mapping.previewSourceLabel,
           );

@@ -81,11 +81,13 @@ class RouteEditPage extends StatelessWidget {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: Text('İptal', style: TextStyle(color: _muted, fontSize: 3.sp)),
+            child:
+                Text('İptal', style: TextStyle(color: _muted, fontSize: 3.sp)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, nameController.text.trim()),
-            child: Text('Kaydet', style: TextStyle(color: _accent, fontSize: 3.sp)),
+            child: Text('Kaydet',
+                style: TextStyle(color: _accent, fontSize: 3.sp)),
           ),
         ],
       ),
@@ -134,9 +136,8 @@ class RouteEditPage extends StatelessWidget {
     final nodes = context.watch<GcsNodeModel>();
     final route = context.watch<GcsRouteModel>();
     final selected = route.selectedNodes(nodes);
-    final polyline = selected
-        .map((n) => Offset(n.pixelX, n.pixelY))
-        .toList(growable: false);
+    final polyline =
+        selected.map((n) => Offset(n.pixelX, n.pixelY)).toList(growable: false);
 
     final markers = nodes.nodes
         .map(
@@ -165,7 +166,9 @@ class RouteEditPage extends StatelessWidget {
         ),
         actions: [
           TextButton(
-            onPressed: route.hasSelection ? () => unawaited(_saveRoute(context)) : null,
+            onPressed: route.hasSelection
+                ? () => unawaited(_saveRoute(context))
+                : null,
             child: Text(
               'Kaydet',
               style: TextStyle(
@@ -195,7 +198,7 @@ class RouteEditPage extends StatelessWidget {
                       ? MapPreviewStage(
                           pngBytes: mapping.previewPng!,
                           metadata: mapping.previewMetadata,
-                          robotPixel: mapping.robotPixel,
+                          robotPixel: mapping.visibleRobotPixel,
                           awaitingFresh: mapping.awaitingFreshPreview,
                           sourceLabel: mapping.previewSourceLabel,
                           nodeMarkers: markers,
@@ -280,7 +283,8 @@ class _SelectionStrip extends StatelessWidget {
                             ),
                           Chip(
                             visualDensity: VisualDensity.compact,
-                            backgroundColor: selected[i].markerColor.withAlpha(40),
+                            backgroundColor:
+                                selected[i].markerColor.withAlpha(40),
                             side: BorderSide(color: selected[i].markerColor),
                             label: Text(
                               '${i + 1}.${selected[i].name}',
@@ -299,7 +303,8 @@ class _SelectionStrip extends StatelessWidget {
           IconButton(
             tooltip: 'Geri al',
             onPressed: onUndo,
-            icon: Icon(Icons.undo, color: onUndo == null ? _muted : _bright, size: 4.5.sp),
+            icon: Icon(Icons.undo,
+                color: onUndo == null ? _muted : _bright, size: 4.5.sp),
           ),
           IconButton(
             tooltip: 'Temizle',

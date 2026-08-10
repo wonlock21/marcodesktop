@@ -46,6 +46,51 @@ enum LocalizationStatus {
   initializing,
 }
 
+/// `/demo/status` sayısal durumları.
+enum DemoStatus {
+  idle,
+  starting,
+  navigatingA,
+  laneA,
+  turningA,
+  waitingLoad,
+  navigatingB,
+  laneB,
+  turningB,
+  complete,
+  error,
+  canceled,
+}
+
+extension DemoStatusExt on DemoStatus {
+  int get code => index;
+
+  String get etiket => switch (this) {
+        DemoStatus.idle => 'Hazır',
+        DemoStatus.starting => 'Demo başlatılıyor',
+        DemoStatus.navigatingA => 'A’ya gidiliyor',
+        DemoStatus.laneA => 'A şerit takibi',
+        DemoStatus.turningA => 'A sonunda dönülüyor',
+        DemoStatus.waitingLoad => 'Yük bekleniyor',
+        DemoStatus.navigatingB => 'B’ye gidiliyor',
+        DemoStatus.laneB => 'B şerit takibi',
+        DemoStatus.turningB => 'B sonunda dönülüyor',
+        DemoStatus.complete => 'Demo tamamlandı',
+        DemoStatus.error => 'Hata',
+        DemoStatus.canceled => 'İptal edildi',
+      };
+
+  bool get isRunning => code >= DemoStatus.starting.code &&
+      code <= DemoStatus.turningB.code;
+
+  static DemoStatus fromCode(int? code) {
+    if (code == null || code < 0 || code >= DemoStatus.values.length) {
+      return DemoStatus.error;
+    }
+    return DemoStatus.values[code];
+  }
+}
+
 extension LocalizationStatusExt on LocalizationStatus {
   int get code => index;
 
@@ -183,6 +228,14 @@ abstract final class RosMappingTopics {
   static const localizationStop = '/localization/stop';
   static const localizationStatus = '/localization/status';
 
+  static const demoPointSave = '/demo/point/save';
+  static const demoStartSaved = '/demo/start_saved';
+  static const demoContinue = '/demo/continue';
+  static const demoCancel = '/demo/cancel';
+  static const demoStatus = '/demo/status';
+  static const obstacleDetected = '/safety/obstacle_detected';
+  static const baseManualMode = '/base/manual_mode';
+
   static const stationsAdd = '/stations/add';
   static const stationsUpdate = '/stations/update';
   static const stationsDelete = '/stations/delete';
@@ -215,6 +268,10 @@ abstract final class RosMappingTypes {
   static const startLocalizationSrv = 'marco_msgs/srv/StartLocalization';
   static const stopLocalizationSrv = 'std_srvs/srv/Trigger';
   static const localizationStatusMsg = 'marco_msgs/msg/LocalizationStatus';
+  static const saveDemoPointSrv = 'marco_msgs/srv/SaveDemoPoint';
+  static const triggerSrv = 'std_srvs/srv/Trigger';
+  static const demoStatusMsg = 'marco_msgs/msg/DemoStatus';
+  static const boolMsg = 'std_msgs/msg/Bool';
 
   static const addStationSrv = 'marco_msgs/srv/AddStation';
   static const updateStationSrv = 'marco_msgs/srv/UpdateStation';
@@ -359,6 +416,12 @@ abstract final class RosServiceResponse {
   static bool localizationStopSucceeded(Map<String, dynamic> response) =>
       response['success'] == true;
 
+  static bool demoPointSaveSucceeded(Map<String, dynamic> response) =>
+      response['success'] == true;
+
+  static bool triggerSucceeded(Map<String, dynamic> response) =>
+      response['success'] == true;
+
   static String failureMessage(
     Map<String, dynamic> response, {
     String fallback = 'ROS servisi işlemi onaylamadı',
@@ -411,6 +474,95 @@ class LocalizationStatusSnapshot {
       fieldName: msg['field_name']?.toString().trim() ?? '',
       message: msg['message']?.toString().trim() ?? '',
       mapYaml: msg['map_yaml']?.toString().trim() ?? '',
+    );
+  }
+}
+
+/// `/demo/point/save` cevabındaki harita pozu.
+class DemoPointPose {
+  final double x;
+  final double y;
+  final double theta;
+
+  const DemoPointPose({
+    required this.x,
+    required this.y,
+    required this.theta,
+  });
+
+  factory DemoPointPose.fromRosMessage(Map<String, dynamic> msg) {
+    final x = (msg['x'] as num?)?.toDouble();
+    final y = (msg['y'] as num?)?.toDouble();
+    final theta = (msg['theta'] as num?)?.toDouble();
+    if (x == null || y == null || theta == null) {
+      throw const FormatException('Demo point pose alanları geçersiz');
+    }
+    return DemoPointPose(x: x, y: y, theta: theta);
+  }
+}
+
+/// `/demo/status` anlık görüntüsü.
+class DemoStatusSnapshot {
+  final DemoStatus status;
+  final String message;
+  final String activeTarget;
+  final DemoPointPose pointA;
+  final DemoPointPose pointB;
+
+  const DemoStatusSnapshot({
+    required this.status,
+    this.message = '',
+    this.activeTarget = '',
+    required this.pointA,
+    required this.pointB,
+  });
+
+  factory DemoStatusSnapshot.fromRosMessage(Map<String, dynamic> msg) {
+    DemoPointPose pose(String key) {
+      final raw = msg[key];
+      if (raw is! Map) return const DemoPointPose(x: 0, y: 0, theta: 0);
+      return DemoPointPose.fromRosMessage(Map<String, dynamic>.from(raw));
+    }
+
+    return DemoStatusSnapshot(
+      status: DemoStatusExt.fromCode((msg['state'] as num?)?.toInt()),
+      message: msg['message']?.toString().trim() ?? '',
+      activeTarget: msg['active_target']?.toString().trim() ?? '',
+      pointA: pose('point_a'),
+      pointB: pose('point_b'),
+    );
+  }
+}
+
+/// `/demo/point/save` servis cevabı.
+class DemoPointSaveResult {
+  final bool success;
+  final String message;
+  final DemoPointPose? pose;
+  final String pointsFile;
+
+  const DemoPointSaveResult({
+    required this.success,
+    this.message = '',
+    this.pose,
+    this.pointsFile = '',
+  });
+
+  factory DemoPointSaveResult.fromServiceResponse(
+    Map<String, dynamic> response,
+  ) {
+    final rawPose = response['pose'];
+    DemoPointPose? pose;
+    if (rawPose is Map) {
+      pose = DemoPointPose.fromRosMessage(
+        Map<String, dynamic>.from(rawPose),
+      );
+    }
+    return DemoPointSaveResult(
+      success: response['success'] == true,
+      message: response['message']?.toString().trim() ?? '',
+      pose: pose,
+      pointsFile: response['points_file']?.toString().trim() ?? '',
     );
   }
 }

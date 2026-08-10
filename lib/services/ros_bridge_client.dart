@@ -34,7 +34,6 @@ class RosConnectionState {
 class RosBridgeClient {
   RosBridgeClient({
     this.connectTimeout = const Duration(seconds: 5),
-    this.messageTimeout = const Duration(seconds: 6),
     this.serviceTimeout = const Duration(seconds: 5),
     this.saveTimeout = const Duration(seconds: 40),
   });
@@ -47,7 +46,6 @@ class RosBridgeClient {
   static const manualVelocityTopic = RosMappingTopics.cmdVelManual;
 
   final Duration connectTimeout;
-  final Duration messageTimeout;
   final Duration serviceTimeout;
   final Duration saveTimeout;
 
@@ -62,6 +60,8 @@ class RosBridgeClient {
 
   void Function(MappingStatusSnapshot? status)? onMappingStatus;
   void Function(LocalizationStatusSnapshot? status)? onLocalizationStatus;
+  void Function(DemoStatusSnapshot? status)? onDemoStatus;
+  void Function(bool? detected)? onObstacleDetected;
   void Function(Uint8List? pngBytes)? onMapPreviewImage;
   void Function(MapPreviewMetadata? metadata)? onMapPreviewMetadata;
   void Function(MapPreviewRobotPixel? robotPixel)? onMapPreviewRobotPixel;
@@ -75,13 +75,11 @@ class RosBridgeClient {
   WebSocketChannel? _channel;
   StreamSubscription<dynamic>? _subscription;
   Timer? _reconnectTimer;
-  Timer? _watchdogTimer;
   Timer? _manualHeartbeat;
   final Map<String, Completer<Map<String, dynamic>>> _serviceCalls = {};
   int _requestId = 0;
   int _generation = 0;
   int _reconnectAttempt = 0;
-  DateTime? _lastInbound;
   Uri? _uri;
   bool _manualDisconnect = false;
 
@@ -97,6 +95,9 @@ class RosBridgeClient {
   void setGcsManualEnabled(bool enabled) {
     if (_gcsManualEnabled && !enabled) stopManual();
     _gcsManualEnabled = enabled;
+    if (state.value.isConnected) {
+      _publishBool(RosMappingTopics.baseManualMode, enabled);
+    }
   }
 
   static Uri normalizeAddress(String input) {
@@ -188,7 +189,6 @@ class RosBridgeClient {
       return;
     }
 
-    _lastInbound = DateTime.now();
     _subscription = channel.stream.listen(
       (data) => _onMessage(data, generation),
       onError: (_) => _onSocketClosed(generation, 'WebSocket hatasi'),
@@ -202,13 +202,6 @@ class RosBridgeClient {
       url: uri.toString(),
       message: 'Bagli',
     );
-    _watchdogTimer?.cancel();
-    _watchdogTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      final last = _lastInbound;
-      if (last != null && DateTime.now().difference(last) > messageTimeout) {
-        _onSocketClosed(generation, 'RobotStatus timeout');
-      }
-    });
   }
 
   void _sendSubscriptions() {
@@ -249,6 +242,20 @@ class RosBridgeClient {
     });
     _send({
       'op': 'subscribe',
+      'topic': RosMappingTopics.demoStatus,
+      'type': RosMappingTypes.demoStatusMsg,
+      'queue_length': 1,
+      'throttle_rate': 100,
+    });
+    _send({
+      'op': 'subscribe',
+      'topic': RosMappingTopics.obstacleDetected,
+      'type': RosMappingTypes.boolMsg,
+      'queue_length': 1,
+      'throttle_rate': 100,
+    });
+    _send({
+      'op': 'subscribe',
       'topic': RosMappingTopics.mapPreviewCompressed,
       'type': RosMappingTypes.compressedImageMsg,
       'queue_length': 1,
@@ -275,6 +282,11 @@ class RosBridgeClient {
     });
     _send({
       'op': 'advertise',
+      'topic': RosMappingTopics.baseManualMode,
+      'type': RosMappingTypes.boolMsg,
+    });
+    _send({
+      'op': 'advertise',
       'topic': RosHardwareTopics.cmdHardware,
       'type': RosHardwareTypes.stringMsg,
     });
@@ -291,7 +303,6 @@ class RosBridgeClient {
 
   void _onMessage(dynamic data, int generation) {
     if (generation != _generation || data is! String) return;
-    _lastInbound = DateTime.now();
 
     // Büyük OccupancyGrid: ham string'i isolate'e at; UI'yi kilitleme.
     if (_isOccupancyMapPublish(data)) {
@@ -348,6 +359,10 @@ class RosBridgeClient {
       _handleMappingStatus(Map<String, dynamic>.from(raw));
     } else if (topic == RosMappingTopics.localizationStatus && raw is Map) {
       _handleLocalizationStatus(Map<String, dynamic>.from(raw));
+    } else if (topic == RosMappingTopics.demoStatus && raw is Map) {
+      _handleDemoStatus(Map<String, dynamic>.from(raw));
+    } else if (topic == RosMappingTopics.obstacleDetected && raw is Map) {
+      onObstacleDetected?.call(raw['data'] == true);
     } else if (topic == RosMappingTopics.mapPreviewCompressed && raw is Map) {
       _handleMapPreviewCompressed(Map<String, dynamic>.from(raw));
     } else if (topic == RosMappingTopics.mapPreviewMetadata && raw is Map) {
@@ -372,6 +387,14 @@ class RosBridgeClient {
       );
     } catch (error) {
       debugPrint('Geçersiz /localization/status: $error');
+    }
+  }
+
+  void _handleDemoStatus(Map<String, dynamic> msg) {
+    try {
+      onDemoStatus?.call(DemoStatusSnapshot.fromRosMessage(msg));
+    } catch (error) {
+      debugPrint('Geçersiz /demo/status: $error');
     }
   }
 
@@ -421,9 +444,16 @@ class RosBridgeClient {
     String type, [
     Map<String, dynamic> args = const {},
     Duration? timeout,
+    String? requestIdPrefix,
+    bool exactRequestId = false,
   ]) async {
     if (!state.value.isConnected) throw StateError('ROS bagli degil');
-    final id = 'gui_${++_requestId}';
+    final id = exactRequestId && requestIdPrefix != null
+        ? requestIdPrefix
+        : '${requestIdPrefix ?? 'gui'}_${++_requestId}';
+    if (_serviceCalls.containsKey(id)) {
+      throw StateError('ROS servis çağrısı zaten sürüyor: $id');
+    }
     final completer = Completer<Map<String, dynamic>>();
     _serviceCalls[id] = completer;
     _send({
@@ -523,6 +553,60 @@ class RosBridgeClient {
         RosMappingTopics.localizationStop,
         RosMappingTypes.stopLocalizationSrv,
       );
+
+  Future<Map<String, dynamic>> saveDemoPoint(String pointName) {
+    final normalized = pointName.trim().toUpperCase();
+    if (normalized != 'A' && normalized != 'B') {
+      throw ArgumentError('Demo noktası yalnız A veya B olabilir');
+    }
+    return callService(
+      RosMappingTopics.demoPointSave,
+      RosMappingTypes.saveDemoPointSrv,
+      {'point_name': normalized},
+      null,
+      'save_demo_point_$normalized',
+    );
+  }
+
+  Future<Map<String, dynamic>> startSavedDemo() => callService(
+        RosMappingTopics.demoStartSaved,
+        RosMappingTypes.triggerSrv,
+        const {},
+        null,
+        'demo_start',
+        true,
+      );
+
+  Future<Map<String, dynamic>> continueDemo() => callService(
+        RosMappingTopics.demoContinue,
+        RosMappingTypes.triggerSrv,
+        const {},
+        null,
+        'demo_continue',
+        true,
+      );
+
+  Future<Map<String, dynamic>> cancelDemo() => callService(
+        RosMappingTopics.demoCancel,
+        RosMappingTypes.triggerSrv,
+        const {},
+        null,
+        'demo_cancel',
+        true,
+      );
+
+  /// Demo öncesi dead-man sıfırı ve ROS otonom mod kapısını atomik sırada yollar.
+  bool prepareSavedDemoStart() {
+    if (!state.value.isConnected) return false;
+    _manualHeartbeat?.cancel();
+    _manualHeartbeat = null;
+    _manualLinear = 0;
+    _manualAngular = 0;
+    _publishTwist(0, 0);
+    _gcsManualEnabled = false;
+    _publishBool(RosMappingTopics.baseManualMode, false);
+    return true;
+  }
 
   // ── G.2 stations stubs ───────────────────────────────────────────────────
 
@@ -687,6 +771,14 @@ class RosBridgeClient {
     });
   }
 
+  void _publishBool(String topic, bool value) {
+    _send({
+      'op': 'publish',
+      'topic': topic,
+      'msg': {'data': value},
+    });
+  }
+
   void _send(Map<String, dynamic> message) {
     try {
       _channel?.sink.add(jsonEncode(message));
@@ -707,8 +799,6 @@ class RosBridgeClient {
     if (generation != _generation || _manualDisconnect) return;
     stopManual();
     _generation++;
-    _watchdogTimer?.cancel();
-    _watchdogTimer = null;
     _subscription?.cancel();
     _subscription = null;
     final channel = _channel;
@@ -752,6 +842,8 @@ class RosBridgeClient {
   void _clearMappingPreviewCallbacks() {
     onMappingStatus?.call(null);
     onLocalizationStatus?.call(null);
+    onDemoStatus?.call(null);
+    onObstacleDetected?.call(null);
     onMapPreviewImage?.call(null);
     onMapPreviewMetadata?.call(null);
     onMapPreviewRobotPixel?.call(null);
@@ -760,7 +852,6 @@ class RosBridgeClient {
   Future<void> disconnect() async {
     _manualDisconnect = true;
     _reconnectTimer?.cancel();
-    _watchdogTimer?.cancel();
     stopManual();
     // Manuel kes: komutlar durur; last-good harita UI'da kalabilir.
     _generation++;

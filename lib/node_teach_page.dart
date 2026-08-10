@@ -23,8 +23,17 @@ const _accent = Color(0xFF42A5F5);
 const _danger = Color(0xFFE53935);
 
 /// Düğüm öğretme: yalnızca robot konumuna (pixel X/Y) basılır.
-class NodeTeachPage extends StatelessWidget {
+class NodeTeachPage extends StatefulWidget {
   const NodeTeachPage({super.key});
+
+  @override
+  State<NodeTeachPage> createState() => _NodeTeachPageState();
+}
+
+class _NodeTeachPageState extends State<NodeTeachPage> {
+  final Set<String> _savingDemoPoints = <String>{};
+  final Map<String, DemoPointSaveResult> _savedDemoPoints =
+      <String, DemoPointSaveResult>{};
 
   String _fieldName(GcsMappingModel mapping) {
     if (mapping.activeLocalizedField?.trim().isNotEmpty == true) {
@@ -37,6 +46,58 @@ class NodeTeachPage extends StatelessWidget {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
     );
+  }
+
+  Future<void> _saveDemoPoint(String pointName) async {
+    final mapping = context.read<GcsMappingModel>();
+    if (!mapping.canSaveDemoPoint || _savingDemoPoints.contains(pointName)) {
+      return;
+    }
+    setState(() => _savingDemoPoints.add(pointName));
+    try {
+      final response = await AgvService.saveDemoPoint(pointName);
+      if (!mounted) return;
+      final result = DemoPointSaveResult.fromServiceResponse(response);
+      if (!result.success) {
+        _toast(
+          context,
+          RosServiceResponse.failureMessage(
+            response,
+            fallback: '$pointName noktası kaydedilemedi',
+          ),
+        );
+        return;
+      }
+      if (result.pose == null) {
+        _toast(
+          context,
+          '$pointName noktası kaydedilemedi: servis cevabında pose yok',
+        );
+        return;
+      }
+      mapping.markDemoPointSaved(pointName, result);
+      setState(() => _savedDemoPoints[pointName] = result);
+      final pose = result.pose;
+      final poseText = pose == null
+          ? ''
+          : ' (x=${pose.x.toStringAsFixed(2)}, '
+              'y=${pose.y.toStringAsFixed(2)}, '
+              'θ=${pose.theta.toStringAsFixed(2)})';
+      _toast(
+        context,
+        result.message.isEmpty
+            ? '$pointName noktası kaydedildi$poseText'
+            : '${result.message}$poseText',
+      );
+    } catch (error) {
+      if (!mounted) return;
+      final message = error.toString().replaceFirst('Bad state: ', '');
+      _toast(context, '$pointName noktası kaydedilemedi: $message');
+    } finally {
+      if (mounted) {
+        setState(() => _savingDemoPoints.remove(pointName));
+      }
+    }
   }
 
   Future<void> _softSyncAdd(BuildContext context, TaughtFieldNode node) async {
@@ -84,7 +145,7 @@ class NodeTeachPage extends StatelessWidget {
   Future<void> _createNode(BuildContext context) async {
     final mapping = context.read<GcsMappingModel>();
     final nodes = context.read<GcsNodeModel>();
-    final robot = mapping.robotPixel;
+    final robot = mapping.visibleRobotPixel;
     if (robot == null || !robot.insideMap || !mapping.hasPreviewPng) return;
 
     final draft = await NodeEditorDialog.show(
@@ -154,11 +215,13 @@ class NodeTeachPage extends StatelessWidget {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: Text('İptal', style: TextStyle(color: _muted, fontSize: 3.sp)),
+            child:
+                Text('İptal', style: TextStyle(color: _muted, fontSize: 3.sp)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: Text('Sil', style: TextStyle(color: _danger, fontSize: 3.sp)),
+            child:
+                Text('Sil', style: TextStyle(color: _danger, fontSize: 3.sp)),
           ),
         ],
       ),
@@ -172,7 +235,7 @@ class NodeTeachPage extends StatelessWidget {
 
   void _moveToRobot(BuildContext context, TaughtFieldNode node) {
     final mapping = context.read<GcsMappingModel>();
-    final robot = mapping.robotPixel;
+    final robot = mapping.visibleRobotPixel;
     if (robot == null || !robot.insideMap) {
       _toast(context, 'Robot harita içinde değil — konum güncellenemedi');
       return;
@@ -197,7 +260,7 @@ class NodeTeachPage extends StatelessWidget {
     if (!mapping.isConnected || !mapping.hasPreviewPng) return false;
     if (mapping.activeLocalizedField != null) return true;
     final status = mapping.liveMappingStatus;
-    return status == MappingStatus.mapping || status == MappingStatus.idle;
+    return status == MappingStatus.mapping;
   }
 
   Future<void> _openScenario(BuildContext context) async {
@@ -218,11 +281,10 @@ class NodeTeachPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final mapping = context.watch<GcsMappingModel>();
     final nodes = context.watch<GcsNodeModel>();
-    final robot = mapping.robotPixel;
+    final robot = mapping.visibleRobotPixel;
     final insideMap = robot?.insideMap == true;
     final specContext = _specTeachContext(mapping);
-    final canCreate =
-        mapping.isConnected && mapping.hasPreviewPng && insideMap;
+    final canCreate = mapping.isConnected && mapping.hasPreviewPng && insideMap;
     final fieldHint = _fieldName(mapping).isEmpty ? null : _fieldName(mapping);
 
     final markers = nodes.nodes
@@ -294,7 +356,7 @@ class NodeTeachPage extends StatelessWidget {
                       ? MapPreviewStage(
                           pngBytes: mapping.previewPng!,
                           metadata: mapping.previewMetadata,
-                          robotPixel: mapping.robotPixel,
+                          robotPixel: robot,
                           awaitingFresh: mapping.awaitingFreshPreview,
                           sourceLabel: mapping.previewSourceLabel,
                           nodeMarkers: markers,
@@ -313,6 +375,14 @@ class NodeTeachPage extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                      _DemoPointPanel(
+                        enabled: mapping.canSaveDemoPoint,
+                        localizationStatus: mapping.localizationStatus,
+                        savingPoints: _savingDemoPoints,
+                        savedPoints: _savedDemoPoints,
+                        onSave: _saveDemoPoint,
+                      ),
+                      const Divider(height: 1, color: _borderC),
                       Expanded(
                         child: _NodeListPanel(
                           nodes: nodes.nodes,
@@ -378,6 +448,113 @@ class NodeTeachPage extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _DemoPointPanel extends StatelessWidget {
+  final bool enabled;
+  final LocalizationStatus? localizationStatus;
+  final Set<String> savingPoints;
+  final Map<String, DemoPointSaveResult> savedPoints;
+  final Future<void> Function(String pointName) onSave;
+
+  const _DemoPointPanel({
+    required this.enabled,
+    required this.localizationStatus,
+    required this.savingPoints,
+    required this.savedPoints,
+    required this.onSave,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.all(2.w),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Demo A/B Noktaları',
+            style: TextStyle(
+              color: _bright,
+              fontSize: 3.2.sp,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          SizedBox(height: 0.4.h),
+          Text(
+            enabled
+                ? 'Lokalizasyon aktif — aracı konumlandırıp kaydedin.'
+                : 'Butonlar LOCALIZING=3 durumunda açılır '
+                    '(${localizationStatus?.etiket ?? 'durum bekleniyor'}).',
+            style: TextStyle(
+              color: enabled ? const Color(0xFF43A047) : _warn,
+              fontSize: 2.6.sp,
+            ),
+          ),
+          SizedBox(height: 0.8.h),
+          Row(
+            children: [
+              Expanded(child: _buildButton('A')),
+              SizedBox(width: 1.w),
+              Expanded(child: _buildButton('B')),
+            ],
+          ),
+          for (final point in const ['A', 'B'])
+            if (savedPoints[point] case final result?)
+              Padding(
+                padding: EdgeInsets.only(top: 0.5.h),
+                child: Text(
+                  _resultText(point, result),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: const Color(0xFF81C784),
+                    fontSize: 2.4.sp,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildButton(String point) {
+    final saving = savingPoints.contains(point);
+    return SizedBox(
+      height: 38.h,
+      child: ElevatedButton(
+        onPressed: enabled && !saving ? () => unawaited(onSave(point)) : null,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: _accent,
+          disabledBackgroundColor: const Color(0xFF2A2A2A),
+          foregroundColor: Colors.white,
+          disabledForegroundColor: _muted,
+          elevation: 0,
+          padding: EdgeInsets.symmetric(horizontal: 1.w),
+        ),
+        child: saving
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Text(
+                '$point Noktasını Kaydet',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 2.4.sp),
+              ),
+      ),
+    );
+  }
+
+  String _resultText(String point, DemoPointSaveResult result) {
+    final pose = result.pose;
+    if (pose == null) return '$point kaydedildi';
+    return '$point: x=${pose.x.toStringAsFixed(2)}, '
+        'y=${pose.y.toStringAsFixed(2)}, '
+        'θ=${pose.theta.toStringAsFixed(2)}';
   }
 }
 
