@@ -1,10 +1,9 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 
 import 'data_model.dart';
 import 'models/gcs_node_model.dart';
-import 'services/agv_service.dart';
 import 'services/ros_gcs_contract.dart';
 import 'services/ros_mapping_contract.dart';
 
@@ -63,9 +62,7 @@ class _ScenarioPageState extends State<ScenarioPage> {
   List<String> get _allPlaces => _nodeByLabel.keys.toList(growable: false);
   String arota = "";
   bool senaryoIsDone = false;
-  bool _submitting = false;
   bool _submitted = false;
-  String? _taskId;
   String? _hoveredCode; // hover efekti için
 
   final Map<String, String> _qrMap = const {
@@ -196,7 +193,6 @@ class _ScenarioPageState extends State<ScenarioPage> {
         arota = "";
         senaryoIsDone = false;
         _submitted = false;
-        _taskId = null;
       });
 
   void _returnData() => Navigator.pop(context, arota);
@@ -221,8 +217,8 @@ class _ScenarioPageState extends State<ScenarioPage> {
     return _stationTypes['C']!;
   }
 
-  Future<void> _buildScenarioAndSend() async {
-    if (_selected.isEmpty || _submitting || _submitted) return;
+  void _buildScenarioAndSend() {
+    if (_selected.isEmpty || _submitted) return;
     if (_selected.length.isOdd ||
         _selected.asMap().entries.any((entry) => entry.key.isEven
             ? !_isAlma(entry.value)
@@ -239,48 +235,21 @@ class _ScenarioPageState extends State<ScenarioPage> {
     setState(() {
       senaryoIsDone = true;
       arota = routeNodes.join(' → ');
+      _submitted = true;
     });
-    if (!AgvService.ros.state.value.isConnected) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text(
-            'Senaryo yerel olarak hazırlandı; ROS bağlı olmadığı için gönderilmedi.'),
-      ));
-      return;
-    }
-    setState(() => _submitting = true);
-    try {
-      _taskId ??= 'gui_${DateTime.now().microsecondsSinceEpoch}';
-      final response = await AgvService.submitMission(
-        taskId: _taskId!,
-        routeNodes: routeNodes,
-        returnHome: true,
-      );
-      if (response['accepted'] != true) {
-        throw StateError(response['message']?.toString() ?? 'Görev reddedildi');
-      }
-      if (mounted) {
-        setState(() => _submitted = true);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(response['message']?.toString() ??
-              'Görev kabul edildi; başlatma bekleniyor.'),
-        ));
-      }
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Görev gönderilemedi: $error')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _submitting = false);
-    }
+
+    // TODO: Geçici sunum akışı kaldırıldığında /mission/submit çağrısını
+    // yeniden bağla ve yalnız ROS kabulünden sonra başarı mesajını göster.
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Navigasyon başladı')),
+    );
   }
 
   // ── UI ───────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
-    final canSave = _selected.isNotEmpty && !_submitting && !_submitted;
+    final canSave = _selected.isNotEmpty && !_submitted;
 
     return Scaffold(
       backgroundColor: _bg,

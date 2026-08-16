@@ -62,6 +62,7 @@ class RosBridgeClient {
   void Function(LocalizationStatusSnapshot? status)? onLocalizationStatus;
   void Function(DemoStatusSnapshot? status)? onDemoStatus;
   void Function(bool? detected)? onObstacleDetected;
+  void Function(bool? enabled)? onBuzzerState;
   void Function(Uint8List? pngBytes)? onMapPreviewImage;
   void Function(MapPreviewMetadata? metadata)? onMapPreviewMetadata;
   void Function(MapPreviewRobotPixel? robotPixel)? onMapPreviewRobotPixel;
@@ -256,6 +257,13 @@ class RosBridgeClient {
     });
     _send({
       'op': 'subscribe',
+      'topic': RosHardwareTopics.buzzerState,
+      'type': RosHardwareTypes.boolMsg,
+      'queue_length': 1,
+      'throttle_rate': 100,
+    });
+    _send({
+      'op': 'subscribe',
       'topic': RosMappingTopics.mapPreviewCompressed,
       'type': RosMappingTypes.compressedImageMsg,
       'queue_length': 1,
@@ -363,6 +371,8 @@ class RosBridgeClient {
       _handleDemoStatus(Map<String, dynamic>.from(raw));
     } else if (topic == RosMappingTopics.obstacleDetected && raw is Map) {
       onObstacleDetected?.call(raw['data'] == true);
+    } else if (topic == RosHardwareTopics.buzzerState && raw is Map) {
+      onBuzzerState?.call(raw['data'] == true);
     } else if (topic == RosMappingTopics.mapPreviewCompressed && raw is Map) {
       _handleMapPreviewCompressed(Map<String, dynamic>.from(raw));
     } else if (topic == RosMappingTopics.mapPreviewMetadata && raw is Map) {
@@ -554,6 +564,14 @@ class RosBridgeClient {
         RosMappingTypes.stopLocalizationSrv,
       );
 
+  Future<Map<String, dynamic>> setBuzzerEnabled(bool enabled) => callService(
+        RosHardwareTopics.buzzerSetEnabled,
+        RosHardwareTypes.setBoolSrv,
+        {'data': enabled},
+        null,
+        'buzzer_set_enabled',
+      );
+
   Future<Map<String, dynamic>> saveDemoPoint(String pointName) {
     final normalized = pointName.trim().toUpperCase();
     if (normalized != 'A' && normalized != 'B') {
@@ -565,6 +583,34 @@ class RosBridgeClient {
       {'point_name': normalized},
       null,
       'save_demo_point_$normalized',
+    );
+  }
+
+  Future<Map<String, dynamic>> saveDemoRoutePoint(String targetName) {
+    final normalized = targetName.trim().toUpperCase();
+    if (normalized != 'A' && normalized != 'B') {
+      throw ArgumentError('Demo rota hedefi yalnız A veya B olabilir');
+    }
+    return callService(
+      RosMappingTopics.demoRoutePointSave,
+      RosMappingTypes.saveDemoRoutePointSrv,
+      {'target_name': normalized},
+      null,
+      'save_demo_route_point_$normalized',
+    );
+  }
+
+  Future<Map<String, dynamic>> clearDemoRoute(String targetName) {
+    final normalized = targetName.trim().toUpperCase();
+    if (normalized != 'A' && normalized != 'B') {
+      throw ArgumentError('Demo rota hedefi yalnız A veya B olabilir');
+    }
+    return callService(
+      RosMappingTopics.demoRouteClear,
+      RosMappingTypes.clearDemoRouteSrv,
+      {'target_name': normalized},
+      null,
+      'clear_demo_route_$normalized',
     );
   }
 
@@ -806,6 +852,8 @@ class RosBridgeClient {
       unawaited(_closeSink(channel));
     }
     _channel = null;
+    // Buzzer durumu last-good tutulmaz; yeniden bağlantıda topic beklenir.
+    onBuzzerState?.call(null);
     // Geçici kopma: harita last-good kalsın (preview + occupancy silinmez).
     // GCS manuel tercih (_gcsManualEnabled) korunur.
     for (final call in _serviceCalls.values) {
@@ -844,6 +892,7 @@ class RosBridgeClient {
     onLocalizationStatus?.call(null);
     onDemoStatus?.call(null);
     onObstacleDetected?.call(null);
+    onBuzzerState?.call(null);
     onMapPreviewImage?.call(null);
     onMapPreviewMetadata?.call(null);
     onMapPreviewRobotPixel?.call(null);
@@ -862,6 +911,7 @@ class RosBridgeClient {
       await _closeSink(channel);
     }
     _channel = null;
+    onBuzzerState?.call(null);
     state.value = RosConnectionState(
       RosConnectionStatus.disconnected,
       url: url,

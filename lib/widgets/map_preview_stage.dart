@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -19,6 +20,23 @@ class MapPreviewNodeMarker {
     required this.pixelY,
     required this.color,
   });
+}
+
+MapPreviewNodeMarker? mapPreviewDemoPointMarker({
+  required String label,
+  required DemoPointPose? pose,
+  required MapPreviewMetadata? metadata,
+  required Color color,
+}) {
+  if (pose == null || metadata == null) return null;
+  final pixel = metadata.mapToPixel(pose.x, pose.y);
+  if (!pixel.insideMap) return null;
+  return MapPreviewNodeMarker(
+    label: label,
+    pixelX: pixel.x,
+    pixelY: pixel.y,
+    color: color,
+  );
 }
 
 /// Canlı `/map_preview` PNG + robot pikseli (döndürme/aynalama yok; yalnız ikon yaw).
@@ -314,7 +332,7 @@ class _RobotOverlay extends StatelessWidget {
       width: iconSize,
       height: iconSize,
       child: Transform.rotate(
-        angle: robot.screenYaw,
+        angle: robot.screenYaw + math.pi / 2,
         child: const Icon(
           Icons.navigation,
           size: iconSize,

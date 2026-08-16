@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:liftant_v2_bitirme/services/ros_bridge_client.dart';
 import 'package:liftant_v2_bitirme/services/agv_service.dart';
 import 'package:liftant_v2_bitirme/services/ros_gcs_contract.dart';
+import 'package:liftant_v2_bitirme/services/ros_hardware_contract.dart';
 import 'package:liftant_v2_bitirme/services/ros_mapping_contract.dart';
 import 'package:liftant_v2_bitirme/data_model.dart';
 
@@ -114,6 +115,38 @@ void main() {
     );
   });
 
+  test('demo pozu preview metadata ile PNG pikseline çevrilir', () {
+    const metadata = MapPreviewMetadata(
+      width: 200,
+      height: 200,
+      resolution: 0.05,
+      originX: -5,
+      originY: -5,
+    );
+    final center = metadata.mapToPixel(0, 0);
+    expect(center.x, closeTo(100, 1e-9));
+    expect(center.y, closeTo(99, 1e-9));
+    expect(center.insideMap, isTrue);
+
+    final outside = metadata.mapToPixel(20, 20);
+    expect(outside.insideMap, isFalse);
+  });
+
+  test('demo pozu dönüşümünde preview origin yaw uygulanır', () {
+    const metadata = MapPreviewMetadata(
+      width: 10,
+      height: 10,
+      resolution: 1,
+      originX: 10,
+      originY: 20,
+      originYaw: 1.5707963267948966,
+    );
+    final pixel = metadata.mapToPixel(10, 21);
+    expect(pixel.x, closeTo(1, 1e-9));
+    expect(pixel.y, closeTo(9, 1e-9));
+    expect(pixel.insideMap, isTrue);
+  });
+
   test('gercek ROS dugum eslemesi yalniz rota grafindan gelir', () {
     expect(
       RosGcsContract.nodeForPoint(
@@ -178,6 +211,11 @@ void main() {
         }));
         socket.add(jsonEncode({
           'op': 'publish',
+          'topic': '/buzzer/state',
+          'msg': {'data': false},
+        }));
+        socket.add(jsonEncode({
+          'op': 'publish',
           'topic': '/map',
           'msg': {
             'info': {
@@ -199,6 +237,8 @@ void main() {
     var server = await startServer();
     final port = server.port;
     final client = RosBridgeClient();
+    final buzzerStates = <bool?>[];
+    client.onBuzzerState = buzzerStates.add;
     final firstMap = Completer<OccupancyGridMetadata>();
     client.onMapMetadata = (metadata) {
       if (metadata != null && !firstMap.isCompleted) {
@@ -213,6 +253,14 @@ void main() {
           message['op'] == 'subscribe' && message['topic'] == '/map'),
       isTrue,
     );
+    expect(
+      received.any((message) =>
+          message['op'] == 'subscribe' &&
+          message['topic'] == '/buzzer/state' &&
+          message['type'] == 'std_msgs/msg/Bool'),
+      isTrue,
+    );
+    expect(buzzerStates, contains(false));
     expect(
       received.any((message) =>
           message['op'] == 'subscribe' &&
@@ -277,6 +325,17 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 100));
     }
     expect(client.state.value.isConnected, isTrue);
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(
+      received
+          .where((message) =>
+              message['op'] == 'subscribe' &&
+              message['topic'] == '/buzzer/state')
+          .length,
+      greaterThanOrEqualTo(2),
+    );
+    expect(buzzerStates, contains(null));
+    expect(buzzerStates.last, isFalse);
     await client.dispose();
     await activeSocket?.close();
     await server.close(force: true);
@@ -387,11 +446,32 @@ void main() {
         check: RosServiceResponse.localizationStopSucceeded,
       ),
       (
+        name: '/buzzer/set_enabled',
+        type: RosHardwareTypes.setBoolSrv,
+        key: 'success',
+        call: () => client.setBuzzerEnabled(true),
+        check: RosServiceResponse.triggerSucceeded,
+      ),
+      (
         name: '/demo/point/save',
         type: RosMappingTypes.saveDemoPointSrv,
         key: 'success',
         call: () => client.saveDemoPoint('A'),
         check: RosServiceResponse.demoPointSaveSucceeded,
+      ),
+      (
+        name: '/demo/route/point/save',
+        type: RosMappingTypes.saveDemoRoutePointSrv,
+        key: 'success',
+        call: () => client.saveDemoRoutePoint('A'),
+        check: RosServiceResponse.demoRouteOperationSucceeded,
+      ),
+      (
+        name: '/demo/route/clear',
+        type: RosMappingTypes.clearDemoRouteSrv,
+        key: 'success',
+        call: () => client.clearDemoRoute('B'),
+        check: RosServiceResponse.demoRouteOperationSucceeded,
       ),
       (
         name: '/demo/start_saved',
@@ -428,6 +508,18 @@ void main() {
       if (service.name == '/demo/point/save') {
         expect(received.last['args'], {'point_name': 'A'});
         expect(received.last['id'], startsWith('save_demo_point_A_'));
+      }
+      if (service.name == '/buzzer/set_enabled') {
+        expect(received.last['args'], {'data': true});
+        expect(received.last['id'], startsWith('buzzer_set_enabled_'));
+      }
+      if (service.name == '/demo/route/point/save') {
+        expect(received.last['args'], {'target_name': 'A'});
+        expect(received.last['id'], startsWith('save_demo_route_point_A_'));
+      }
+      if (service.name == '/demo/route/clear') {
+        expect(received.last['args'], {'target_name': 'B'});
+        expect(received.last['id'], startsWith('clear_demo_route_B_'));
       }
       const demoIds = {
         '/demo/start_saved': 'demo_start',

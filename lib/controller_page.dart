@@ -69,6 +69,11 @@ class _ControllerPageState extends State<ControllerPage>
   bool isConnectionPanelOpen = false;
   final TextEditingController _ipController = TextEditingController();
   String _lastRosStateLog = '';
+  bool? _buzzerEnabled;
+  bool _buzzerCommandInFlight = false;
+  bool? _pendingBuzzerTarget;
+  bool _buzzerServiceAccepted = false;
+  bool? _pendingBuzzerObservedState;
 
   @override
   void initState() {
@@ -88,6 +93,7 @@ class _ControllerPageState extends State<ControllerPage>
     AgvService.ros.onLocalizationStatus = _onLocalizationStatus;
     AgvService.ros.onDemoStatus = _onDemoStatus;
     AgvService.ros.onObstacleDetected = _onObstacleDetected;
+    AgvService.ros.onBuzzerState = _onBuzzerState;
     AgvService.ros.onMapPreviewImage = _onMapPreviewImage;
     AgvService.ros.onMapPreviewMetadata = _onMapPreviewMetadata;
     AgvService.ros.onMapPreviewRobotPixel = _onMapPreviewRobotPixel;
@@ -369,6 +375,106 @@ class _ControllerPageState extends State<ControllerPage>
       _onMissionEvent('Engel algılandı, araç bekliyor');
     } else if (!detected && previous) {
       _onMissionEvent('Engel kalktı; ROS hareketi otomatik sürdürecek');
+    }
+  }
+
+  void _onBuzzerState(bool? enabled) {
+    if (!mounted) return;
+    if (enabled != null &&
+        _pendingBuzzerTarget == enabled &&
+        !_buzzerServiceAccepted) {
+      _pendingBuzzerObservedState = enabled;
+      return;
+    }
+    final previous = _buzzerEnabled;
+    setState(() {
+      _buzzerEnabled = enabled;
+      if (enabled == null) {
+        _buzzerCommandInFlight = false;
+        _pendingBuzzerTarget = null;
+        _buzzerServiceAccepted = false;
+        _pendingBuzzerObservedState = null;
+      } else if (_pendingBuzzerTarget == enabled && _buzzerServiceAccepted) {
+        _buzzerCommandInFlight = false;
+        _pendingBuzzerTarget = null;
+        _buzzerServiceAccepted = false;
+        _pendingBuzzerObservedState = null;
+      }
+    });
+    if (enabled != null && previous != enabled) {
+      _onMissionEvent('Buzzer: ${enabled ? 'Açık' : 'Kapalı'}');
+    }
+  }
+
+  Future<void> _toggleBuzzer() async {
+    if (_buzzerCommandInFlight) return;
+    if (!AgvService.ros.state.value.isConnected) {
+      _showUserError('Buzzer komutu gönderilemedi: ROS bağlı değil');
+      return;
+    }
+    final current = _buzzerEnabled;
+    if (current == null) {
+      _showUserError('Buzzer durumu bekleniyor (/buzzer/state)');
+      return;
+    }
+
+    final target = !current;
+    setState(() {
+      _buzzerCommandInFlight = true;
+      _pendingBuzzerTarget = target;
+      _buzzerServiceAccepted = false;
+      _pendingBuzzerObservedState = null;
+    });
+    try {
+      final response = await AgvService.setBuzzerEnabled(target);
+      if (!mounted) return;
+      if (response['success'] != true) {
+        throw StateError(
+          RosServiceResponse.failureMessage(
+            response,
+            fallback: 'Buzzer komutu reddedildi',
+          ),
+        );
+      }
+      final observedTarget = _pendingBuzzerObservedState == target;
+      final previous = _buzzerEnabled;
+      setState(() {
+        _buzzerServiceAccepted = true;
+        if (observedTarget) {
+          _buzzerEnabled = target;
+          _buzzerCommandInFlight = false;
+          _pendingBuzzerTarget = null;
+          _buzzerServiceAccepted = false;
+          _pendingBuzzerObservedState = null;
+        }
+      });
+      if (observedTarget && previous != target) {
+        _onMissionEvent('Buzzer: ${target ? 'Açık' : 'Kapalı'}');
+      }
+      final message = response['message']?.toString().trim() ?? '';
+      _onMissionEvent(
+        message.isEmpty
+            ? 'Buzzer ${target ? 'açma' : 'kapatma'} komutu kabul edildi; durum bekleniyor'
+            : message,
+      );
+      // Görsel durum yalnız /buzzer/state hedef değeri yayınlayınca değişir.
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        if (_pendingBuzzerTarget == target) {
+          _buzzerCommandInFlight = false;
+          _pendingBuzzerTarget = null;
+          _buzzerServiceAccepted = false;
+          _pendingBuzzerObservedState = null;
+        }
+      });
+      final userError = _rosServiceUserError(error).replaceFirst(
+        'Bad state: ',
+        '',
+      );
+      _showUserError(
+        'Buzzer komutu gönderilemedi: $userError',
+      );
     }
   }
 
@@ -763,7 +869,16 @@ class _ControllerPageState extends State<ControllerPage>
       RosConnectionStatus.error => ConnDurum.hata,
       RosConnectionStatus.disconnected => ConnDurum.cevrimdisi,
     };
-    setState(() => isConnected = rosState.isConnected);
+    setState(() {
+      isConnected = rosState.isConnected;
+      if (!rosState.isConnected) {
+        _buzzerEnabled = null;
+        _buzzerCommandInFlight = false;
+        _pendingBuzzerTarget = null;
+        _buzzerServiceAccepted = false;
+        _pendingBuzzerObservedState = null;
+      }
+    });
     // PLC durumu yalnızca robot /robot_status üzerinden gelir.
     // WiFi/ROS kopunca eski "PLC Bağlı" bilgisini tutma.
     if (rosState.isConnected) {
@@ -995,6 +1110,7 @@ class _ControllerPageState extends State<ControllerPage>
     AgvService.ros.onLocalizationStatus = null;
     AgvService.ros.onDemoStatus = null;
     AgvService.ros.onObstacleDetected = null;
+    AgvService.ros.onBuzzerState = null;
     AgvService.ros.onMapPreviewImage = null;
     AgvService.ros.onMapPreviewMetadata = null;
     AgvService.ros.onMapPreviewRobotPixel = null;
@@ -1020,6 +1136,17 @@ class _ControllerPageState extends State<ControllerPage>
     // Tek kaynak: GCS çalışma modu (Manuel / Otonom)
     final oto = !conn.fizikselManuelMod;
     final calismaModu = conn.fizikselManuelMod ? 'Manuel' : 'Otonom';
+    final buzzerButtonText = _buzzerCommandInFlight
+        ? (_pendingBuzzerTarget == true
+            ? 'Buzzer Açılıyor'
+            : 'Buzzer Kapatılıyor')
+        : _buzzerEnabled == null
+            ? 'Buzzer Durumu Bekleniyor'
+            : _buzzerEnabled!
+                ? 'Buzzer Kapat'
+                : 'Buzzer Aç';
+    final buzzerButtonEnabled =
+        isConnected && _buzzerEnabled != null && !_buzzerCommandInFlight;
 
     const Color bg = Color(0xFF121212);
     const Color panelBg = Color(0xFF1A1A1A);
@@ -1245,15 +1372,12 @@ class _ControllerPageState extends State<ControllerPage>
                                       SizedBox(width: 1.5.w),
                                       Expanded(
                                           child: NormalButton(
-                                        text: "Buzzer",
+                                        text: buzzerButtonText,
                                         assignedKey: LogicalKeyboardKey.keyB,
-                                        onPressed: () {
-                                          if (!AgvService.triggerBuzzer()) {
-                                            _onMissionEvent(
-                                              'Buzzer komutu gönderilemedi: ROS bağlı değil',
-                                            );
-                                          }
-                                        },
+                                        enabled: buzzerButtonEnabled,
+                                        active: _buzzerEnabled == true,
+                                        onPressed: () =>
+                                            unawaited(_toggleBuzzer()),
                                       )),
                                     ],
                                   ),
@@ -2704,6 +2828,21 @@ class _ControllerPageState extends State<ControllerPage>
       case 0:
         final Widget body;
         if (mapping.hasPreviewPng) {
+          final demoMarkers = <MapPreviewNodeMarker>[];
+          final demoA = mapPreviewDemoPointMarker(
+            label: 'A',
+            pose: mapping.demoPointA,
+            metadata: mapping.previewMetadata,
+            color: const Color(0xFF29B6F6),
+          );
+          final demoB = mapPreviewDemoPointMarker(
+            label: 'B',
+            pose: mapping.demoPointB,
+            metadata: mapping.previewMetadata,
+            color: const Color(0xFFFF7043),
+          );
+          if (demoA != null) demoMarkers.add(demoA);
+          if (demoB != null) demoMarkers.add(demoB);
           // Öncelik: /map_preview PNG (+ robot_pixel). Last-good kopunca kalır.
           body = MapPreviewStage(
             pngBytes: mapping.previewPng!,
@@ -2711,6 +2850,7 @@ class _ControllerPageState extends State<ControllerPage>
             robotPixel: mapping.visibleRobotPixel,
             awaitingFresh: mapping.awaitingFreshPreview,
             sourceLabel: mapping.previewSourceLabel,
+            nodeMarkers: demoMarkers,
           );
         } else if (_mapMetadata != null) {
           // Geçici fallback: eski OccupancyGrid.

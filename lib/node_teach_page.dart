@@ -32,6 +32,8 @@ class NodeTeachPage extends StatefulWidget {
 
 class _NodeTeachPageState extends State<NodeTeachPage> {
   final Set<String> _savingDemoPoints = <String>{};
+  final Set<String> _savingDemoRoutePoints = <String>{};
+  final Set<String> _clearingDemoRoutes = <String>{};
   final Map<String, DemoPointSaveResult> _savedDemoPoints =
       <String, DemoPointSaveResult>{};
 
@@ -96,6 +98,104 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
     } finally {
       if (mounted) {
         setState(() => _savingDemoPoints.remove(pointName));
+      }
+    }
+  }
+
+  Future<void> _saveDemoRoutePoint(String targetName) async {
+    final mapping = context.read<GcsMappingModel>();
+    if (!mapping.canSaveDemoPoint ||
+        _savingDemoRoutePoints.contains(targetName) ||
+        _clearingDemoRoutes.contains(targetName)) {
+      return;
+    }
+    setState(() => _savingDemoRoutePoints.add(targetName));
+    try {
+      final response = await AgvService.saveDemoRoutePoint(targetName);
+      if (!mounted) return;
+      if (!RosServiceResponse.demoRouteOperationSucceeded(response)) {
+        _toast(
+          context,
+          RosServiceResponse.failureMessage(
+            response,
+            fallback: '$targetName rota noktası kaydedilemedi',
+          ),
+        );
+        return;
+      }
+      final message = response['message']?.toString().trim() ?? '';
+      _toast(
+        context,
+        message.isEmpty
+            ? '$targetName rotasına dönüş noktası eklendi'
+            : message,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      final message = error.toString().replaceFirst('Bad state: ', '');
+      _toast(context, '$targetName rota noktası kaydedilemedi: $message');
+    } finally {
+      if (mounted) {
+        setState(() => _savingDemoRoutePoints.remove(targetName));
+      }
+    }
+  }
+
+  Future<void> _clearDemoRoute(String targetName) async {
+    final mapping = context.read<GcsMappingModel>();
+    if (!mapping.canSaveDemoPoint ||
+        _savingDemoRoutePoints.contains(targetName) ||
+        _clearingDemoRoutes.contains(targetName)) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: Text('$targetName rotasını temizle'),
+            content: Text(
+              '$targetName rotasına kaydedilmiş bütün dönüş noktaları silinecek.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Vazgeç'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Rotayı Temizle'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed || !mounted) return;
+
+    setState(() => _clearingDemoRoutes.add(targetName));
+    try {
+      final response = await AgvService.clearDemoRoute(targetName);
+      if (!mounted) return;
+      if (!RosServiceResponse.demoRouteOperationSucceeded(response)) {
+        _toast(
+          context,
+          RosServiceResponse.failureMessage(
+            response,
+            fallback: '$targetName rotası temizlenemedi',
+          ),
+        );
+        return;
+      }
+      final message = response['message']?.toString().trim() ?? '';
+      _toast(
+        context,
+        message.isEmpty ? '$targetName rotası temizlendi' : message,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      final message = error.toString().replaceFirst('Bad state: ', '');
+      _toast(context, '$targetName rotası temizlenemedi: $message');
+    } finally {
+      if (mounted) {
+        setState(() => _clearingDemoRoutes.remove(targetName));
       }
     }
   }
@@ -296,7 +396,21 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
             color: n.markerColor,
           ),
         )
-        .toList(growable: false);
+        .toList(growable: true);
+    final demoA = mapPreviewDemoPointMarker(
+      label: 'A',
+      pose: mapping.demoPointA,
+      metadata: mapping.previewMetadata,
+      color: const Color(0xFF29B6F6),
+    );
+    final demoB = mapPreviewDemoPointMarker(
+      label: 'B',
+      pose: mapping.demoPointB,
+      metadata: mapping.previewMetadata,
+      color: const Color(0xFFFF7043),
+    );
+    if (demoA != null) markers.add(demoA);
+    if (demoB != null) markers.add(demoB);
 
     return Scaffold(
       backgroundColor: _bg,
@@ -380,7 +494,11 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
                         localizationStatus: mapping.localizationStatus,
                         savingPoints: _savingDemoPoints,
                         savedPoints: _savedDemoPoints,
+                        savingRoutePoints: _savingDemoRoutePoints,
+                        clearingRoutes: _clearingDemoRoutes,
                         onSave: _saveDemoPoint,
+                        onSaveRoutePoint: _saveDemoRoutePoint,
+                        onClearRoute: _clearDemoRoute,
                       ),
                       const Divider(height: 1, color: _borderC),
                       Expanded(
@@ -456,14 +574,22 @@ class _DemoPointPanel extends StatelessWidget {
   final LocalizationStatus? localizationStatus;
   final Set<String> savingPoints;
   final Map<String, DemoPointSaveResult> savedPoints;
+  final Set<String> savingRoutePoints;
+  final Set<String> clearingRoutes;
   final Future<void> Function(String pointName) onSave;
+  final Future<void> Function(String targetName) onSaveRoutePoint;
+  final Future<void> Function(String targetName) onClearRoute;
 
   const _DemoPointPanel({
     required this.enabled,
     required this.localizationStatus,
     required this.savingPoints,
     required this.savedPoints,
+    required this.savingRoutePoints,
+    required this.clearingRoutes,
     required this.onSave,
+    required this.onSaveRoutePoint,
+    required this.onClearRoute,
   });
 
   @override
@@ -482,17 +608,6 @@ class _DemoPointPanel extends StatelessWidget {
             ),
           ),
           SizedBox(height: 0.4.h),
-          Text(
-            enabled
-                ? 'Lokalizasyon aktif — aracı konumlandırıp kaydedin.'
-                : 'Butonlar LOCALIZING=3 durumunda açılır '
-                    '(${localizationStatus?.etiket ?? 'durum bekleniyor'}).',
-            style: TextStyle(
-              color: enabled ? const Color(0xFF43A047) : _warn,
-              fontSize: 2.6.sp,
-            ),
-          ),
-          SizedBox(height: 0.8.h),
           Row(
             children: [
               Expanded(child: _buildButton('A')),
@@ -500,6 +615,10 @@ class _DemoPointPanel extends StatelessWidget {
               Expanded(child: _buildButton('B')),
             ],
           ),
+          SizedBox(height: 0.8.h),
+          _buildRouteControls('A'),
+          SizedBox(height: 0.6.h),
+          _buildRouteControls('B'),
           for (final point in const ['A', 'B'])
             if (savedPoints[point] case final result?)
               Padding(
@@ -546,6 +665,67 @@ class _DemoPointPanel extends StatelessWidget {
                 style: TextStyle(fontSize: 2.4.sp),
               ),
       ),
+    );
+  }
+
+  Widget _buildRouteControls(String target) {
+    final saving = savingRoutePoints.contains(target);
+    final clearing = clearingRoutes.contains(target);
+    final busy = saving || clearing;
+    return Row(
+      children: [
+        SizedBox(
+          width: 5.w,
+          child: Text(
+            '$target Rotası',
+            style: TextStyle(color: _bright, fontSize: 2.4.sp),
+          ),
+        ),
+        SizedBox(width: 0.6.w),
+        Expanded(
+          child: SizedBox(
+            height: 34.h,
+            child: OutlinedButton.icon(
+              onPressed: enabled && !busy
+                  ? () => unawaited(onSaveRoutePoint(target))
+                  : null,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _bright,
+                disabledForegroundColor: _muted,
+                side: const BorderSide(color: _borderC),
+                padding: EdgeInsets.symmetric(horizontal: 0.6.w),
+              ),
+              icon: saving
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(Icons.subdirectory_arrow_left, size: 2.8.sp),
+              label: Text(
+                'Dönüş Noktası Ekle',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 2.1.sp),
+              ),
+            ),
+          ),
+        ),
+        SizedBox(width: 0.5.w),
+        IconButton(
+          tooltip: '$target rotasını temizle',
+          onPressed:
+              enabled && !busy ? () => unawaited(onClearRoute(target)) : null,
+          color: _danger,
+          disabledColor: _muted,
+          icon: clearing
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.delete_outline),
+        ),
+      ],
     );
   }
 

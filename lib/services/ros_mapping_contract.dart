@@ -5,6 +5,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -80,8 +81,8 @@ extension DemoStatusExt on DemoStatus {
         DemoStatus.canceled => 'İptal edildi',
       };
 
-  bool get isRunning => code >= DemoStatus.starting.code &&
-      code <= DemoStatus.turningB.code;
+  bool get isRunning =>
+      code >= DemoStatus.starting.code && code <= DemoStatus.turningB.code;
 
   static DemoStatus fromCode(int? code) {
     if (code == null || code < 0 || code >= DemoStatus.values.length) {
@@ -229,6 +230,8 @@ abstract final class RosMappingTopics {
   static const localizationStatus = '/localization/status';
 
   static const demoPointSave = '/demo/point/save';
+  static const demoRoutePointSave = '/demo/route/point/save';
+  static const demoRouteClear = '/demo/route/clear';
   static const demoStartSaved = '/demo/start_saved';
   static const demoContinue = '/demo/continue';
   static const demoCancel = '/demo/cancel';
@@ -269,6 +272,8 @@ abstract final class RosMappingTypes {
   static const stopLocalizationSrv = 'std_srvs/srv/Trigger';
   static const localizationStatusMsg = 'marco_msgs/msg/LocalizationStatus';
   static const saveDemoPointSrv = 'marco_msgs/srv/SaveDemoPoint';
+  static const saveDemoRoutePointSrv = 'marco_msgs/srv/SaveDemoRoutePoint';
+  static const clearDemoRouteSrv = 'marco_msgs/srv/ClearDemoRoute';
   static const triggerSrv = 'std_srvs/srv/Trigger';
   static const demoStatusMsg = 'marco_msgs/msg/DemoStatus';
   static const boolMsg = 'std_msgs/msg/Bool';
@@ -417,6 +422,9 @@ abstract final class RosServiceResponse {
       response['success'] == true;
 
   static bool demoPointSaveSucceeded(Map<String, dynamic> response) =>
+      response['success'] == true;
+
+  static bool demoRouteOperationSucceeded(Map<String, dynamic> response) =>
       response['success'] == true;
 
   static bool triggerSucceeded(Map<String, dynamic> response) =>
@@ -608,6 +616,23 @@ class MapPreviewMetadata {
     this.originYaw = 0,
   });
 
+  /// ROS map metre koordinatını PNG pikseline çevirir.
+  /// PNG satır sıfırı üstte, ROS map Y sıfırı alttadır.
+  MapPreviewPixel mapToPixel(double mapX, double mapY) {
+    final dx = mapX - originX;
+    final dy = mapY - originY;
+    final cosYaw = math.cos(originYaw);
+    final sinYaw = math.sin(originYaw);
+    final localX = cosYaw * dx + sinYaw * dy;
+    final localY = -sinYaw * dx + cosYaw * dy;
+    return MapPreviewPixel(
+      x: localX / resolution,
+      y: height - 1.0 - (localY / resolution),
+      mapWidth: width,
+      mapHeight: height,
+    );
+  }
+
   factory MapPreviewMetadata.fromRosMessage(Map<String, dynamic> msg) {
     final width = (msg['width'] as num?)?.toInt();
     final height = (msg['height'] as num?)?.toInt();
@@ -650,6 +675,28 @@ class MapPreviewMetadata {
       originYaw: originYaw,
     );
   }
+}
+
+class MapPreviewPixel {
+  final double x;
+  final double y;
+  final int mapWidth;
+  final int mapHeight;
+
+  const MapPreviewPixel({
+    required this.x,
+    required this.y,
+    required this.mapWidth,
+    required this.mapHeight,
+  });
+
+  bool get insideMap =>
+      x.isFinite &&
+      y.isFinite &&
+      x >= 0 &&
+      y >= 0 &&
+      x < mapWidth &&
+      y < mapHeight;
 }
 
 /// `/map_preview/robot_pixel` anlık görüntüsü.

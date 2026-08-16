@@ -152,6 +152,8 @@ class NormalButton extends StatefulWidget {
   final VoidCallback onPressed;
   final LogicalKeyboardKey assignedKey;
   final FocusNode? customFocusNode;
+  final bool enabled;
+  final bool active;
 
   const NormalButton({
     super.key,
@@ -159,6 +161,8 @@ class NormalButton extends StatefulWidget {
     required this.onPressed,
     required this.assignedKey,
     this.customFocusNode,
+    this.enabled = true,
+    this.active = false,
   });
 
   @override
@@ -198,6 +202,7 @@ class _NormalButtonState extends State<NormalButton> {
   }
 
   bool _handleKeyEvent(KeyEvent event) {
+    if (!widget.enabled) return false;
     if (event is KeyDownEvent && event.logicalKey == widget.assignedKey) {
       if (!isOn) {
         setState(() {
@@ -212,36 +217,59 @@ class _NormalButtonState extends State<NormalButton> {
 
   @override
   Widget build(BuildContext context) {
+    final highlighted = widget.enabled && (widget.active || isOn);
+    final backgroundColor = !widget.enabled
+        ? const Color(0xFF161616)
+        : widget.active
+            ? const Color(0xFF1E3A1E)
+            : isOn
+                ? const Color(0xFF1A2540)
+                : const Color(0xFF1A1A1A);
+    final borderColor = !widget.enabled
+        ? const Color(0xFF333333)
+        : widget.active
+            ? const Color(0xFF43A047)
+            : isOn
+                ? const Color(0xFF1565C0)
+                : const Color(0xFF444444);
+    final foregroundColor = !widget.enabled
+        ? const Color(0xFF666666)
+        : widget.active
+            ? const Color(0xFF81C784)
+            : isOn
+                ? const Color(0xFF42A5F5)
+                : const Color(0xFF9E9E9E);
     return Focus(
       focusNode: _focusNode,
       autofocus: true,
       child: GestureDetector(
-        onTap: () {
-          _toggleState();
-          widget.onPressed();
-        },
+        onTap: !widget.enabled
+            ? null
+            : () {
+                _toggleState();
+                widget.onPressed();
+              },
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           height: 55.h,
           width: double.infinity,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(4.r),
-            color: isOn ? const Color(0xFF1A2540) : const Color(0xFF1A1A1A),
+            color: backgroundColor,
             border: Border.all(
-              color: isOn ? const Color(0xFF1565C0) : const Color(0xFF444444),
+              color: borderColor,
               width: 0.5.w,
             ),
           ),
           child: Center(
             child: AnimatedScale(
-              scale: isOn ? 0.88 : 1.0,
+              scale: highlighted ? 0.94 : 1.0,
               duration: const Duration(milliseconds: 200),
               child: Text(
                 widget.text,
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color:
-                      isOn ? const Color(0xFF42A5F5) : const Color(0xFF9E9E9E),
+                  color: foregroundColor,
                   fontWeight: FontWeight.bold,
                   fontSize: 4.sp,
                 ),

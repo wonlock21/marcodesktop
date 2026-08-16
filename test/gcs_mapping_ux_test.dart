@@ -60,6 +60,14 @@ void main() {
         check: RosServiceResponse.demoPointSaveSucceeded,
         key: 'success',
       ),
+      '/demo/route/point/save': (
+        check: RosServiceResponse.demoRouteOperationSucceeded,
+        key: 'success',
+      ),
+      '/demo/route/clear': (
+        check: RosServiceResponse.demoRouteOperationSucceeded,
+        key: 'success',
+      ),
     };
 
     for (final entry in cases.entries) {

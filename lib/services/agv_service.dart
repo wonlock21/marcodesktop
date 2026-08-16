@@ -64,11 +64,19 @@ class AgvService {
   static Future<Map<String, dynamic>> stopLocalization() =>
       ros.stopLocalization();
 
+  static Future<Map<String, dynamic>> setBuzzerEnabled(bool enabled) =>
+      ros.setBuzzerEnabled(enabled);
+
   static Future<Map<String, dynamic>> saveDemoPoint(String pointName) =>
       ros.saveDemoPoint(pointName);
 
-  static Future<Map<String, dynamic>> startSavedDemo() =>
-      ros.startSavedDemo();
+  static Future<Map<String, dynamic>> saveDemoRoutePoint(String targetName) =>
+      ros.saveDemoRoutePoint(targetName);
+
+  static Future<Map<String, dynamic>> clearDemoRoute(String targetName) =>
+      ros.clearDemoRoute(targetName);
+
+  static Future<Map<String, dynamic>> startSavedDemo() => ros.startSavedDemo();
 
   static Future<Map<String, dynamic>> continueDemo() => ros.continueDemo();
 
@@ -151,9 +159,6 @@ class AgvService {
       ros.publishHardwareCommand(command);
 
   static bool setLed() => ros.publishHardwareCommand(RosHardwareCommands.led);
-
-  static bool triggerBuzzer() =>
-      ros.publishHardwareCommand(RosHardwareCommands.buzzer);
 
   static Future<bool> checkConnection(String site) async {
     if (site.isEmpty) return false;
