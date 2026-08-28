@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import 'ros_bridge_client.dart';
-import 'ros_hardware_contract.dart';
 
 class AgvService {
   static final RosBridgeClient ros = RosBridgeClient();
@@ -150,15 +149,12 @@ class AgvService {
 
   static void stopManual() => ros.stopManual();
 
-  /// GCS Manuel/Otonom seçimi (fiziksel anahtar yok).
-  static void setGcsManualEnabled(bool enabled) =>
-      ros.setGcsManualEnabled(enabled);
-
-  /// Ham donanım komutu → `/cmd_hardware` (UI wire kodu bilmez; parametre sayfası).
+  /// Güncel ROS kaynaklarında genel string donanım komut topic'i yoktur.
   static bool sendHardwareCommand(String command) =>
       ros.publishHardwareCommand(command);
 
-  static bool setLed() => ros.publishHardwareCommand(RosHardwareCommands.led);
+  /// Güncel ROS kaynaklarında LED komut arayüzü yoktur.
+  static bool setLed() => false;
 
   static Future<bool> checkConnection(String site) async {
     if (site.isEmpty) return false;

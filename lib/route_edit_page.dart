@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
@@ -7,7 +5,6 @@ import 'package:provider/provider.dart';
 import 'models/gcs_mapping_model.dart';
 import 'models/gcs_node_model.dart';
 import 'models/gcs_route_model.dart';
-import 'services/agv_service.dart';
 import 'services/ros_mapping_contract.dart';
 import 'widgets/map_preview_stage.dart';
 
@@ -22,6 +19,10 @@ const _danger = Color(0xFFE53935);
 /// H.1/H.2 — öğretilmiş düğümlerden sıralı rota; yerel draft + `/routes/*` stub.
 class RouteEditPage extends StatelessWidget {
   const RouteEditPage({super.key});
+
+  static const _backendReason =
+      'Rota kaydetme/listeleme için ROS backend servisi yok. '
+      'Görev senaryosunda gerçek graph düğümlerini doğrudan seçin.';
 
   void _toast(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -41,93 +42,6 @@ class RouteEditPage extends StatelessWidget {
     }
     if (match == null) return;
     route.appendNode(match.id);
-  }
-
-  Future<void> _saveRoute(BuildContext context) async {
-    final route = context.read<GcsRouteModel>();
-    final nodes = context.read<GcsNodeModel>();
-    if (!route.hasSelection) {
-      _toast(context, 'Önce düğüm seçin');
-      return;
-    }
-
-    final nameController = TextEditingController(
-      text: 'rota_${route.savedRoutes.length + 1}',
-    );
-    final name = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: _panelBg,
-        title: Text(
-          'Rotayı kaydet',
-          style: TextStyle(color: _bright, fontSize: 4.5.sp),
-        ),
-        content: TextField(
-          controller: nameController,
-          autofocus: true,
-          style: TextStyle(color: _bright, fontSize: 3.5.sp),
-          decoration: const InputDecoration(
-            hintText: 'rota adı',
-            hintStyle: TextStyle(color: _muted),
-            enabledBorder: OutlineInputBorder(
-              borderSide: BorderSide(color: _borderC),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderSide: BorderSide(color: _accent),
-            ),
-          ),
-          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child:
-                Text('İptal', style: TextStyle(color: _muted, fontSize: 3.sp)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, nameController.text.trim()),
-            child: Text('Kaydet',
-                style: TextStyle(color: _accent, fontSize: 3.sp)),
-          ),
-        ],
-      ),
-    );
-    nameController.dispose();
-    if (name == null || name.isEmpty || !context.mounted) return;
-
-    final draft = route.saveLocalDraft(name: name, nodes: nodes);
-    if (draft == null) {
-      _toast(context, 'Yerel kayıt başarısız');
-      return;
-    }
-    _toast(context, 'Yerel kaydedildi: ${draft.name}');
-
-    if (!AgvService.ros.state.value.isConnected) return;
-    try {
-      await AgvService.saveRoute(
-        name: draft.name,
-        nodeNames: draft.nodeNames,
-      );
-      if (context.mounted) {
-        _toast(context, 'ROS /routes/save gönderildi');
-      }
-    } catch (_) {
-      if (context.mounted) {
-        _toast(context, 'Yerel draft duruyor — ROS /routes henüz hazır değil');
-      }
-    }
-  }
-
-  Future<void> _deleteSaved(BuildContext context, SavedRouteDraft draft) async {
-    final ok = context.read<GcsRouteModel>().removeSaved(draft.id);
-    if (!ok) return;
-    _toast(context, 'Silindi: ${draft.name}');
-    if (!AgvService.ros.state.value.isConnected) return;
-    try {
-      await AgvService.deleteRoute(name: draft.name);
-    } catch (_) {
-      /* yerel öncelikli */
-    }
   }
 
   @override
@@ -166,11 +80,9 @@ class RouteEditPage extends StatelessWidget {
         ),
         actions: [
           TextButton(
-            onPressed: route.hasSelection
-                ? () => unawaited(_saveRoute(context))
-                : null,
+            onPressed: () => _toast(context, _backendReason),
             child: Text(
-              'Kaydet',
+              'Backend yok',
               style: TextStyle(
                 color: route.hasSelection ? _accent : _muted,
                 fontSize: 3.sp,
@@ -229,7 +141,7 @@ class RouteEditPage extends StatelessWidget {
                     saved: route.savedRoutes,
                     onPickNode: (n) => route.appendNode(n.id),
                     onLoadSaved: route.loadSelection,
-                    onDeleteSaved: (d) => unawaited(_deleteSaved(context, d)),
+                    onDeleteSaved: (_) => _toast(context, _backendReason),
                   ),
                 ),
               ],

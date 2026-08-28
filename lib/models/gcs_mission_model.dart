@@ -254,7 +254,7 @@ class GcsMissionModel extends ChangeNotifier {
 
   /// Tüm görev ve otomasyon alanlarını tek seferde günceller.
   ///
-  /// [GcsMockData.applyToMission] gibi dış kaynaklı veri yüklemesi için
+  /// ROS durum mesajı gibi dış kaynaklı veri yüklemesi için
   /// tasarlanmıştır; tek notifyListeners çağrısı gerçekleşir.
   void topluGuncelle({
     String? gorevId,

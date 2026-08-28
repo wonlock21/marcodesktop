@@ -147,6 +147,27 @@ void main() {
     expect(pixel.insideMap, isTrue);
   });
 
+  test('MapMetaData origin quaternion yaw olarak parse edilir', () {
+    final metadata = MapPreviewMetadata.fromRosMessage({
+      'width': 10,
+      'height': 10,
+      'resolution': 1.0,
+      'origin': {
+        'position': {'x': 10.0, 'y': 20.0},
+        'orientation': {
+          'x': 0.0,
+          'y': 0.0,
+          'z': 0.7071067811865476,
+          'w': 0.7071067811865476,
+        },
+      },
+    });
+    expect(metadata.originYaw, closeTo(1.5707963267948966, 1e-9));
+    final pixel = metadata.mapToPixel(10, 21);
+    expect(pixel.x, closeTo(1, 1e-9));
+    expect(pixel.y, closeTo(9, 1e-9));
+  });
+
   test('gercek ROS dugum eslemesi yalniz rota grafindan gelir', () {
     expect(
       RosGcsContract.nodeForPoint(
@@ -190,7 +211,52 @@ void main() {
     await server.close(force: true);
   });
 
-  test('kopunca yeniden baglanir ve manuel dead-man sifir yollar', () async {
+  test('stale RobotStatus manuel komutu keser ve durumu temizler', () async {
+    final received = <Map<String, dynamic>>[];
+    final statuses = <Map<String, dynamic>>[];
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((request) async {
+      final socket = await WebSocketTransformer.upgrade(request);
+      socket.listen((data) {
+        if (data is String) {
+          received.add(Map<String, dynamic>.from(jsonDecode(data)));
+        }
+      });
+      socket.add(jsonEncode({
+        'op': 'publish',
+        'topic': '/robot_status',
+        'msg': {'manual_mode_enabled': true, 'mission_state': 0},
+      }));
+    });
+
+    final client = RosBridgeClient(
+      robotStatusTimeout: const Duration(milliseconds: 80),
+    );
+    client.onRobotStatus = statuses.add;
+    await client.connect('ws://127.0.0.1:${server.port}');
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(client.publishManualTwist(1, 1), isTrue);
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(client.hardwareManualMode, isFalse);
+    expect(statuses.last, isEmpty);
+    expect(
+      received.where((message) {
+        if (message['op'] != 'publish' ||
+            message['topic'] != '/cmd_vel_manual') {
+          return false;
+        }
+        final msg = message['msg'] as Map;
+        return (msg['linear'] as Map)['x'] == 0.0 &&
+            (msg['angular'] as Map)['z'] == 0.0;
+      }),
+      isNotEmpty,
+    );
+    await client.dispose();
+    await server.close(force: true);
+  });
+
+  test('kopunca state temizlenir, yeniden abone olur ve hareket baslatmaz',
+      () async {
     WebSocket? activeSocket;
     final received = <Map<String, dynamic>>[];
 
@@ -207,7 +273,7 @@ void main() {
         socket.add(jsonEncode({
           'op': 'publish',
           'topic': '/robot_status',
-          'msg': {'manual_mode_enabled': false},
+          'msg': {'manual_mode_enabled': true},
         }));
         socket.add(jsonEncode({
           'op': 'publish',
@@ -289,11 +355,7 @@ void main() {
           message['type'] == 'std_msgs/msg/Bool'),
       isTrue,
     );
-    // GCS manuel varsayılan açık; fiziksel anahtar / robot_status kapısı yok.
-    expect(client.publishManualDirection(2), isTrue);
-    client.setGcsManualEnabled(false);
-    expect(client.publishManualDirection(2), isFalse);
-    client.setGcsManualEnabled(true);
+    // Manuel komut yalnız fiziksel `/robot_status.manual_mode_enabled` ile açılır.
     expect(client.publishManualDirection(2), isTrue);
     client.stopManual();
     await Future<void>.delayed(const Duration(milliseconds: 100));
@@ -307,17 +369,26 @@ void main() {
       isTrue,
     );
     expect(
-      received.any((message) =>
-          message['op'] == 'publish' &&
-          message['topic'] == '/base/manual_mode' &&
-          (message['msg'] as Map)['data'] == false),
-      isTrue,
+      received.any((message) => message['topic'] == '/base/manual_mode'),
+      isFalse,
+    );
+    final nonZeroManual = received.lastWhere((message) {
+      if (message['op'] != 'publish' || message['topic'] != '/cmd_vel_manual') {
+        return false;
+      }
+      final msg = message['msg'] as Map;
+      return (msg['linear'] as Map)['x'] != 0.0;
+    });
+    expect(
+      ((nonZeroManual['msg'] as Map)['linear'] as Map)['x'],
+      lessThanOrEqualTo(RosManualDriveLimits.maxLinearMetersPerSecond),
     );
 
     await activeSocket?.close();
     await server.close(force: true);
     await Future<void>.delayed(const Duration(milliseconds: 200));
     expect(client.state.value.status, isNot(RosConnectionStatus.connected));
+    expect(client.hardwareManualMode, isFalse);
     server = await startServer(port);
     final deadline = DateTime.now().add(const Duration(seconds: 4));
     while (
@@ -336,6 +407,16 @@ void main() {
     );
     expect(buzzerStates, contains(null));
     expect(buzzerStates.last, isFalse);
+    // Yeniden bağlantı abonelikleri yollar; manuel heartbeat kendiliğinden başlamaz.
+    final reconnectIndex = received.lastIndexWhere(
+      (message) =>
+          message['op'] == 'subscribe' && message['topic'] == '/robot_status',
+    );
+    expect(
+      received.skip(reconnectIndex + 1).where((message) =>
+          message['op'] == 'publish' && message['topic'] == '/cmd_vel_manual'),
+      isEmpty,
+    );
     await client.dispose();
     await activeSocket?.close();
     await server.close(force: true);
@@ -354,6 +435,14 @@ void main() {
     expect(pixel.mapWidth, 200);
     expect(pixel.mapHeight, 100);
     expect(pixel.source, MapPreviewSource.slam_toolbox);
+  });
+
+  test('manuel Twist normalize girdiyi SI tavanlarına dönüştürür', () {
+    expect(RosManualDriveLimits.maxLinearMetersPerSecond, 0.50);
+    expect(RosManualDriveLimits.maxAngularRadiansPerSecond, 0.60);
+    expect(RosServiceResponse.missionAccepted({'accepted': true}), isTrue);
+    expect(RosServiceResponse.missionAccepted({'success': true}), isFalse);
+    expect(RosServiceResponse.missionAccepted({}), isFalse);
   });
 
   test('LocalizationStatus state kodlarını parse eder', () {
@@ -564,6 +653,13 @@ void main() {
       await expectLater(service.call(), throwsA(isA<TimeoutException>()));
     }
 
+    scenario = {'timeout': true};
+    final pendingStart = client.startMission();
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    await expectLater(client.startMission(), throwsA(isA<StateError>()));
+    await expectLater(pendingStart, throwsA(isA<TimeoutException>()));
+    expect(received.last['id'], 'mission_start');
+
     await client.dispose();
     await server.close(force: true);
   });
@@ -593,5 +689,8 @@ void main() {
     expect((await AgvService.startMission())['accepted'], isTrue);
     expect((await AgvService.cancelMission())['accepted'], isTrue);
     await AgvService.disconnectRos();
-  }, skip: liveUrl == null ? 'ROS_BRIDGE_URL tanimli degil' : false);
+  },
+      skip: liveUrl == null || liveUrl.trim().isEmpty
+          ? 'ROS_BRIDGE_URL tanimli degil'
+          : false);
 }

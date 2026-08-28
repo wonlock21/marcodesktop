@@ -1,7 +1,6 @@
-﻿import 'parameter_model.dart';
+import 'parameter_model.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'services/agv_service.dart';
 import 'package:provider/provider.dart';
 
 // ─── Renk sabitleri ────────────────────────────────────────────────────────
@@ -90,7 +89,17 @@ class _ParameterPageState extends State<ParameterPage> {
     super.dispose();
   }
 
-  bool veriBas(String veri) => AgvService.sendHardwareCommand(veri);
+  bool veriBas(String veri) {
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(const SnackBar(
+        content: Text(
+          'Parametre gönderilmedi: güncel ROS backend genel donanım/parametre '
+          'komut arayüzü sunmuyor.',
+        ),
+      ));
+    return false;
+  }
 
   // ── GCS stili TextField dekorasyon yardımcısı ─────────────────────────
   InputDecoration _gcsInput(String label, String hint) {

@@ -514,3 +514,314 @@ Paralel: **F UI iskeleti** mock pose ile A–C bitmeden denenebilir; gerçek PNG
 - [x] İlgili Flutter testleri: 29 geçti, canlı `ROS_BRIDGE_URL` testi ortam değişkeni olmadığı için atlandı.
 - [x] `colcon build --symlink-install`: 13 paket geçti.
 - [x] `marco_localization` sözleşme testleri: 3 geçti.
+
+---
+
+# TEKNOFEST 2026 yarışma ek planı — V1.0 şartname odaklı
+
+> **Dayanak:** `2026_SRUY_TR_76gNu.pdf`, V1.0, 05.05.2026; özellikle 3.1.1,
+> 4. bölümdeki yarışma senaryosu ve final puanlama tablosu.
+>
+> **Amaç:** Video teslimi sonrası sistemi sunum demosu değil, gerçek yarışma akışı için
+> tamamlamak. Üretim kodunda mock, sahte başarı veya yalnız yerel kalıcı olmayan görev
+> verisi kabul edilmez.
+>
+> **Uygulama kuralı:** Aşağıdaki fazlar sırayla ve tek tek tamamlanacak. Her fazın ROS 2
+> sözleşmesi, Flutter bağlantısı ve testleri bitmeden sonraki faza geçilmeyecek.
+
+## Bu ek planın önceki fazlara göre yetkisi
+
+- Önceki Faz G/H içindeki `/stations/*` ve `/routes/*` maddeleri yalnız UI/stub hazırlığıdır;
+  gerçek backend bulunmadığı için yarışma açısından tamamlanmış sayılmaz. Faz J/K ile
+  yeniden açılmıştır.
+- Önceki Faz D.3 içindeki “fiziksel anahtar yok, GCS switch seçer” kararı şartnameyle
+  çelişir ve artık geçersizdir. Uzaktan manuel sürüş yalnız robot üzerindeki fiziksel anahtar
+  **manuel** konumdayken açılacak; otomatik konumdayken GUI komut gönderemeyecektir.
+- `/base/manual_mode` bir durum topic’idir; Flutter bu topic’e yazmayacaktır. Flutter,
+  `RobotStatus.manual_mode_enabled` üzerinden fiziksel yetkiyi okuyacaktır.
+- `/cmd_vel_manual` üretim sözleşmesi `geometry_msgs/msg/Twist` SI değerleridir. Flutter
+  normalize slider değerini doğrulanmış lineer/açısal tavanlara dönüştürecektir; hız gerçek
+  robotta düşük kademeden başlayarak ayrıca kabul edilecektir.
+- “Backend yok” yazısı geliştirme sırasında doğru teşhistir fakat yarışma ekranının nihai
+  metni değildir. Faz Q tamamlanınca yalnız çalışan özellikler gösterilecektir.
+
+## Şartnameden çıkarılan zorunlu yarışma akışı
+
+1. Yarışmadan 1–2 gün önce verilen **60 dakika** içinde 2D LiDAR ile haritalama yapılır.
+2. Rotalar; alma, bırakma, QR, düğüm, bekleme ve kontrollü kapı/Q5 noktaları tanımlanır.
+3. Robot ve takip bilgisayarı internetsiz saha Wi-Fi ağına bağlanır; yalnız iki cihaz için
+   MAC adresi izni vardır.
+4. Robot PLC’ye bağlanır; PLC bağlantının kurulduğunu teyit eder.
+5. PLC, üç alma noktasından ve üç bırakma noktasından rastgele birer nokta seçip robota
+   gönderir.
+6. Robot en uygun tanımlı rotayla alma noktasına gider. Yaklaşık 1,5 m önceki QR/renkli
+   çizgiden itibaren hassas yaklaşma ve yük alma uygulanır.
+7. Yük alındıktan sonra yük hareket yönünün ters tarafında kalacak biçimde taşıma yapılır.
+8. Robot yüklü olarak Q5 kapı kontrol noktasında durur, PLC’ye varış bildirir, açık/geçiş
+   izni gelmeden ilerlemez.
+9. Bırakma noktasına gider, yükü bırakır ve PLC’ye teslim bilgisini gönderir.
+10. Bekleme noktasına dönerken Q5 kapı el sıkışmasını ikinci kez uygular.
+11. Bekleme noktasına vardığını PLC’ye bildirir ve görevi tamamlar.
+12. Hedef süre 30 dakika, üst sınır 45 dakikadır.
+
+Ortak güvenlik/kabul koşulları:
+
+- Engel görülünce güvenli mesafede durulur; engelden kaçma zorunlu değildir. Engel
+  kalkınca aynı görev kontrollü biçimde devam eder.
+- Rota sapması en fazla 10 cm olmalıdır.
+- Bekleme/alma/bırakma son poz toleransı ±7,5 cm, yön toleransı ±5° olmalıdır.
+- GUI robot durumu, görev durumu, okunan QR, PLC bağlantısı ve PLC ile alınan/gönderilen
+  mesajları göstermelidir. Eksik gösterilen her bilgi ceza puanı doğurur.
+- GUI’de en az şu robot durumları açıkça gösterilir: idle, görev işleniyor, yüksüz hareket,
+  yüklü hareket, PLC komutu bekleniyor, başlangıç/bekleme noktasına dönüş, hata, acil stop.
+
+---
+
+## Faz J — Genel düğüm/istasyon backend’i — GEÇİŞ KAPISI 1
+
+> Kullanıcının 1. maddesi. Bu faz tamamlanmadan Faz K’ya geçilmez.
+
+- [ ] **[ROS2]** Alma `A1..A3`, bırakma `B1..B3`, bekleme, QR, Q5/kapı ve gerektiğinde
+  başlangıç düğümlerini aynı saha altında kalıcı saklayan veri modelini belirle.
+- [ ] **[ROS2]** Düğüm ekleme, listeleme, güncelleme ve silme servislerini gerçek
+  `marco_msgs/srv/*` arayüzleriyle sun; isimleri tek sözleşmede sabitle.
+- [ ] **[ROS2]** Kayıtta `field_name`, benzersiz ad, tür, map-frame pose `(x,y,yaw)` ve
+  gerekli piksel/önizleme bilgisini doğrula; servis cevaplarında açık `success/message` kullan.
+- [ ] **[ROS2]** Düğümleri yeniden başlatma sonrasında kaybetmeyecek atomik saha
+  persistence katmanı ekle; geçersiz/çakışan kayıtları reddet.
+- [ ] **[ROS2]** Düğüm silme/güncellemede bağlı rotaların bozulmasını engelleyen referans
+  kontrolü ekle.
+- [ ] **[Flutter]** Mevcut `/stations/*` stublarını gerçek servis sözleşmesine bağla;
+  başarılı ROS cevabı gelmeden yerel listeyi değiştirme.
+- [ ] **[Flutter]** Robot konumundan ve haritaya dokunarak ekleme akışlarını aynı backend’e
+  bağla; reconnect sonrasında listeyi ROS’tan yeniden yükle.
+- [ ] **[Flutter]** A/B demo noktaları ile genel yarışma düğümlerini kavramsal olarak ayır;
+  senaryo ekranında yalnız seçili sahanın gerçek kalıcı düğümlerini göster.
+- [ ] **[ROS2+Flutter Test]** CRUD, duplicate ad, geçersiz tür/pose, farklı saha izolasyonu,
+  restart persistence, stale response ve hızlı çift tıklama testleri geçsin.
+- [ ] **[Kabul]** Yarışma öncesi 60 dakikalık öğretme sırasında A1..A3, B1..B3, Q5 ve
+  bekleme noktası kaydedilip uygulama/ROS yeniden başlatıldıktan sonra geri gelmelidir.
+
+## Faz K — Kalıcı rota tanımlama ve rota optimizasyonu — GEÇİŞ KAPISI 2
+
+> Kullanıcının 2. maddesi. Bu faz tamamlanmadan Faz L’ye geçilmez.
+
+- [ ] **[ROS2]** Saha bazlı rota/kenar veri modelini ve `save/list/update/delete` servislerini
+  gerçek `marco_msgs` arayüzleriyle oluştur.
+- [ ] **[ROS2]** Rota; sıralı düğümler, yön, maliyet/mesafe, hız sınıfı, yüklü-yüksüz
+  uygunluğu ve kontrollü kapı geçiş bilgisini taşısın.
+- [ ] **[ROS2]** PLC’den gelen alma/bırakma çifti için geçerli graph üzerinde en uygun rotayı
+  hesapla; kopuk graph, bilinmeyen düğüm ve rota bulunamaması açıkça reddedilsin.
+- [ ] **[ROS2]** Gidiş, yüklü taşıma ve bekleme noktasına dönüş rotalarını ayrı bacaklar
+  halinde üret; dönüşte Q5 el sıkışmasını atlama.
+- [ ] **[Flutter]** Rota editörünü gerçek backend’e bağla; “Backend yok” ve yerel-only kayıt
+  davranışını kaldır.
+- [ ] **[Flutter]** Kayıtlı rotaları harita üzerinde yönlü ve sıralı göster; kaydetme/silme
+  yalnız ROS başarısından sonra UI’a yansısın.
+- [ ] **[Flutter]** Seçilen veya PLC’den gelen A/B için hesaplanan görev bacaklarını ve aktif
+  bacağı operatöre göster.
+- [ ] **[ROS2+Flutter Test]** Persistence, en kısa/uygun rota, Q5 zorunluluğu, geçersiz rota,
+  farklı saha ve yeniden bağlantı testleri geçsin.
+- [ ] **[Kabul]** Haritalama/rotalama tamamlanmadan yarışma görev modu başlatılamasın.
+
+## Faz L — LED gerçek ROS bağlantısı — GEÇİŞ KAPISI 3
+
+> Kullanıcının 3. maddesi. Şartnamede LED için puan/sözleşme yoktur; buna rağmen mevcut
+> GUI düğmesinin sahte kalmaması ve donanım geri bildirimi için tamamlanacaktır.
+
+- [ ] **[ROS2]** LED donanımının gerçek sürücüsünü, komut semantiğini ve state feedback
+  ihtiyacını doğrula; genel string komut yerine tipli servis/topic tanımla.
+- [ ] **[ROS2]** En az `set_enabled` veya yarışmada kullanılacak açık durumları sun;
+  `success/message` ve gerçek state topic’i sağla.
+- [ ] **[Flutter]** LED düğmesini gerçek sözleşmeye bağla; servis başarılı olmadan durum
+  değiştirme, hızlı çift tıklamayı engelle, reconnect’te state topic’ini bekle.
+- [ ] **[ROS2+Flutter Test]** Aç/kapat, reddedilme, timeout, reconnect ve state uyuşmazlığı
+  testleri geçsin.
+
+## Faz M — Lift/yük alma-bırakma yürütücüsü — GEÇİŞ KAPISI 4
+
+> Kullanıcının anlamadığı 4. madde budur: GUI’de lift yukarı/aşağı butonları görünse de
+> komutu kabul eden doğrulanmış bir ROS action server ve “hareket ediyor/tamamlandı/hata”
+> geri bildirimi yoksa robot gerçek yük alma-bırakma işlemini güvenilir biçimde yapamaz.
+> Şartnamenin ana görevi yük taşımak olduğu için bu yarışma açısından kritiktir.
+
+- [ ] **[ROS2]** Mevcut lift/STM32 mekanizmasını incele; gerçek komut, limit switch,
+  yük algısı, timeout, iptal ve hata koşullarını belirle.
+- [ ] **[ROS2]** Tek sahipli, iptal edilebilir ve feedback veren `LiftLoad` action veya eşdeğer
+  tipli arayüzü tamamla; yukarı/aşağı ham komutlarını yarışma iş akışından gizle.
+- [ ] **[ROS2]** Yük alma ve bırakmayı navigasyon durum makinesiyle kilitle; hareket eden
+  araçta lift komutunu ve doğrulanmamış yük sonrası göreve devamı engelle.
+- [ ] **[Flutter]** Lift kontrollerini gerçek action/state’e bağla; pending, hareket,
+  tamamlandı, reddedildi ve hata durumlarını göster.
+- [ ] **[Flutter]** “Yük yerleştirildi / Devam Et” yalnız yarışma akışında gerçekten operatör
+  onayı gerekiyorsa ve ROS bunu bekliyorsa etkin olsun.
+- [ ] **[ROS2+Flutter Test]** Limit, timeout, iptal, çift komut, e-stop, bağlantı kopması,
+  yük alındı/bırakıldı geri bildirimi testleri geçsin.
+
+## Faz N — Kamera, LiDAR, 3D, QR ve çizgi takibi — GEÇİŞ KAPISI 5
+
+> Kullanıcının 6. maddesi. Bu faz tamamlanmadan PLC yarışma entegrasyonuna geçilmez.
+
+- [ ] **[ROS2]** Üretim kamera görüntüsü, LiDAR scan/point cloud, QR tespiti ve çizgi takip
+  topic’lerini/adlarını/tiplerini/QoS değerlerini kesinleştir.
+- [ ] **[ROS2]** QR mesajında en az kod, zaman damgası, kamera göreli pozisyonu ve
+  güven/geçerlilik bilgisi sağla.
+- [ ] **[ROS2]** Alma/bırakma noktasından yaklaşık 1,5 m önce QR/renkli çizgiyle hassas
+  yaklaşma durum makinesini navigation ve lift akışına bağla.
+- [ ] **[ROS2]** Engel kalkınca kontrollü devamı ve LiDAR veri stale olduğunda güvenli
+  duruşu doğrula.
+- [ ] **[Flutter]** KAMERA, LiDAR ve 3D sekmelerini gerçek topic’lere bağla; bağlantı yokken
+  sahte görüntü kullanma.
+- [ ] **[Flutter]** Okunan QR kodunu, göreli konumunu, güncellik durumunu ve görevde
+  beklenen QR ile eşleşmesini ana yarışma ekranında göster.
+- [ ] **[Flutter]** Ağ bant genişliğini korumak için görüntü aboneliklerini yalnız ilgili sekme
+  açıkken veya düşük oranlı preview olarak yönet.
+- [ ] **[ROS2+Flutter Test]** Stale frame, bozuk görüntü, QR yanlış/eşleşen, topic reconnect,
+  çizgiye geçiş ve engel dur/devam testleri geçsin.
+
+## Faz O — PLC ve STM32 yarışma entegrasyonu — GEÇİŞ KAPISI 6
+
+### Şartnamenin PLC için kesin söylediği
+
+- PLC’ye bağlantı saha Wi-Fi ağı üzerinden kurulacaktır.
+- PLC üç alma ve üç bırakma noktasından rastgele birer seçim yapıp robota gönderecektir.
+- Robot Q5’te durduğunu PLC’ye bildirecektir.
+- PLC kapının açık ve geçişin uygun olduğunu bildirmeden robot ilerlemeyecektir.
+- Robot yükü bıraktığını ve daha sonra bekleme noktasına vardığını PLC’ye bildirecektir.
+- Dönüş yolunda Q5 kapı el sıkışması tekrar yapılacaktır.
+- GUI PLC bağlantı durumunu ve alınan/gönderilen mesajları gösterecektir.
+
+### Şartnamenin söylemediği
+
+- Modbus TCP, OPC UA, TCP socket, UDP veya başka bir wire protokol belirtilmemiştir.
+- IP, port, register/adres, paket biçimi, sequence/ack, timeout ve retry değerleri yoktur.
+- STM32 adı veya Orange Pi–STM32 seri protokolü şartnamede tanımlanmamıştır.
+- Şartname, PLC haberleşme protokolünün ön aşamayı geçen takımlara ayrıca verileceğini
+  açıkça belirtmektedir. Bu ayrı belge gelmeden alan isimleri uydurulmayacaktır.
+
+### Yapılacaklar
+
+- [ ] **[ROS2]** Organizasyonun ayrı PLC protokol belgesini kaynak olarak kaydet ve exact
+  wire sözleşmesini çıkar: bağlantı, A/B görev mesajı, Q5 arrival, gate permission,
+  load-delivered, waiting-arrival, ack/error, timeout/retry ve duplicate handling.
+- [ ] **[ROS2]** PLC adapter düğümünü mission manager’dan ayır; bağlantı ve mesajları tipli
+  ROS topic/service üzerinden sun.
+- [ ] **[ROS2]** PLC’den gelen A/B değerini doğrula; bilinmeyen/tekrarlı/stale görevleri
+  reddet ve görev kimliği/idempotency uygula.
+- [ ] **[ROS2]** Q5’e her iki gelişte de “arrival → izin bekle → izin doğrula → devam”
+  durum makinesini fail-closed uygula.
+- [ ] **[ROS2]** PLC kopması, izin timeout’u ve hatalı mesajda robotu güvenli beklemeye al;
+  otomatik olarak izin varmış gibi davranma.
+- [ ] **[ROS2]** STM32 için mevcut seri sözleşmeyi ayrı doğrula: fiziksel manuel anahtar,
+  e-stop, motor watchdog, batarya, lift limit/yük ve bağlantı sağlığı.
+- [ ] **[Flutter]** PLC bağlantı durumu, gelen A/B görevi, kapı izni, son alınan/gönderilen
+  mesajlar ve hata/timeout’u ana ekranda görünür yap.
+- [ ] **[Flutter]** STM32 bağlantısını yalnız gerçek heartbeat/state ile göster; süre aşımında
+  bağlı durumunu temizle.
+- [ ] **[ROS2+Flutter Test]** PLC simülatörüyle normal görev, duplicate, bozuk paket,
+  reconnect, Q5 iki geçiş, izin yok/timeout ve bekleme bildirimi testleri geçsin.
+- [ ] **[Saha hazırlığı]** İnternetsiz `YARISMA DENEME AGI` ve `YARISMA AGI` için robot ve
+  takip bilgisayarı MAC adreslerini kaydet; sistemin internet/bulut bağımlılığı olmadığını
+  doğrula.
+
+## Faz P — Yarışma görev orkestrasyonu ve durum makinesi
+
+- [ ] **[ROS2]** PLC’den A/B görevi alma → rota seçme → yüksüz alma noktasına gitme →
+  QR/çizgi yaklaşma → lift ile yük alma → yüklü ters yön taşıma → Q5 izni → bırakma →
+  teslim bildirimi → Q5 dönüş izni → bekleme → tamamlandı akışını tek kalıcı mission
+  state machine olarak uygula.
+- [ ] **[ROS2]** En az `idle`, `processing`, `moving_unloaded`, `moving_loaded`,
+  `waiting_plc`, `returning_home`, `error`, `emergency_stop` durumlarını yayınla.
+- [ ] **[ROS2]** Engel kalkınca aynı görevden devam et; e-stop/safety reset sonrasında
+  operatör onayı olmadan otomatik hareket başlatma.
+- [ ] **[ROS2]** ±7,5 cm konum, ±5° yön ve 10 cm rota sapma metriklerini telemetry/event
+  olarak ölçülebilir hale getir.
+- [ ] **[Flutter]** PLC’den gelen yarışma görevini manuel senaryo oluşturulmuş gibi taklit
+  etme; gerçek görev kimliği, A/B, aktif bacak, durum ve beklenen sonraki olayı göster.
+- [ ] **[Flutter]** Görev durum çizelgesini şartnamedeki sekiz durumla birebir göster;
+  yük durumu, Q5 izni, engel bekleme ve dönüş durumunu görünür yap.
+- [ ] **[Flutter]** Görev süresi, 30 dakika hedefi ve 45 dakika üst sınırı operatöre göster;
+  bu sayaç yalnız bilgilendirme amaçlı olsun ve ROS görev sonucunu değiştirmesin.
+- [ ] **[ROS2+Flutter Test]** Her A/B kombinasyonu, iki Q5 geçişi, engel dur/devam,
+  PLC kopması, lift hatası, e-stop, cancel ve tamamlanma testleri geçsin.
+
+## Faz Q — Yarışma GUI sadeleştirmesi ve destek kapıları
+
+> 9. madde için karar: Yarışma sürümünde “Backend yok” yazan buton/sekme bırakılmayacak.
+> Geliştirmede dürüst hata gösterimi korunur; yarışma build’inde yalnız gerçek backend’i ve
+> canlı state’i olan özellikler görünür/etkin olur. Çalışmayan özellik asla başarılı gösterilmez.
+
+- [ ] **[Flutter]** Merkezi capability modeli oluştur; ROS envanteri/state üzerinden hangi
+  özelliğin hazır olduğunu belirle.
+- [ ] **[Flutter]** Geliştirme teşhis mesajlarını olay günlüğüne taşı; yarışma ana ekranında
+  “Backend yok” gibi iç mimari ifadeleri kaldır.
+- [ ] **[Flutter]** Tamamlanan Faz J/K/L/M/N/O özelliklerini sırayla etkinleştir; eksik
+  özellikleri gizle veya nötr biçimde pasif bırak.
+- [ ] **[Flutter]** Ana yarışma görünümünü puanlanan bilgilere önceliklendir: robot durumu,
+  görev durumu, QR, PLC bağlantısı, alınan/gönderilen PLC mesajları, hata ve e-stop.
+- [ ] **[Flutter]** Operatörün yarışma sırasında yanlışlıkla harita silme, rota silme veya
+  öğretme moduna girme riskini yarışma kilidi/onaylarıyla azalt.
+- [ ] **[Flutter Test]** Her zorunlu bilginin görünür olduğu widget kabul testi ekle; eksik
+  her bilgi yarışma öncesi blocker sayılsın.
+
+## Faz R — Parametre ekranı — ERTELENMİŞ
+
+> Kullanıcının 5. maddesi. Çekirdek yarışma akışı tamamlandıktan sonra ele alınacaktır.
+
+- [ ] **[ROS2]** Yarışma sırasında güvenle değiştirilebilecek parametreleri allowlist ile
+  tanımla; salt okunur ve restart gerektiren parametreleri ayır.
+- [ ] **[ROS2]** Atomik get/set, doğrulama, aralık ve kalıcılık sözleşmesi sun.
+- [ ] **[Flutter]** Yerel `ParameterModel` güncellemelerini gerçek ROS cevaplarına bağla;
+  başarılı cevap gelmeden değer kaydedilmiş görünmesin.
+- [ ] **[ROS2+Flutter Test]** Aralık dışı değer, kısmi hata, restart persistence ve yetkisiz
+  parametre testleri geçsin.
+
+## Faz S — Canlı robot ve yarışma kabulü — EN SON
+
+> Kullanıcının 10. maddesi. Önceki fazlar bitmeden fiziksel uçtan uca kabul yapılmaz.
+
+- [ ] **[Test]** Tekerler havadayken read-only ROS envanteri, rosbridge reconnect,
+  RobotStatus/manual switch, e-stop, watchdog ve sıfır Twist doğrulansın.
+- [ ] **[Test]** Düşük hızda W/S ve A/D; tuş bırakma, pencere focus kaybı ve bağlantı
+  kopmasında duruş doğrulansın.
+- [ ] **[Test]** 60 dakikalık haritalama/öğretme provası yapılıp persistence doğrulansın.
+- [ ] **[Test]** PLC simülatörüyle tüm 3×3 A/B kombinasyonları ve iki yönlü Q5 el sıkışması
+  hareket vermeden kabul edilsin.
+- [ ] **[Test]** Kontrollü alanda gerçek yükle alma, ters yön taşıma, bırakma ve beklemeye
+  dönüş tamamlanıp konum/yön/rota sapma metrikleri kaydedilsin.
+- [ ] **[Test]** Engel dur/devam, PLC kopması, rosbridge kopması, STM32 stale, lift hatası,
+  e-stop ve güvenli reset senaryoları çalıştırılsın.
+- [ ] **[Test]** İnternetsiz yarışma Wi-Fi provası, MAC filtreleme ve yalnız iki cihazla
+  çalışma doğrulansın.
+- [ ] **[Test]** GUI’de şartnamenin zorunlu bütün bilgilerinin hakem tarafından tek ekranda
+  okunabildiği kontrol edilsin.
+- [ ] **[Kabul]** “Yarışmaya hazır” kararı yalnız gerçek robotla en az bir tam görev ve
+  hata senaryoları kanıtlandıktan sonra verilsin.
+
+## Yeni faz sırası
+
+```text
+J Genel düğüm backend'i
+  → K Kalıcı rota + optimizasyon
+    → L LED
+      → M Lift/yük yürütücüsü
+        → N Kamera/LiDAR/3D + QR/çizgi
+          → O PLC/STM32
+            → P Yarışma görev orkestrasyonu
+              → Q Yarışma GUI sadeleştirmesi
+                → R Parametreler (ertelenmiş)
+                  → S Canlı robot kabulü
+```
+
+| Yeni faz | Durum | Değişiklik alanı |
+|---|---|---|
+| J Genel düğüm/istasyon backend’i | [ ] | ROS2 + Flutter |
+| K Kalıcı rota ve optimizasyon | [ ] | ROS2 + Flutter |
+| L LED gerçek bağlantı | [ ] | ROS2 + Flutter |
+| M Lift/yük alma-bırakma | [ ] | ROS2 + Flutter |
+| N Kamera/LiDAR/3D, QR ve çizgi | [ ] | ROS2 + Flutter |
+| O PLC/STM32 yarışma entegrasyonu | [ ] | ROS2 + Flutter |
+| P Yarışma görev orkestrasyonu | [ ] | ROS2 + Flutter |
+| Q Yarışma GUI sadeleştirmesi | [ ] | Flutter |
+| R Parametre ekranı | [ ] ertelendi | ROS2 + Flutter |
+| S Canlı robot kabulü | [ ] en son | Test / fiziksel sistem |

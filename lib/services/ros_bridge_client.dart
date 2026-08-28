@@ -36,6 +36,7 @@ class RosBridgeClient {
     this.connectTimeout = const Duration(seconds: 5),
     this.serviceTimeout = const Duration(seconds: 5),
     this.saveTimeout = const Duration(seconds: 40),
+    this.robotStatusTimeout = const Duration(seconds: 2),
   });
 
   static const robotStatusTopic = '/robot_status';
@@ -48,6 +49,7 @@ class RosBridgeClient {
   final Duration connectTimeout;
   final Duration serviceTimeout;
   final Duration saveTimeout;
+  final Duration robotStatusTimeout;
 
   final ValueNotifier<RosConnectionState> state = ValueNotifier(
     const RosConnectionState(RosConnectionStatus.disconnected),
@@ -77,6 +79,7 @@ class RosBridgeClient {
   StreamSubscription<dynamic>? _subscription;
   Timer? _reconnectTimer;
   Timer? _manualHeartbeat;
+  Timer? _robotStatusStaleTimer;
   final Map<String, Completer<Map<String, dynamic>>> _serviceCalls = {};
   int _requestId = 0;
   int _generation = 0;
@@ -84,22 +87,13 @@ class RosBridgeClient {
   Uri? _uri;
   bool _manualDisconnect = false;
 
-  /// GCS UI manuel modu (fiziksel anahtar yok). `cmd_vel_manual` kapısı.
-  bool _gcsManualEnabled = true;
+  bool _hardwareManualMode = false;
   double _manualLinear = 0;
   double _manualAngular = 0;
 
-  bool get manualModeEnabled => _gcsManualEnabled;
+  bool get manualModeEnabled => _hardwareManualMode;
+  bool get hardwareManualMode => _hardwareManualMode;
   String get url => _uri?.toString() ?? '';
-
-  /// Operatör GCS’ten Manuel/Otonom seçince çağrılır.
-  void setGcsManualEnabled(bool enabled) {
-    if (_gcsManualEnabled && !enabled) stopManual();
-    _gcsManualEnabled = enabled;
-    if (state.value.isConnected) {
-      _publishBool(RosMappingTopics.baseManualMode, enabled);
-    }
-  }
 
   static Uri normalizeAddress(String input) {
     var value = input.trim();
@@ -288,16 +282,6 @@ class RosBridgeClient {
       'topic': manualVelocityTopic,
       'type': RosMappingTypes.twistMsg,
     });
-    _send({
-      'op': 'advertise',
-      'topic': RosMappingTopics.baseManualMode,
-      'type': RosMappingTypes.boolMsg,
-    });
-    _send({
-      'op': 'advertise',
-      'topic': RosHardwareTopics.cmdHardware,
-      'type': RosHardwareTypes.stringMsg,
-    });
     onMappingSubscriptionsReady?.call();
   }
 
@@ -358,7 +342,16 @@ class RosBridgeClient {
     final raw = message['msg'];
     if (topic == robotStatusTopic && raw is Map) {
       final status = Map<String, dynamic>.from(raw);
-      // Fiziksel / ROS manual_mode_enabled kapısı kullanılmıyor; GCS UI seçer.
+      final nextManualMode = status['manual_mode_enabled'] == true;
+      if (_hardwareManualMode && !nextManualMode) stopManual();
+      _hardwareManualMode = nextManualMode;
+      _robotStatusStaleTimer?.cancel();
+      _robotStatusStaleTimer = Timer(robotStatusTimeout, () {
+        if (!state.value.isConnected) return;
+        if (_hardwareManualMode) stopManual();
+        _hardwareManualMode = false;
+        onRobotStatus?.call(const <String, dynamic>{});
+      });
       onRobotStatus?.call(status);
     } else if (topic == missionEventsTopic && raw is Map) {
       final event = raw['data'];
@@ -480,8 +473,14 @@ class RosBridgeClient {
     }
   }
 
-  Future<Map<String, dynamic>> startMission() =>
-      callService('/mission/start', 'marco_msgs/srv/StartMission');
+  Future<Map<String, dynamic>> startMission() => callService(
+        '/mission/start',
+        'marco_msgs/srv/StartMission',
+        const {},
+        null,
+        'mission_start',
+        true,
+      );
 
   Future<Map<String, dynamic>> submitManualTask({
     required String taskId,
@@ -509,14 +508,32 @@ class RosBridgeClient {
         'return_home': returnHome,
       });
 
-  Future<Map<String, dynamic>> cancelMission() =>
-      callService('/mission/cancel', 'marco_msgs/srv/CancelMission');
+  Future<Map<String, dynamic>> cancelMission() => callService(
+        '/mission/cancel',
+        'marco_msgs/srv/CancelMission',
+        const {},
+        null,
+        'mission_cancel',
+        true,
+      );
 
-  Future<Map<String, dynamic>> resetMissionSafety() =>
-      callService('/mission/reset_safety', 'marco_msgs/srv/ResetMissionSafety');
+  Future<Map<String, dynamic>> resetMissionSafety() => callService(
+        '/mission/reset_safety',
+        'marco_msgs/srv/ResetMissionSafety',
+        const {},
+        null,
+        'mission_reset_safety',
+        true,
+      );
 
-  Future<Map<String, dynamic>> emergencyStop() =>
-      callService('/mission/emergency_stop', 'std_srvs/srv/Trigger');
+  Future<Map<String, dynamic>> emergencyStop() => callService(
+        '/mission/emergency_stop',
+        'std_srvs/srv/Trigger',
+        const {},
+        null,
+        'mission_emergency_stop',
+        true,
+      );
 
   Future<Map<String, dynamic>> startMapping({required String fieldName}) {
     final error = RosFieldNameRules.validate(fieldName);
@@ -641,20 +658,15 @@ class RosBridgeClient {
         true,
       );
 
-  /// Demo öncesi dead-man sıfırı ve ROS otonom mod kapısını atomik sırada yollar.
+  /// Demo öncesi dead-man sıfırı yollar; fiziksel mod anahtarını taklit etmez.
   bool prepareSavedDemoStart() {
     if (!state.value.isConnected) return false;
-    _manualHeartbeat?.cancel();
-    _manualHeartbeat = null;
-    _manualLinear = 0;
-    _manualAngular = 0;
-    _publishTwist(0, 0);
-    _gcsManualEnabled = false;
-    _publishBool(RosMappingTopics.baseManualMode, false);
+    stopManual();
+    if (_hardwareManualMode) return false;
     return true;
   }
 
-  // ── G.2 stations stubs ───────────────────────────────────────────────────
+  // Güncel ROS kaynaklarında `/stations/*` ve `/routes/*` servisleri yoktur.
 
   Future<Map<String, dynamic>> addStation({
     required String name,
@@ -664,18 +676,9 @@ class RosBridgeClient {
     required double screenYaw,
     required String fieldName,
   }) =>
-      callService(
-        RosMappingTopics.stationsAdd,
-        RosMappingTypes.addStationSrv,
-        {
-          'name': name.trim(),
-          'type': type,
-          'pixel_x': pixelX,
-          'pixel_y': pixelY,
-          'screen_yaw': screenYaw,
-          'field_name': fieldName.trim(),
-        },
-      );
+      Future.error(UnsupportedError(
+        'ROS backend düğüm ekleme servisi sunmuyor (/stations/add yok)',
+      ));
 
   Future<Map<String, dynamic>> updateStation({
     required String name,
@@ -685,71 +688,49 @@ class RosBridgeClient {
     required double screenYaw,
     required String fieldName,
   }) =>
-      callService(
-        RosMappingTopics.stationsUpdate,
-        RosMappingTypes.updateStationSrv,
-        {
-          'name': name.trim(),
-          'type': type,
-          'pixel_x': pixelX,
-          'pixel_y': pixelY,
-          'screen_yaw': screenYaw,
-          'field_name': fieldName.trim(),
-        },
-      );
+      Future.error(UnsupportedError(
+        'ROS backend düğüm düzenleme servisi sunmuyor (/stations/update yok)',
+      ));
 
   Future<Map<String, dynamic>> deleteStation({required String name}) =>
-      callService(
-        RosMappingTopics.stationsDelete,
-        RosMappingTypes.deleteStationSrv,
-        {'name': name.trim()},
-      );
+      Future.error(UnsupportedError(
+        'ROS backend düğüm silme servisi sunmuyor (/stations/delete yok)',
+      ));
 
   Future<Map<String, dynamic>> listStations([
     Map<String, dynamic> args = const {},
   ]) =>
-      callService(
-        RosMappingTopics.stationsList,
-        RosMappingTypes.listStationsSrv,
-        args,
-      );
-
-  // ── H.2 routes stubs ─────────────────────────────────────────────────────
+      Future.error(UnsupportedError(
+        'ROS backend düğüm listeleme servisi sunmuyor (/stations/list yok)',
+      ));
 
   Future<Map<String, dynamic>> saveRoute({
     required String name,
     required List<String> nodeNames,
   }) =>
-      callService(
-        RosMappingTopics.routesSave,
-        RosMappingTypes.saveRouteSrv,
-        {
-          'name': name.trim(),
-          'nodes': nodeNames,
-        },
-      );
+      Future.error(UnsupportedError(
+        'ROS backend rota kaydetme servisi sunmuyor (/routes/save yok)',
+      ));
 
   Future<Map<String, dynamic>> listRoutes([
     Map<String, dynamic> args = const {},
   ]) =>
-      callService(
-        RosMappingTopics.routesList,
-        RosMappingTypes.listRoutesSrv,
-        args,
-      );
+      Future.error(UnsupportedError(
+        'ROS backend rota listeleme servisi sunmuyor (/routes/list yok)',
+      ));
 
   Future<Map<String, dynamic>> deleteRoute({required String name}) =>
-      callService(
-        RosMappingTopics.routesDelete,
-        RosMappingTypes.deleteRouteSrv,
-        {'name': name.trim()},
-      );
+      Future.error(UnsupportedError(
+        'ROS backend rota silme servisi sunmuyor (/routes/delete yok)',
+      ));
 
-  /// Birimsiz komut ölçeği yayınlar (−1…+1). m/s tavanı STM32’dedir.
+  /// Normalize UI girdisini gerçek SI Twist değerlerine çevirir.
   bool publishManualTwist(double linearX, double angularZ) {
-    if (!state.value.isConnected || !_gcsManualEnabled) return false;
-    final lx = RosManualDriveLimits.clampCommandScale(linearX);
-    final az = RosManualDriveLimits.clampCommandScale(angularZ);
+    if (!state.value.isConnected || !manualModeEnabled) return false;
+    final lx = RosManualDriveLimits.clampCommandScale(linearX) *
+        RosManualDriveLimits.maxLinearMetersPerSecond;
+    final az = RosManualDriveLimits.clampCommandScale(angularZ) *
+        RosManualDriveLimits.maxAngularRadiansPerSecond;
     _manualLinear = lx;
     _manualAngular = az;
     _publishTwist(lx, az);
@@ -758,7 +739,7 @@ class RosBridgeClient {
       _manualHeartbeat = Timer.periodic(
         const Duration(milliseconds: RosManualDriveLimits.heartbeatDefaultMs),
         (_) {
-          if (!state.value.isConnected || !_gcsManualEnabled) {
+          if (!state.value.isConnected || !manualModeEnabled) {
             _manualHeartbeat?.cancel();
             return;
           }
@@ -791,19 +772,12 @@ class RosBridgeClient {
     _manualHeartbeat = null;
     _manualLinear = 0;
     _manualAngular = 0;
-    if (state.value.isConnected && _gcsManualEnabled) _publishTwist(0, 0);
+    if (state.value.isConnected && _hardwareManualMode) _publishTwist(0, 0);
   }
 
-  /// Donanım komutu (`/cmd_hardware` ← `std_msgs/String`).
+  /// Güncel ROS kaynaklarında genel string donanım komut topic'i yoktur.
   bool publishHardwareCommand(String command) {
-    final data = command.trim();
-    if (data.isEmpty || !state.value.isConnected) return false;
-    _send({
-      'op': 'publish',
-      'topic': RosHardwareTopics.cmdHardware,
-      'msg': {'data': data},
-    });
-    return true;
+    return false;
   }
 
   void _publishTwist(double linearX, double angularZ) {
@@ -814,14 +788,6 @@ class RosBridgeClient {
         'linear': {'x': linearX, 'y': 0.0, 'z': 0.0},
         'angular': {'x': 0.0, 'y': 0.0, 'z': angularZ},
       },
-    });
-  }
-
-  void _publishBool(String topic, bool value) {
-    _send({
-      'op': 'publish',
-      'topic': topic,
-      'msg': {'data': value},
     });
   }
 
@@ -843,7 +809,13 @@ class RosBridgeClient {
 
   void _onSocketClosed(int generation, String reason) {
     if (generation != _generation || _manualDisconnect) return;
-    stopManual();
+    _manualHeartbeat?.cancel();
+    _manualHeartbeat = null;
+    _robotStatusStaleTimer?.cancel();
+    _robotStatusStaleTimer = null;
+    _manualLinear = 0;
+    _manualAngular = 0;
+    _hardwareManualMode = false;
     _generation++;
     _subscription?.cancel();
     _subscription = null;
@@ -852,10 +824,9 @@ class RosBridgeClient {
       unawaited(_closeSink(channel));
     }
     _channel = null;
-    // Buzzer durumu last-good tutulmaz; yeniden bağlantıda topic beklenir.
-    onBuzzerState?.call(null);
-    // Geçici kopma: harita last-good kalsın (preview + occupancy silinmez).
-    // GCS manuel tercih (_gcsManualEnabled) korunur.
+    onRobotStatus?.call(const <String, dynamic>{});
+    _clearOccupancyCallbacks();
+    _clearMappingPreviewCallbacks();
     for (final call in _serviceCalls.values) {
       if (!call.isCompleted) call.completeError(StateError(reason));
     }
@@ -902,6 +873,8 @@ class RosBridgeClient {
     _manualDisconnect = true;
     _reconnectTimer?.cancel();
     stopManual();
+    _robotStatusStaleTimer?.cancel();
+    _robotStatusStaleTimer = null;
     // Manuel kes: komutlar durur; last-good harita UI'da kalabilir.
     _generation++;
     await _subscription?.cancel();
@@ -911,7 +884,10 @@ class RosBridgeClient {
       await _closeSink(channel);
     }
     _channel = null;
-    onBuzzerState?.call(null);
+    _hardwareManualMode = false;
+    onRobotStatus?.call(const <String, dynamic>{});
+    _clearOccupancyCallbacks();
+    _clearMappingPreviewCallbacks();
     state.value = RosConnectionState(
       RosConnectionStatus.disconnected,
       url: url,

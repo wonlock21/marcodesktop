@@ -36,14 +36,14 @@ enum MapPointType {
 
 extension MapPointTypeExt on MapPointType {
   String get etiket => switch (this) {
-        MapPointType.almaNoktasi    => 'Alma',
-        MapPointType.birakNoktasi   => 'Bırakma',
+        MapPointType.almaNoktasi => 'Alma',
+        MapPointType.birakNoktasi => 'Bırakma',
         MapPointType.beklemeNoktasi => 'Bekleme',
-        MapPointType.kapiKontrol    => 'Kapı',
-        MapPointType.sarjIstasyonu  => 'Şarj',
-        MapPointType.qrNoktasi      => 'QR',
-        MapPointType.engel          => 'Engel',
-        MapPointType.guvenliDurus   => 'Güvenli',
+        MapPointType.kapiKontrol => 'Kapı',
+        MapPointType.sarjIstasyonu => 'Şarj',
+        MapPointType.qrNoktasi => 'QR',
+        MapPointType.engel => 'Engel',
+        MapPointType.guvenliDurus => 'Güvenli',
       };
 }
 
@@ -146,102 +146,36 @@ class GcsMapData {
   final OccupancyGridMetadata? mapMeta;
 
   const GcsMapData({
-    this.robotX   = 0.0,
-    this.robotY   = 0.0,
+    this.robotX = 0.0,
+    this.robotY = 0.0,
     this.robotYaw = 0.0,
-    this.points   = const [],
-    this.routes   = const [],
-    this.zones    = const [],
+    this.points = const [],
+    this.routes = const [],
+    this.zones = const [],
     this.occupancyImage,
     this.mapMeta,
   });
 
   GcsMapData copyWith({
-    double?         robotX,
-    double?         robotY,
-    double?         robotYaw,
+    double? robotX,
+    double? robotY,
+    double? robotYaw,
     List<MapPoint>? points,
     List<MapRoute>? routes,
-    List<MapZone>?  zones,
-    ui.Image?       occupancyImage,
+    List<MapZone>? zones,
+    ui.Image? occupancyImage,
     OccupancyGridMetadata? mapMeta,
     bool clearOccupancy = false,
   }) =>
       GcsMapData(
-        robotX:   robotX   ?? this.robotX,
-        robotY:   robotY   ?? this.robotY,
+        robotX: robotX ?? this.robotX,
+        robotY: robotY ?? this.robotY,
         robotYaw: robotYaw ?? this.robotYaw,
-        points:   points   ?? this.points,
-        routes:   routes   ?? this.routes,
-        zones:    zones    ?? this.zones,
+        points: points ?? this.points,
+        routes: routes ?? this.routes,
+        zones: zones ?? this.zones,
         occupancyImage:
             clearOccupancy ? null : (occupancyImage ?? this.occupancyImage),
         mapMeta: clearOccupancy ? null : (mapMeta ?? this.mapMeta),
-      );
-
-  // ── Mock factory ─────────────────────────────────────────────────────────
-
-  /// Demo/test amaçlı örnek fabrika katı haritası.
-  ///
-  /// Senaryo: 8 × 8 m fabrika alanı.
-  /// Robot A2'den yük almış, B3'e taşıyor.
-  static GcsMapData mock({
-    double robotX   = 3.2,
-    double robotY   = 2.1,
-    double robotYaw = 0.45,
-  }) =>
-      GcsMapData(
-        robotX:   robotX,
-        robotY:   robotY,
-        robotYaw: robotYaw,
-        points: const [
-          // Alma noktaları
-          MapPoint(id: 'a1', label: 'A1', x: 1.0, y: 0.5,  type: MapPointType.almaNoktasi),
-          MapPoint(id: 'a2', label: 'A2', x: 2.0, y: 0.5,  type: MapPointType.almaNoktasi,  aktif: true),
-          MapPoint(id: 'a3', label: 'A3', x: 3.0, y: 0.5,  type: MapPointType.almaNoktasi),
-          MapPoint(id: 'a4', label: 'A4', x: 4.0, y: 0.5,  type: MapPointType.almaNoktasi),
-          // Bırakma noktaları
-          MapPoint(id: 'b1', label: 'B1', x: 1.0, y: 4.5,  type: MapPointType.birakNoktasi),
-          MapPoint(id: 'b2', label: 'B2', x: 2.0, y: 4.5,  type: MapPointType.birakNoktasi),
-          MapPoint(id: 'b3', label: 'B3', x: 4.0, y: 4.5,  type: MapPointType.birakNoktasi, aktif: true),
-          MapPoint(id: 'b4', label: 'B4', x: 5.0, y: 4.5,  type: MapPointType.birakNoktasi),
-          // Bekleme / başlangıç
-          MapPoint(id: 's1', label: 'S1', x: 0.5, y: 0.5,  type: MapPointType.beklemeNoktasi),
-          MapPoint(id: 's2', label: 'S2', x: 0.5, y: 2.5,  type: MapPointType.beklemeNoktasi),
-          // Kapı kontrol
-          MapPoint(id: 'd1', label: 'KAPI-1', x: 3.0, y: 3.0, type: MapPointType.kapiKontrol),
-          // Şarj istasyonu
-          MapPoint(id: 'cs', label: 'CS',   x: -1.5, y: 1.5, type: MapPointType.sarjIstasyonu),
-          // Son QR
-          MapPoint(id: 'qr_last', label: 'QA2.1', x: 2.0, y: 0.5, type: MapPointType.qrNoktasi),
-        ],
-        routes: const [
-          MapRoute(
-            id: 'aktif_rota',
-            label: 'A2 → B3',
-            waypoints: [
-              Offset(0.5, 0.5),
-              Offset(2.0, 0.5),
-              Offset(3.2, 2.1),
-              Offset(4.0, 4.5),
-            ],
-          ),
-        ],
-        zones: const [
-          MapZone(
-            id: 'obs1',
-            label: 'Engel',
-            center: Offset(5.5, 1.5),
-            radius: 0.6,
-            isEngel: true,
-          ),
-          MapZone(
-            id: 'safe1',
-            label: 'Güvenli',
-            center: Offset(-0.5, 3.5),
-            radius: 0.8,
-            isEngel: false,
-          ),
-        ],
       );
 }

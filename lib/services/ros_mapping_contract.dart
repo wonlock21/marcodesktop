@@ -237,16 +237,6 @@ abstract final class RosMappingTopics {
   static const demoCancel = '/demo/cancel';
   static const demoStatus = '/demo/status';
   static const obstacleDetected = '/safety/obstacle_detected';
-  static const baseManualMode = '/base/manual_mode';
-
-  static const stationsAdd = '/stations/add';
-  static const stationsUpdate = '/stations/update';
-  static const stationsDelete = '/stations/delete';
-  static const stationsList = '/stations/list';
-
-  static const routesSave = '/routes/save';
-  static const routesList = '/routes/list';
-  static const routesDelete = '/routes/delete';
 }
 
 /// rosbridge `type` alanları (SRV / MSG).
@@ -277,28 +267,22 @@ abstract final class RosMappingTypes {
   static const triggerSrv = 'std_srvs/srv/Trigger';
   static const demoStatusMsg = 'marco_msgs/msg/DemoStatus';
   static const boolMsg = 'std_msgs/msg/Bool';
-
-  static const addStationSrv = 'marco_msgs/srv/AddStation';
-  static const updateStationSrv = 'marco_msgs/srv/UpdateStation';
-  static const deleteStationSrv = 'marco_msgs/srv/DeleteStation';
-  static const listStationsSrv = 'marco_msgs/srv/ListStations';
-
-  static const saveRouteSrv = 'marco_msgs/srv/SaveRoute';
-  static const listRoutesSrv = 'marco_msgs/srv/ListRoutes';
-  static const deleteRouteSrv = 'marco_msgs/srv/DeleteRoute';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Manuel sürüş (mapping ekranı)
 //
-// GCS `/cmd_vel_manual` üzerine birimsiz yön/ölçek komutu basar (−1…+1).
-// Gerçek m/s ve rad/s tavanı STM32 / firmware tarafındadır; burada clamp yok.
+// UI yön girdisi normalize (−1…+1) tutulur; wire Twist gerçek SI birimidir.
 // ─────────────────────────────────────────────────────────────────────────────
 
 abstract final class RosManualDriveLimits {
-  /// Twist `linear.x` / `angular.z` komut ölçeği (birimsiz, m/s değil).
+  /// UI normalize yön/ölçek girdisi.
   static const double commandScaleMin = -1.0;
   static const double commandScaleMax = 1.0;
+
+  /// `/cmd_vel_manual` için yarışma tavanları (m/s ve rad/s).
+  static const double maxLinearMetersPerSecond = 0.50;
+  static const double maxAngularRadiansPerSecond = 0.60;
 
   /// UI hız kademesi (0…4) → komut büyüklüğü 0.2…1.0.
   static const int speedStepMin = 0;
@@ -429,6 +413,9 @@ abstract final class RosServiceResponse {
 
   static bool triggerSucceeded(Map<String, dynamic> response) =>
       response['success'] == true;
+
+  static bool missionAccepted(Map<String, dynamic> response) =>
+      response['accepted'] == true;
 
   static String failureMessage(
     Map<String, dynamic> response, {
@@ -662,6 +649,18 @@ class MapPreviewMetadata {
               ? ((origin['position'] as Map)['y'] as num?)?.toDouble()
               : null);
       originYaw = (origin['yaw'] as num?)?.toDouble() ?? originYaw;
+      final rawOrientation = origin['orientation'];
+      if (rawOrientation is Map) {
+        final orientation = Map<String, dynamic>.from(rawOrientation);
+        final qx = (orientation['x'] as num?)?.toDouble() ?? 0;
+        final qy = (orientation['y'] as num?)?.toDouble() ?? 0;
+        final qz = (orientation['z'] as num?)?.toDouble() ?? 0;
+        final qw = (orientation['w'] as num?)?.toDouble() ?? 1;
+        originYaw = math.atan2(
+          2 * (qw * qz + qx * qy),
+          1 - 2 * (qy * qy + qz * qz),
+        );
+      }
     }
     originX ??= 0;
     originY ??= 0;

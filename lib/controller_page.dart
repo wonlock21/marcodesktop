@@ -8,7 +8,6 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'admin_mode.dart';
 import 'data_model.dart';
 import 'data_page.dart';
 import 'models/agv_sensor_model.dart';
@@ -19,7 +18,6 @@ import 'models/gcs_map_model.dart';
 import 'models/gcs_mapping_model.dart';
 import 'models/gcs_mission_model.dart';
 import 'models/gcs_node_model.dart';
-import 'mock/gcs_mock_data.dart';
 import 'parameter_model.dart';
 import 'scenerio_page.dart';
 import 'services/agv_service.dart';
@@ -103,20 +101,7 @@ class _ControllerPageState extends State<ControllerPage>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _mappingModel.applyConnectionState(AgvService.ros.state.value);
-      AgvService.setGcsManualEnabled(_connModel.fizikselManuelMod);
     });
-    // GEÇİCİ admin/demo modu: cihaz yokken rapor için örnek veri bas.
-    if (kAdminMode) {
-      isConnected = true;
-      nextQR = "QB3.1";
-      GcsMockData.applyAll(
-        agvModel: _agvModel,
-        connModel: Provider.of<GcsConnectionModel>(context, listen: false),
-        missionModel: Provider.of<GcsMissionModel>(context, listen: false),
-        alarmModel: Provider.of<GcsAlarmModel>(context, listen: false),
-        eventLogModel: Provider.of<GcsEventLogModel>(context, listen: false),
-      );
-    }
   }
 
   double _number(dynamic value, [double fallback = 0]) =>
@@ -140,6 +125,7 @@ class _ControllerPageState extends State<ControllerPage>
       1 - 2 * (qy * qy + qz * qz),
     );
     final missionState = (status['mission_state'] as num?)?.toInt() ?? 0;
+    final hardwareManualMode = status['manual_mode_enabled'] == true;
     final estop = status['estop_active'] == true;
     final obstacle = status['obstacle_detected'] == true;
     final plcConnected = status['plc_connected'] == true;
@@ -202,11 +188,12 @@ class _ControllerPageState extends State<ControllerPage>
       },
       kapiIzni: status['gate_permission_granted'] == true,
     );
-    // Çalışma modu (manuel/otonom) ROS fiziksel anahtarından gelmez; GCS UI seçer.
     _connModel.topluGuncelle(
       sistem: ConnDurum.bagli,
       robot: ConnDurum.bagli,
       plc: plcConnected ? ConnDurum.bagli : ConnDurum.cevrimdisi,
+      manuelMod: hardwareManualMode,
+      uzaktanKontrol: hardwareManualMode,
     );
     final alarms = Provider.of<GcsAlarmModel>(context, listen: false);
     alarms.topluGuncelle(
@@ -969,7 +956,7 @@ class _ControllerPageState extends State<ControllerPage>
     final alarms = Provider.of<GcsAlarmModel>(context, listen: false);
 
     AgvService.stopManual();
-    if (!kAdminMode && AgvService.ros.state.value.isConnected) {
+    if (AgvService.ros.state.value.isConnected) {
       try {
         final response = await AgvService.emergencyStop();
         final accepted = response['success'] == true;
@@ -1014,6 +1001,12 @@ class _ControllerPageState extends State<ControllerPage>
     }
     try {
       final response = await AgvService.startMission();
+      if (!RosServiceResponse.missionAccepted(response)) {
+        throw StateError(RosServiceResponse.failureMessage(
+          response,
+          fallback: 'Görev başlatma isteği reddedildi',
+        ));
+      }
       _onMissionEvent(
           response['message']?.toString() ?? 'Başlatma yanıtı alındı');
     } catch (error) {
@@ -1028,6 +1021,12 @@ class _ControllerPageState extends State<ControllerPage>
     }
     try {
       final response = await AgvService.cancelMission();
+      if (!RosServiceResponse.missionAccepted(response)) {
+        throw StateError(RosServiceResponse.failureMessage(
+          response,
+          fallback: 'Görev iptal isteği reddedildi',
+        ));
+      }
       _onMissionEvent(response['message']?.toString() ?? 'İptal yanıtı alındı');
     } catch (error) {
       _onMissionEvent('İptal hatası: $error');
@@ -1041,13 +1040,19 @@ class _ControllerPageState extends State<ControllerPage>
     }
     try {
       final response = await AgvService.resetMissionSafety();
+      if (!RosServiceResponse.missionAccepted(response)) {
+        throw StateError(RosServiceResponse.failureMessage(
+          response,
+          fallback: 'Safety reset isteği reddedildi',
+        ));
+      }
       _onMissionEvent(response['message']?.toString() ?? 'Safety reset yanıtı');
     } catch (error) {
       _onMissionEvent('Safety reset hatası: $error');
     }
   }
 
-  /// UI kademesinden birimsiz komut ölçeği (m/s değil — D.1).
+  /// UI kademesinden normalize komut ölçeği; istemci SI Twist'e çevirir.
   double get _manualCommandScale =>
       RosManualDriveLimits.scaleFromSpeedStep(speed);
 
@@ -1065,7 +1070,7 @@ class _ControllerPageState extends State<ControllerPage>
   Future<void> _navigateToScenarioPage(List<DataPoint> dataPoints) async {
     // F.3: harita noktaları veya öğretilmiş alma/bırakma düğümleri yeterli.
     final hasTaughtRoute = context.read<GcsNodeModel>().hasRouteEligibleNodes;
-    if (dataPoints.isEmpty && !hasTaughtRoute && !kAdminMode) {
+    if (dataPoints.isEmpty && !hasTaughtRoute) {
       _onMissionEvent(
         'Senaryo için harita noktası veya Düğümler’de alma/bırakma gerekli',
       );
@@ -1091,7 +1096,7 @@ class _ControllerPageState extends State<ControllerPage>
   }
 
   Future<void> _navigateToDataPage(String site) async {
-    if (site.isEmpty && !kAdminMode) return;
+    if (site.isEmpty) return;
     await Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => DataPage(site: site)),
@@ -1364,7 +1369,7 @@ class _ControllerPageState extends State<ControllerPage>
                                         onPressed: () {
                                           if (!AgvService.setLed()) {
                                             _onMissionEvent(
-                                              'LED komutu gönderilemedi: ROS bağlı değil',
+                                              'LED komutu gönderilmedi: güncel ROS backend LED arayüzü sunmuyor',
                                             );
                                           }
                                         },
@@ -1635,15 +1640,7 @@ class _ControllerPageState extends State<ControllerPage>
                                         child: Switch(
                                           value: oto,
                                           activeThumbColor: accent,
-                                          onChanged: (isOtonom) {
-                                            final manuel = !isOtonom;
-                                            conn.topluGuncelle(
-                                              manuelMod: manuel,
-                                              uzaktanKontrol: manuel,
-                                            );
-                                            AgvService.setGcsManualEnabled(
-                                                manuel);
-                                          },
+                                          onChanged: null,
                                         ),
                                       ),
                                     ),
@@ -1654,8 +1651,8 @@ class _ControllerPageState extends State<ControllerPage>
                                 padding: EdgeInsets.only(top: 0.8.h),
                                 child: Text(
                                   oto
-                                      ? 'Otonom: WASD kapalı'
-                                      : 'Manuel: WASD / cmd_vel_manual açık',
+                                      ? 'Otonom: fiziksel mod anahtarı, WASD kapalı'
+                                      : 'Manuel: fiziksel mod doğrulandı, WASD açık',
                                   style: TextStyle(
                                     color: muted,
                                     fontSize: 2.2.sp,
