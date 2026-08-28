@@ -27,10 +27,10 @@ import 'services/ros_gcs_contract.dart';
 import 'services/ros_mapping_contract.dart';
 import 'widgets/control_buttons.dart';
 import 'widgets/gcs_map_view.dart';
-import 'widgets/live_map.dart';
 import 'widgets/map_preview_stage.dart';
 import 'widgets/mapping_connection_banner.dart';
 import 'widgets/mapping_field_bar.dart';
+import 'widgets/mjpeg_camera_view.dart';
 
 class ControllerPage extends StatefulWidget {
   const ControllerPage({super.key});
@@ -2887,30 +2887,10 @@ class _ControllerPageState extends State<ControllerPage>
           ],
         );
 
-      // ── Kamera ─────────────────────────────────────────────────────────
+      // ── Kamera (HTTP MJPEG; rosbridge kullanılmaz) ─────────────────────
       case 1:
-        if (_site.startsWith('ws://') || _site.startsWith('wss://')) {
-          return _workAreaPlaceholder(
-            'KAMERA',
-            Icons.videocam_outlined,
-            'Kamera akışı henüz bağlı değil',
-            'ROS görüntü topic veya HTTP kamera adresi netleşince bağlanacak.',
-            panelBg,
-            borderC,
-            muted,
-          );
-        }
-        return Container(
-          color: const Color(0xFF0D0D0D),
-          child: ClipRect(
-            child: LiveMapFixedUrl(
-              site: _site,
-              poseFn: () => Pose(agv.currX, agv.currY, agv.currYaw),
-              imagePath: '/get_image',
-              interval: const Duration(milliseconds: 500),
-            ),
-          ),
-        );
+        // Sekmeden çıkınca widget dispose olur → stream serbest bırakılır.
+        return const MjpegCameraView();
 
       // ── LiDAR ──────────────────────────────────────────────────────────
       case 2:
