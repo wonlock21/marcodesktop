@@ -2,8 +2,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
-
-
 class TimerPage extends StatefulWidget {
   const TimerPage({super.key});
   @override
@@ -45,9 +43,7 @@ class _TimerPageState extends State<TimerPage> {
   Widget build(BuildContext context) {
     return Text(
       formatTime(_elapsedSeconds),
-      style: TextStyle(
-        color: Colors.blue,
-        fontSize: 5.sp),
+      style: TextStyle(color: Colors.blue, fontSize: 5.sp),
     );
   }
 }

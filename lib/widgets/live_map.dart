@@ -36,7 +36,7 @@ class _ParseInput {
 /// bu fonksiyon null döndürür; _tick() ana Isolate'te fallback çalıştırır.
 Uint8List? _parseResponseInIsolate(_ParseInput input) {
   final bytes = input.bodyBytes;
-  final ct    = input.contentType;
+  final ct = input.contentType;
 
   // 1) Content-Type'a göre doğrudan binary
   if (ct.startsWith('image/') && bytes.isNotEmpty) {
@@ -108,6 +108,7 @@ Uint8List? _sniffBinaryStatic(Uint8List data) {
     }
     return true;
   }
+
   const riff = [0x52, 0x49, 0x46, 0x46];
   const webp = [0x57, 0x45, 0x42, 0x50];
   if (match(0, riff) && match(8, webp)) return data;
@@ -123,9 +124,8 @@ String _lossyString(Uint8List data) {
 }
 
 bool _looksLikeBase64Static(String s) {
-  final cleaned = _stripPrefixStatic(s)
-      .replaceAll('\n', '')
-      .replaceAll('\r', '');
+  final cleaned =
+      _stripPrefixStatic(s).replaceAll('\n', '').replaceAll('\r', '');
   if (cleaned.length < 16) return false;
   return RegExp(r'^[A-Za-z0-9+/=]+$')
       .hasMatch(cleaned.substring(0, cleaned.length.clamp(0, 256)));
@@ -232,11 +232,9 @@ class _LiveMapFixedUrlState extends State<LiveMapFixedUrl> {
           if (imgSrc != null) {
             _debug('HTML img src bulundu: $imgSrc');
             final resolved = _resolveUrl(Uri.parse(_url), imgSrc);
-            final imgResp =
-                await http.get(resolved).timeout(widget.timeout);
+            final imgResp = await http.get(resolved).timeout(widget.timeout);
             if (imgResp.statusCode == 200) {
-              final ct2 =
-                  (imgResp.headers['content-type'] ?? '').toLowerCase();
+              final ct2 = (imgResp.headers['content-type'] ?? '').toLowerCase();
               bytes = await compute(
                 _parseResponseInIsolate,
                 _ParseInput(imgResp.bodyBytes, ct2),
@@ -245,8 +243,7 @@ class _LiveMapFixedUrlState extends State<LiveMapFixedUrl> {
               _debug('img src HTTP ${imgResp.statusCode}');
             }
           } else {
-            _debug(
-                'HTML geldi ama IMG tag bulunamadı. '
+            _debug('HTML geldi ama IMG tag bulunamadı. '
                 'Head: ${html.substring(0, html.length.clamp(0, 200))}');
           }
         }
@@ -258,8 +255,7 @@ class _LiveMapFixedUrlState extends State<LiveMapFixedUrl> {
             _lastError = null;
           });
         } else {
-          _noteError(
-              '200 aldı ama görüntü çözülemedi (ct="$ct", '
+          _noteError('200 aldı ama görüntü çözülemedi (ct="$ct", '
               'len=${resp.bodyBytes.length}).');
         }
       } else {
@@ -286,8 +282,7 @@ class _LiveMapFixedUrlState extends State<LiveMapFixedUrl> {
     }
     if (href.startsWith('//')) return Uri.parse('${base.scheme}:$href');
     if (href.startsWith('/')) {
-      return Uri.parse(
-          '${base.scheme}://${base.host}'
+      return Uri.parse('${base.scheme}://${base.host}'
           '${base.hasPort ? ':${base.port}' : ''}$href');
     }
     final b = base.toString();
@@ -335,9 +330,8 @@ class _LiveMapFixedUrlState extends State<LiveMapFixedUrl> {
         Positioned.fill(
           child: (_frame == null)
               ? _StatusPane(
-                  text: _lastError == null
-                      ? 'Harita yükleniyor...'
-                      : _lastError!)
+                  text:
+                      _lastError == null ? 'Harita yükleniyor...' : _lastError!)
               : Image.memory(
                   _frame!,
                   gaplessPlayback: true,

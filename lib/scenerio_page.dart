@@ -3,6 +3,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 
 import 'data_model.dart';
+import 'models/gcs_field_graph_model.dart';
 import 'models/gcs_node_model.dart';
 import 'services/agv_service.dart';
 import 'services/ros_gcs_contract.dart';
@@ -91,6 +92,9 @@ class _ScenarioPageState extends State<ScenarioPage> {
   void initState() {
     super.initState();
     senaryoIsDone = widget.rota.isNotEmpty;
+  }
+
+  void _loadLegacyDataPoints() {
     for (final point in widget.dataPoints) {
       final node = RosGcsContract.nodeForPoint(point);
       if (node == null &&
@@ -127,10 +131,12 @@ class _ScenarioPageState extends State<ScenarioPage> {
     super.didChangeDependencies();
     if (_taughtMerged) return;
     _taughtMerged = true;
+    final graph = context.read<GcsFieldGraphModel>();
+    if (!graph.hasSelectedField) _loadLegacyDataPoints();
     _mergeTaughtNodes(context.read<GcsNodeModel>());
   }
 
-  /// Eski harita noktalarının yanına öğretilmiş alma/bırakma ekler (F.3).
+  /// Seçili kanonik sahanın kalıcı alma/bırakma düğümlerini projekte eder.
   void _mergeTaughtNodes(GcsNodeModel model) {
     var layoutIndex = 0;
     for (final node in model.routeEligibleNodes) {

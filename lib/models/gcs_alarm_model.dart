@@ -43,44 +43,44 @@ enum AlarmTur {
 extension AlarmTurExt on AlarmTur {
   /// Kullanıcıya gösterilen kısa Türkçe açıklama.
   String get etiket => switch (this) {
-        AlarmTur.temiz              => 'Alarm Yok',
-        AlarmTur.acilStop           => 'Acil Stop Aktif',
-        AlarmTur.plcBaglantiHata    => 'PLC Bağlantı Hatası',
-        AlarmTur.robotBaglantiHata  => 'Robot Bağlantı Hatası',
+        AlarmTur.temiz => 'Alarm Yok',
+        AlarmTur.acilStop => 'Acil Stop Aktif',
+        AlarmTur.plcBaglantiHata => 'PLC Bağlantı Hatası',
+        AlarmTur.robotBaglantiHata => 'Robot Bağlantı Hatası',
         AlarmTur.stm32HaberlesmeHata => 'STM32 Haberleşme Hatası',
-        AlarmTur.dusukBatarya       => 'Düşük Batarya',
-        AlarmTur.qrOkumaHata        => 'QR Okuma Hatası',
-        AlarmTur.limitSwitchHata    => 'Limit Switch Hatası',
+        AlarmTur.dusukBatarya => 'Düşük Batarya',
+        AlarmTur.qrOkumaHata => 'QR Okuma Hatası',
+        AlarmTur.limitSwitchHata => 'Limit Switch Hatası',
         AlarmTur.guvenlikSensorUyari => 'Güvenlik Sensörü Uyarısı',
-        AlarmTur.motorSurucuHata    => 'Motor Sürücü Hatası',
+        AlarmTur.motorSurucuHata => 'Motor Sürücü Hatası',
       };
 
   /// İkon — UI'da hızlı gösterim için.
   IconData get ikon => switch (this) {
-        AlarmTur.temiz               => Icons.check_circle_outline,
-        AlarmTur.acilStop            => Icons.dangerous,
-        AlarmTur.plcBaglantiHata     => Icons.cable_outlined,
-        AlarmTur.robotBaglantiHata   => Icons.wifi_off,
+        AlarmTur.temiz => Icons.check_circle_outline,
+        AlarmTur.acilStop => Icons.dangerous,
+        AlarmTur.plcBaglantiHata => Icons.cable_outlined,
+        AlarmTur.robotBaglantiHata => Icons.wifi_off,
         AlarmTur.stm32HaberlesmeHata => Icons.memory_outlined,
-        AlarmTur.dusukBatarya        => Icons.battery_alert,
-        AlarmTur.qrOkumaHata         => Icons.qr_code_scanner,
-        AlarmTur.limitSwitchHata     => Icons.sensor_occupied,
+        AlarmTur.dusukBatarya => Icons.battery_alert,
+        AlarmTur.qrOkumaHata => Icons.qr_code_scanner,
+        AlarmTur.limitSwitchHata => Icons.sensor_occupied,
         AlarmTur.guvenlikSensorUyari => Icons.warning_amber,
-        AlarmTur.motorSurucuHata     => Icons.settings_backup_restore,
+        AlarmTur.motorSurucuHata => Icons.settings_backup_restore,
       };
 
   /// Renk — kritik / uyarı / bilgi sınıflandırması.
   Color get renk => switch (this) {
-        AlarmTur.temiz               => const Color(0xFF4CAF50),  // yeşil
-        AlarmTur.acilStop            => const Color(0xFFF44336),  // kırmızı
-        AlarmTur.plcBaglantiHata     => const Color(0xFFFF5722),
-        AlarmTur.robotBaglantiHata   => const Color(0xFFFF5722),
-        AlarmTur.stm32HaberlesmeHata => const Color(0xFFFF9800),  // turuncu
-        AlarmTur.dusukBatarya        => const Color(0xFFFF9800),
-        AlarmTur.qrOkumaHata         => const Color(0xFFFFEB3B),  // sarı
-        AlarmTur.limitSwitchHata     => const Color(0xFFFF9800),
+        AlarmTur.temiz => const Color(0xFF4CAF50), // yeşil
+        AlarmTur.acilStop => const Color(0xFFF44336), // kırmızı
+        AlarmTur.plcBaglantiHata => const Color(0xFFFF5722),
+        AlarmTur.robotBaglantiHata => const Color(0xFFFF5722),
+        AlarmTur.stm32HaberlesmeHata => const Color(0xFFFF9800), // turuncu
+        AlarmTur.dusukBatarya => const Color(0xFFFF9800),
+        AlarmTur.qrOkumaHata => const Color(0xFFFFEB3B), // sarı
+        AlarmTur.limitSwitchHata => const Color(0xFFFF9800),
         AlarmTur.guvenlikSensorUyari => const Color(0xFFFF9800),
-        AlarmTur.motorSurucuHata     => const Color(0xFFF44336),
+        AlarmTur.motorSurucuHata => const Color(0xFFF44336),
       };
 
   /// Kritik seviye (true = sistem durdurulmalı).
@@ -94,9 +94,9 @@ extension AlarmTurExt on AlarmTur {
 
 /// Tek bir aktif alarmın anlık görüntüsü.
 class AlarmKaydi {
-  final AlarmTur   tur;
-  final String     mesaj;
-  final DateTime   zaman;
+  final AlarmTur tur;
+  final String mesaj;
+  final DateTime zaman;
 
   const AlarmKaydi({
     required this.tur,
@@ -130,12 +130,10 @@ class GcsAlarmModel extends ChangeNotifier {
   bool isAktif(AlarmTur tur) => _aktifAlarmlar.containsKey(tur);
 
   /// Kritik seviyede alarm var mı? (sistem durdurulmalı)
-  bool get kritikAlarmVar =>
-      _aktifAlarmlar.keys.any((t) => t.kritik);
+  bool get kritikAlarmVar => _aktifAlarmlar.keys.any((t) => t.kritik);
 
   /// Robot güvenli duruş modunda mı? (acil stop veya kritik alarm).
-  bool get guvenliDurusAktif =>
-      isAktif(AlarmTur.acilStop) || kritikAlarmVar;
+  bool get guvenliDurusAktif => isAktif(AlarmTur.acilStop) || kritikAlarmVar;
 
   /// En yüksek öncelikli alarmı döner (acilStop > motor > diğerleri).
   AlarmTur? get enKritik {
@@ -179,8 +177,8 @@ class GcsAlarmModel extends ChangeNotifier {
   /// [aktifOlanlar] listesindeki alarmlar eklenir,
   /// [pasifOlanlar] listesindeki alarmlar kaldırılır.
   void topluGuncelle({
-    List<AlarmTur>  aktifOlanlar = const [],
-    List<AlarmTur>  pasifOlanlar = const [],
+    List<AlarmTur> aktifOlanlar = const [],
+    List<AlarmTur> pasifOlanlar = const [],
   }) {
     for (final tur in aktifOlanlar) {
       _aktifAlarmlar.putIfAbsent(

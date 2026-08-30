@@ -131,8 +131,7 @@ class OccupancyGridFrame {
     required this.data,
   });
 
-  bool get isComplete =>
-      data.length == metadata.width * metadata.height;
+  bool get isComplete => data.length == metadata.width * metadata.height;
 
   factory OccupancyGridFrame.fromRosMessage(Map<String, dynamic> message) {
     final metadata = OccupancyGridMetadata.fromRosMessage(message);

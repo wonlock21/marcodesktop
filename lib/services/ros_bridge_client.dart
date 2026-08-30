@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import '../models/field_graph_models.dart';
 import 'occupancy_grid_image.dart';
 import 'ros_gcs_contract.dart';
 import 'ros_hardware_contract.dart';
@@ -68,6 +69,8 @@ class RosBridgeClient {
   void Function(Uint8List? pngBytes)? onMapPreviewImage;
   void Function(MapPreviewMetadata? metadata)? onMapPreviewMetadata;
   void Function(MapPreviewRobotPixel? robotPixel)? onMapPreviewRobotPixel;
+  void Function(ActiveField? activeField)? onActiveField;
+  void Function(FieldPackageStatus? status)? onFieldPackageStatus;
 
   /// Mapping/preview abonelikleri (yeniden) gönderildikten sonra.
   /// UI last-good tutar; ilk taze preview gelene kadar "güncelleniyor" gösterebilir.
@@ -278,6 +281,18 @@ class RosBridgeClient {
       'throttle_rate': 50,
     });
     _send({
+      'op': 'subscribe',
+      'topic': RosMappingTopics.fieldsActive,
+      'type': RosMappingTypes.activeFieldMsg,
+      'queue_length': 1,
+    });
+    _send({
+      'op': 'subscribe',
+      'topic': RosMappingTopics.fieldsPackageStatus,
+      'type': RosMappingTypes.fieldPackageStatusMsg,
+      'queue_length': 1,
+    });
+    _send({
       'op': 'advertise',
       'topic': manualVelocityTopic,
       'type': RosMappingTypes.twistMsg,
@@ -319,7 +334,7 @@ class RosBridgeClient {
           final response = values is Map
               ? Map<String, dynamic>.from(values)
               : <String, dynamic>{};
-          if (message['result'] == false) {
+          if (message['result'] != true) {
             final responseMessage =
                 response['message']?.toString().trim() ?? '';
             final outerMessage = message['message']?.toString().trim() ?? '';
@@ -372,6 +387,21 @@ class RosBridgeClient {
       _handleMapPreviewMetadata(Map<String, dynamic>.from(raw));
     } else if (topic == RosMappingTopics.mapPreviewRobotPixel && raw is Map) {
       _handleMapPreviewRobotPixel(Map<String, dynamic>.from(raw));
+    } else if (topic == RosMappingTopics.fieldsActive && raw is Map) {
+      final parsed = ActiveField.tryFromTopic(Map<String, dynamic>.from(raw));
+      if (parsed == null) {
+        debugPrint('Geçersiz /fields/active mesajı');
+      } else {
+        onActiveField?.call(parsed);
+      }
+    } else if (topic == RosMappingTopics.fieldsPackageStatus && raw is Map) {
+      final parsed =
+          FieldPackageStatus.tryFromTopic(Map<String, dynamic>.from(raw));
+      if (parsed == null) {
+        debugPrint('Geçersiz /fields/package_status mesajı');
+      } else {
+        onFieldPackageStatus?.call(parsed);
+      }
     }
   }
 
@@ -564,6 +594,121 @@ class RosBridgeClient {
   Future<Map<String, dynamic>> listFields() => callService(
         RosMappingTopics.fieldsList,
         RosMappingTypes.listFieldsSrv,
+      );
+
+  Future<Map<String, dynamic>> getFieldGraph(String fieldName) => callService(
+        RosMappingTopics.fieldsGetGraph,
+        RosMappingTypes.getFieldGraphSrv,
+        {'field_name': fieldName.trim()},
+      );
+
+  Future<Map<String, dynamic>> saveFieldNode({
+    required String fieldName,
+    required FieldNode node,
+  }) =>
+      callService(
+        RosMappingTopics.fieldsSaveNode,
+        RosMappingTypes.saveFieldNodeSrv,
+        {'field_name': fieldName.trim(), 'node': node.toRosJson()},
+      );
+
+  Future<Map<String, dynamic>> saveCurrentPoseNode({
+    required String fieldName,
+    required FieldNode node,
+  }) =>
+      callService(
+        RosMappingTopics.fieldsSaveCurrentPoseNode,
+        RosMappingTypes.saveCurrentPoseNodeSrv,
+        {'field_name': fieldName.trim(), 'node': node.toRosJson()},
+      );
+
+  Future<Map<String, dynamic>> deleteFieldNode({
+    required String fieldName,
+    required int nodeId,
+    required bool deleteConnectedEdges,
+  }) =>
+      callService(
+        RosMappingTopics.fieldsDeleteNode,
+        RosMappingTypes.deleteFieldNodeSrv,
+        {
+          'field_name': fieldName.trim(),
+          'node_id': FieldGraphId.requireSafe(nodeId, 'node_id'),
+          'delete_connected_edges': deleteConnectedEdges,
+        },
+      );
+
+  Future<Map<String, dynamic>> saveFieldEdge({
+    required String fieldName,
+    required FieldEdge edge,
+  }) =>
+      callService(
+        RosMappingTopics.fieldsSaveEdge,
+        RosMappingTypes.saveFieldEdgeSrv,
+        {'field_name': fieldName.trim(), 'edge': edge.toRosJson()},
+      );
+
+  Future<Map<String, dynamic>> deleteFieldEdge({
+    required String fieldName,
+    required int edgeId,
+  }) =>
+      callService(
+        RosMappingTopics.fieldsDeleteEdge,
+        RosMappingTypes.deleteFieldEdgeSrv,
+        {
+          'field_name': fieldName.trim(),
+          'edge_id': FieldGraphId.requireSafe(edgeId, 'edge_id'),
+        },
+      );
+
+  Future<Map<String, dynamic>> pixelToMap({
+    required String fieldName,
+    required double pixelX,
+    required double pixelY,
+    required double screenYaw,
+  }) {
+    if (!pixelX.isFinite || !pixelY.isFinite || !screenYaw.isFinite) {
+      throw ArgumentError('Piksel ve yön değerleri sonlu olmalıdır');
+    }
+    return callService(
+        RosMappingTopics.fieldsPixelToMap,
+        RosMappingTypes.pixelToMapSrv,
+        {
+          'field_name': fieldName.trim(),
+          'pixel_x': pixelX,
+          'pixel_y': pixelY,
+          'screen_yaw': screenYaw,
+        },
+      );
+  }
+
+  Future<Map<String, dynamic>> validateField(String fieldName) => callService(
+        RosMappingTopics.fieldsValidate,
+        RosMappingTypes.validateFieldSrv,
+        {'field_name': fieldName.trim()},
+      );
+
+  Future<Map<String, dynamic>> activateField({
+    required String fieldName,
+    required String expectedHash,
+  }) =>
+      callService(
+        RosMappingTopics.fieldsActivate,
+        RosMappingTypes.activateFieldSrv,
+        {
+          'field_name': fieldName.trim(),
+          'expected_hash': expectedHash,
+        },
+      );
+
+  Future<Map<String, dynamic>> archiveField(String fieldName) => callService(
+        RosMappingTopics.fieldsArchive,
+        RosMappingTypes.archiveFieldSrv,
+        {'field_name': fieldName.trim()},
+      );
+
+  Future<Map<String, dynamic>> getActiveField() => callService(
+        RosMappingTopics.fieldsGetActive,
+        RosMappingTypes.getActiveFieldSrv,
       );
 
   Future<Map<String, dynamic>> startLocalization({required String fieldName}) {
@@ -867,6 +1012,15 @@ class RosBridgeClient {
     onMapPreviewImage?.call(null);
     onMapPreviewMetadata?.call(null);
     onMapPreviewRobotPixel?.call(null);
+    onActiveField?.call(null);
+    onFieldPackageStatus?.call(null);
+  }
+
+  void _failPendingServiceCalls(String reason) {
+    for (final call in _serviceCalls.values) {
+      if (!call.isCompleted) call.completeError(StateError(reason));
+    }
+    _serviceCalls.clear();
   }
 
   Future<void> disconnect() async {
@@ -885,6 +1039,7 @@ class RosBridgeClient {
     }
     _channel = null;
     _hardwareManualMode = false;
+    _failPendingServiceCalls('ROS bağlantısı kapatıldı');
     onRobotStatus?.call(const <String, dynamic>{});
     _clearOccupancyCallbacks();
     _clearMappingPreviewCallbacks();

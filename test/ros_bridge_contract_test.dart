@@ -355,6 +355,22 @@ void main() {
           message['type'] == 'std_msgs/msg/Bool'),
       isTrue,
     );
+    expect(
+      received.any((message) =>
+          message['op'] == 'subscribe' &&
+          message['topic'] == '/fields/active' &&
+          message['type'] == 'marco_msgs/msg/ActiveField' &&
+          message['queue_length'] == 1),
+      isTrue,
+    );
+    expect(
+      received.any((message) =>
+          message['op'] == 'subscribe' &&
+          message['topic'] == '/fields/package_status' &&
+          message['type'] == 'marco_msgs/msg/FieldPackageStatus' &&
+          message['queue_length'] == 1),
+      isTrue,
+    );
     // Manuel komut yalnız fiziksel `/robot_status.manual_mode_enabled` ile açılır.
     expect(client.publishManualDirection(2), isTrue);
     client.stopManual();

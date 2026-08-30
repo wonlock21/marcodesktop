@@ -38,8 +38,7 @@ class _GcsMapViewState extends State<GcsMapView> {
   Offset _pan = Offset.zero;
 
   // ── Pan yardımcısı ───────────────────────────────────────────────────────
-  void _onPanUpdate(DragUpdateDetails d) =>
-      setState(() => _pan += d.delta);
+  void _onPanUpdate(DragUpdateDetails d) => setState(() => _pan += d.delta);
 
   // ── Scroll zoom ──────────────────────────────────────────────────────────
   void _onScroll(PointerScrollEvent e) {
@@ -50,9 +49,12 @@ class _GcsMapViewState extends State<GcsMapView> {
   }
 
   // ── Zoom butonları ───────────────────────────────────────────────────────
-  void _zoomIn()  => setState(() => _scale = (_scale * 1.2).clamp(12.0, 220.0));
+  void _zoomIn() => setState(() => _scale = (_scale * 1.2).clamp(12.0, 220.0));
   void _zoomOut() => setState(() => _scale = (_scale / 1.2).clamp(12.0, 220.0));
-  void _resetView() => setState(() { _scale = 45.0; _pan = Offset.zero; });
+  void _resetView() => setState(() {
+        _scale = 45.0;
+        _pan = Offset.zero;
+      });
 
   @override
   Widget build(BuildContext context) {
@@ -72,9 +74,9 @@ class _GcsMapViewState extends State<GcsMapView> {
                 },
                 child: CustomPaint(
                   painter: _MapPainter(
-                    data:  widget.data,
+                    data: widget.data,
                     scale: _scale,
-                    pan:   _pan,
+                    pan: _pan,
                   ),
                   child: const SizedBox.expand(),
                 ),
@@ -86,19 +88,19 @@ class _GcsMapViewState extends State<GcsMapView> {
         // ── Sol üst: lejant ───────────────────────────────────────────────
         Positioned(
           left: 2.w,
-          top:  2.h,
+          top: 2.h,
           child: _Legend(),
         ),
 
         // ── Sağ üst: zoom kontrolleri ─────────────────────────────────────
         Positioned(
           right: 2.w,
-          top:   2.h,
+          top: 2.h,
           child: Column(
             children: [
-              _MapIconBtn(Icons.add,        _zoomIn),
+              _MapIconBtn(Icons.add, _zoomIn),
               SizedBox(height: 0.8.h),
-              _MapIconBtn(Icons.remove,     _zoomOut),
+              _MapIconBtn(Icons.remove, _zoomOut),
               SizedBox(height: 0.8.h),
               _MapIconBtn(Icons.center_focus_strong, _resetView),
             ],
@@ -107,7 +109,7 @@ class _GcsMapViewState extends State<GcsMapView> {
 
         // ── Sol alt: koordinat göstergesi ─────────────────────────────────
         Positioned(
-          left:   2.w,
+          left: 2.w,
           bottom: 1.5.h,
           child: Text(
             'X: ${widget.data.robotX.toStringAsFixed(2)} m  '
@@ -123,7 +125,7 @@ class _GcsMapViewState extends State<GcsMapView> {
 
         // ── Sağ alt: ölçek çubuğu ─────────────────────────────────────────
         Positioned(
-          right:  3.w,
+          right: 3.w,
           bottom: 1.5.h,
           child: _ScaleBar(pixelsPerMeter: _scale),
         ),
@@ -138,8 +140,8 @@ class _GcsMapViewState extends State<GcsMapView> {
 
 class _MapPainter extends CustomPainter {
   final GcsMapData data;
-  final double     scale; // piksel / metre
-  final Offset     pan;   // canvas kaydırma
+  final double scale; // piksel / metre
+  final Offset pan; // canvas kaydırma
 
   const _MapPainter({
     required this.data,
@@ -151,7 +153,7 @@ class _MapPainter extends CustomPainter {
 
   /// Dünya koordinatını (metre) canvas pikseliyle çevirir.
   Offset _w2c(double wx, double wy, Size size) => Offset(
-        size.width  / 2 + pan.dx + wx * scale,
+        size.width / 2 + pan.dx + wx * scale,
         size.height / 2 + pan.dy - wy * scale,
       );
 
@@ -159,16 +161,19 @@ class _MapPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final hasOccupancy =
-        data.occupancyImage != null && data.mapMeta != null;
+    final hasOccupancy = data.occupancyImage != null && data.mapMeta != null;
     if (hasOccupancy) {
       _paintOccupancy(canvas, size, data.occupancyImage!, data.mapMeta!);
     } else {
       _paintGrid(canvas, size);
       _paintWaitingHint(canvas, size);
     }
-    for (final z in data.zones)  { _paintZone(canvas, size, z);  }
-    for (final r in data.routes) { _paintRoute(canvas, size, r); }
+    for (final z in data.zones) {
+      _paintZone(canvas, size, z);
+    }
+    for (final r in data.routes) {
+      _paintRoute(canvas, size, r);
+    }
     for (final p in data.points) {
       if (p.type != MapPointType.qrNoktasi) _paintPoint(canvas, size, p);
     }
@@ -225,17 +230,22 @@ class _MapPainter extends CustomPainter {
   // ── Grid ─────────────────────────────────────────────────────────────────
 
   void _paintGrid(Canvas canvas, Size size) {
-    final thin  = Paint()..color = const Color(0xFF1A1A1A)..strokeWidth = 0.5;
-    final thick = Paint()..color = const Color(0xFF242424)..strokeWidth = 0.8;
+    final thin = Paint()
+      ..color = const Color(0xFF1A1A1A)
+      ..strokeWidth = 0.5;
+    final thick = Paint()
+      ..color = const Color(0xFF242424)
+      ..strokeWidth = 0.8;
 
-    final ox = size.width  / 2 + pan.dx;
+    final ox = size.width / 2 + pan.dx;
     final oy = size.height / 2 + pan.dy;
 
     for (var wx = -20.0; wx <= 20.0; wx += 1.0) {
       final x = ox + wx * scale;
       if (x < 0 || x > size.width) continue;
       canvas.drawLine(
-        Offset(x, 0), Offset(x, size.height),
+        Offset(x, 0),
+        Offset(x, size.height),
         (wx % 5 == 0) ? thick : thin,
       );
     }
@@ -243,13 +253,16 @@ class _MapPainter extends CustomPainter {
       final y = oy - wy * scale;
       if (y < 0 || y > size.height) continue;
       canvas.drawLine(
-        Offset(0, y), Offset(size.width, y),
+        Offset(0, y),
+        Offset(size.width, y),
         (wy % 5 == 0) ? thick : thin,
       );
     }
 
     // Eksen çizgileri
-    final axis = Paint()..color = const Color(0xFF2E2E2E)..strokeWidth = 1.0;
+    final axis = Paint()
+      ..color = const Color(0xFF2E2E2E)
+      ..strokeWidth = 1.0;
     if (ox >= 0 && ox <= size.width) {
       canvas.drawLine(Offset(ox, 0), Offset(ox, size.height), axis);
     }
@@ -262,12 +275,15 @@ class _MapPainter extends CustomPainter {
       for (var wy = -20.0; wy <= 20.0; wy += 5.0) {
         final x = ox + wx * scale;
         final y = oy - wy * scale;
-        if (x < 4 || x > size.width - 4 || y < 4 || y > size.height - 4) continue;
+        if (x < 4 || x > size.width - 4 || y < 4 || y > size.height - 4) {
+          continue;
+        }
         _paintText(
           canvas,
           '${wx.toInt()},${wy.toInt()}',
           Offset(x + 2, y - 8),
-          const TextStyle(color: Color(0xFF2A2A2A), fontSize: 7, fontFamily: 'monospace'),
+          const TextStyle(
+              color: Color(0xFF2A2A2A), fontSize: 7, fontFamily: 'monospace'),
           centered: false,
         );
       }
@@ -278,16 +294,28 @@ class _MapPainter extends CustomPainter {
 
   void _paintZone(Canvas canvas, Size size, MapZone zone) {
     final center = _w2c(zone.center.dx, zone.center.dy, size);
-    final r      = zone.radius * scale;
+    final r = zone.radius * scale;
 
-    final fillColor   = zone.isEngel ? const Color(0x40F44336) : const Color(0x30FFEB3B);
-    final strokeColor = zone.isEngel ? const Color(0x80F44336) : const Color(0x80FFEB3B);
+    final fillColor =
+        zone.isEngel ? const Color(0x40F44336) : const Color(0x30FFEB3B);
+    final strokeColor =
+        zone.isEngel ? const Color(0x80F44336) : const Color(0x80FFEB3B);
 
-    canvas.drawCircle(center, r, Paint()..color = fillColor..style = PaintingStyle.fill);
-    canvas.drawCircle(center, r, Paint()..color = strokeColor..style = PaintingStyle.stroke..strokeWidth = 1.2);
+    canvas.drawCircle(
+        center,
+        r,
+        Paint()
+          ..color = fillColor
+          ..style = PaintingStyle.fill);
+    canvas.drawCircle(
+        center,
+        r,
+        Paint()
+          ..color = strokeColor
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2);
 
-    _paintText(canvas, zone.label,
-        center.translate(0, r + 8),
+    _paintText(canvas, zone.label, center.translate(0, r + 8),
         TextStyle(color: strokeColor, fontSize: 8));
   }
 
@@ -303,7 +331,8 @@ class _MapPainter extends CustomPainter {
       ..strokeCap = StrokeCap.round;
 
     final path = Path();
-    final first = _w2c(route.waypoints.first.dx, route.waypoints.first.dy, size);
+    final first =
+        _w2c(route.waypoints.first.dx, route.waypoints.first.dy, size);
     path.moveTo(first.dx, first.dy);
 
     for (var i = 1; i < route.waypoints.length; i++) {
@@ -314,8 +343,9 @@ class _MapPainter extends CustomPainter {
 
     // Ok uçları
     for (var i = 0; i < route.waypoints.length - 1; i++) {
-      final from = _w2c(route.waypoints[i].dx,     route.waypoints[i].dy,     size);
-      final to   = _w2c(route.waypoints[i + 1].dx, route.waypoints[i + 1].dy, size);
+      final from = _w2c(route.waypoints[i].dx, route.waypoints[i].dy, size);
+      final to =
+          _w2c(route.waypoints[i + 1].dx, route.waypoints[i + 1].dy, size);
       _paintArrow(canvas, from, to, const Color(0x701565C0));
     }
   }
@@ -333,11 +363,15 @@ class _MapPainter extends CustomPainter {
     final arrowPath = Path()
       ..moveTo(mid.dx + ndx * as, mid.dy + ndy * as)
       ..lineTo(mid.dx - ndx * as * 0.5 + perp.dx * as * 0.55,
-               mid.dy - ndy * as * 0.5 + perp.dy * as * 0.55)
+          mid.dy - ndy * as * 0.5 + perp.dy * as * 0.55)
       ..lineTo(mid.dx - ndx * as * 0.5 - perp.dx * as * 0.55,
-               mid.dy - ndy * as * 0.5 - perp.dy * as * 0.55)
+          mid.dy - ndy * as * 0.5 - perp.dy * as * 0.55)
       ..close();
-    canvas.drawPath(arrowPath, Paint()..color = color..style = PaintingStyle.fill);
+    canvas.drawPath(
+        arrowPath,
+        Paint()
+          ..color = color
+          ..style = PaintingStyle.fill);
   }
 
   // ── Nokta ─────────────────────────────────────────────────────────────────
@@ -347,25 +381,30 @@ class _MapPainter extends CustomPainter {
 
     switch (point.type) {
       case MapPointType.almaNoktasi:
-        _drawDiamond(canvas, pos, point.aktif ? 11 : 8,
-            const Color(0xFF1565C0), point.aktif ? const Color(0xFF42A5F5) : const Color(0xFF1E88E5));
+        _drawDiamond(canvas, pos, point.aktif ? 11 : 8, const Color(0xFF1565C0),
+            point.aktif ? const Color(0xFF42A5F5) : const Color(0xFF1E88E5));
       case MapPointType.birakNoktasi:
-        _drawDiamond(canvas, pos, point.aktif ? 11 : 8,
-            const Color(0xFFBF360C), point.aktif ? const Color(0xFFFF8A65) : const Color(0xFFE64A19));
+        _drawDiamond(canvas, pos, point.aktif ? 11 : 8, const Color(0xFFBF360C),
+            point.aktif ? const Color(0xFFFF8A65) : const Color(0xFFE64A19));
       case MapPointType.beklemeNoktasi:
-        _drawCircleMarker(canvas, pos, 7, const Color(0xFF212121), const Color(0xFF757575));
+        _drawCircleMarker(
+            canvas, pos, 7, const Color(0xFF212121), const Color(0xFF757575));
       case MapPointType.kapiKontrol:
-        _drawRectMarker(canvas, pos, const Color(0xFF4A148C), const Color(0xFFBA68C8));
+        _drawRectMarker(
+            canvas, pos, const Color(0xFF4A148C), const Color(0xFFBA68C8));
       case MapPointType.sarjIstasyonu:
-        _drawCircleMarker(canvas, pos, 8, const Color(0xFF004D40), const Color(0xFF00BCD4));
+        _drawCircleMarker(
+            canvas, pos, 8, const Color(0xFF004D40), const Color(0xFF00BCD4));
         _paintText(canvas, '⚡', pos.translate(0, -16),
             const TextStyle(color: Color(0xFF00BCD4), fontSize: 8));
       case MapPointType.qrNoktasi:
         _drawQrMarker(canvas, pos, const Color(0xFFFDD835));
       case MapPointType.engel:
-        _drawCircleMarker(canvas, pos, 8, const Color(0x40F44336), const Color(0xFFEF5350));
+        _drawCircleMarker(
+            canvas, pos, 8, const Color(0x40F44336), const Color(0xFFEF5350));
       case MapPointType.guvenliDurus:
-        _drawCircleMarker(canvas, pos, 8, const Color(0x30FFEB3B), const Color(0xFFFFEB3B));
+        _drawCircleMarker(
+            canvas, pos, 8, const Color(0x30FFEB3B), const Color(0xFFFFEB3B));
     }
 
     _paintText(
@@ -387,19 +426,33 @@ class _MapPainter extends CustomPainter {
     final pos = _w2c(data.robotX, data.robotY, size);
 
     // Gövde (dolgu + çerçeve)
-    canvas.drawCircle(pos, 13, Paint()..color = const Color(0x7043A047)..style = PaintingStyle.fill);
-    canvas.drawCircle(pos, 13, Paint()..color = const Color(0xFF43A047)..style = PaintingStyle.stroke..strokeWidth = 1.8);
+    canvas.drawCircle(
+        pos,
+        13,
+        Paint()
+          ..color = const Color(0x7043A047)
+          ..style = PaintingStyle.fill);
+    canvas.drawCircle(
+        pos,
+        13,
+        Paint()
+          ..color = const Color(0xFF43A047)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.8);
 
     // Yön oku
     final yaw = data.robotYaw;
-    final dx  = math.cos(yaw) * 22;
-    final dy  = -math.sin(yaw) * 22; // y-flip
+    final dx = math.cos(yaw) * 22;
+    final dy = -math.sin(yaw) * 22; // y-flip
     final arrowEnd = pos.translate(dx, dy);
 
-    canvas.drawLine(pos, arrowEnd, Paint()
-      ..color = const Color(0xFF69F0AE)
-      ..strokeWidth = 2.5
-      ..strokeCap = StrokeCap.round);
+    canvas.drawLine(
+        pos,
+        arrowEnd,
+        Paint()
+          ..color = const Color(0xFF69F0AE)
+          ..strokeWidth = 2.5
+          ..strokeCap = StrokeCap.round);
 
     // Ok ucu
     final perp = Offset(-math.sin(yaw), -math.cos(yaw)) * 5.5;
@@ -409,10 +462,17 @@ class _MapPainter extends CustomPainter {
       ..lineTo(base.dx + perp.dx, base.dy + perp.dy)
       ..lineTo(base.dx - perp.dx, base.dy - perp.dy)
       ..close();
-    canvas.drawPath(arrowPath, Paint()..color = const Color(0xFF69F0AE)..style = PaintingStyle.fill);
+    canvas.drawPath(
+        arrowPath,
+        Paint()
+          ..color = const Color(0xFF69F0AE)
+          ..style = PaintingStyle.fill);
 
     // Robot etiketi
-    _paintText(canvas, 'ROBOT', pos.translate(0, 20),
+    _paintText(
+        canvas,
+        'ROBOT',
+        pos.translate(0, 20),
         const TextStyle(
           color: Color(0xFF69F0AE),
           fontSize: 8,
@@ -423,20 +483,42 @@ class _MapPainter extends CustomPainter {
 
   // ── Şekil yardımcıları ───────────────────────────────────────────────────
 
-  void _drawDiamond(Canvas canvas, Offset c, double s, Color fill, Color stroke) {
+  void _drawDiamond(
+      Canvas canvas, Offset c, double s, Color fill, Color stroke) {
     final path = Path()
-      ..moveTo(c.dx,     c.dy - s)
-      ..lineTo(c.dx + s, c.dy    )
-      ..lineTo(c.dx,     c.dy + s)
-      ..lineTo(c.dx - s, c.dy    )
+      ..moveTo(c.dx, c.dy - s)
+      ..lineTo(c.dx + s, c.dy)
+      ..lineTo(c.dx, c.dy + s)
+      ..lineTo(c.dx - s, c.dy)
       ..close();
-    canvas.drawPath(path, Paint()..color = fill.withValues(alpha: 0.75)..style = PaintingStyle.fill);
-    canvas.drawPath(path, Paint()..color = stroke..style = PaintingStyle.stroke..strokeWidth = 1.5);
+    canvas.drawPath(
+        path,
+        Paint()
+          ..color = fill.withValues(alpha: 0.75)
+          ..style = PaintingStyle.fill);
+    canvas.drawPath(
+        path,
+        Paint()
+          ..color = stroke
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5);
   }
 
-  void _drawCircleMarker(Canvas canvas, Offset c, double r, Color fill, Color stroke) {
-    canvas.drawCircle(c, r, Paint()..color = fill..style = PaintingStyle.fill);
-    canvas.drawCircle(c, r, Paint()..color = stroke..style = PaintingStyle.stroke..strokeWidth = 1.5);
+  void _drawCircleMarker(
+      Canvas canvas, Offset c, double r, Color fill, Color stroke) {
+    canvas.drawCircle(
+        c,
+        r,
+        Paint()
+          ..color = fill
+          ..style = PaintingStyle.fill);
+    canvas.drawCircle(
+        c,
+        r,
+        Paint()
+          ..color = stroke
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5);
   }
 
   void _drawRectMarker(Canvas canvas, Offset c, Color fill, Color stroke) {
@@ -444,22 +526,38 @@ class _MapPainter extends CustomPainter {
       Rect.fromCenter(center: c, width: 20, height: 13),
       const Radius.circular(2),
     );
-    canvas.drawRRect(rrect, Paint()..color = fill.withValues(alpha: 0.75)..style = PaintingStyle.fill);
-    canvas.drawRRect(rrect, Paint()..color = stroke..style = PaintingStyle.stroke..strokeWidth = 1.5);
+    canvas.drawRRect(
+        rrect,
+        Paint()
+          ..color = fill.withValues(alpha: 0.75)
+          ..style = PaintingStyle.fill);
+    canvas.drawRRect(
+        rrect,
+        Paint()
+          ..color = stroke
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5);
   }
 
   void _drawQrMarker(Canvas canvas, Offset c, Color color) {
     canvas.drawRect(
       Rect.fromCenter(center: c, width: 14, height: 14),
-      Paint()..color = color.withValues(alpha: 0.25)..style = PaintingStyle.fill,
+      Paint()
+        ..color = color.withValues(alpha: 0.25)
+        ..style = PaintingStyle.fill,
     );
     canvas.drawRect(
       Rect.fromCenter(center: c, width: 14, height: 14),
-      Paint()..color = color..style = PaintingStyle.stroke..strokeWidth = 1.5,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5,
     );
     canvas.drawRect(
       Rect.fromCenter(center: c, width: 5, height: 5),
-      Paint()..color = color..style = PaintingStyle.fill,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.fill,
     );
   }
 
@@ -525,7 +623,7 @@ class _Legend extends StatelessWidget {
 }
 
 class _LegendEntry extends StatelessWidget {
-  final Color  color;
+  final Color color;
   final String label;
   const _LegendEntry({required this.color, required this.label});
 
@@ -537,13 +635,16 @@ class _LegendEntry extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 8, height: 8,
+            width: 8,
+            height: 8,
             decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
           const SizedBox(width: 4),
           Text(label,
               style: const TextStyle(
-                  color: Color(0xFF9E9E9E), fontSize: 9, fontFamily: 'monospace')),
+                  color: Color(0xFF9E9E9E),
+                  fontSize: 9,
+                  fontFamily: 'monospace')),
         ],
       ),
     );
@@ -552,7 +653,7 @@ class _LegendEntry extends StatelessWidget {
 
 /// Harita üzerindeki küçük yuvarlak ikon butonu.
 class _MapIconBtn extends StatelessWidget {
-  final IconData    icon;
+  final IconData icon;
   final VoidCallback onTap;
   const _MapIconBtn(this.icon, this.onTap);
 
@@ -561,7 +662,8 @@ class _MapIconBtn extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 24, height: 24,
+        width: 24,
+        height: 24,
         decoration: BoxDecoration(
           color: const Color(0xCC1A1A1A),
           border: Border.all(color: const Color(0xFF333333)),

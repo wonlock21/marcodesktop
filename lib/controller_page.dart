@@ -11,9 +11,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'data_model.dart';
 import 'data_page.dart';
 import 'models/agv_sensor_model.dart';
+import 'models/field_graph_models.dart';
 import 'models/gcs_alarm_model.dart';
 import 'models/gcs_connection_model.dart';
 import 'models/gcs_event_log_model.dart';
+import 'models/gcs_field_graph_model.dart';
 import 'models/gcs_map_model.dart';
 import 'models/gcs_mapping_model.dart';
 import 'models/gcs_mission_model.dart';
@@ -51,6 +53,7 @@ class _ControllerPageState extends State<ControllerPage>
   final FocusNode _focusNode = FocusNode();
   late ParameterModel parameterModel;
   late AgvSensorModel _agvModel;
+  late GcsFieldGraphModel _fieldGraphModel;
   OccupancyGridMetadata? _mapMetadata;
   ui.Image? _occupancyImage;
   int _occupancyImageGeneration = 0;
@@ -78,6 +81,8 @@ class _ControllerPageState extends State<ControllerPage>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _agvModel = Provider.of<AgvSensorModel>(context, listen: false);
+    _fieldGraphModel = Provider.of<GcsFieldGraphModel>(context, listen: false);
+    _fieldGraphModel.addListener(_syncCanonicalNodeProjection);
     parameterModel = Provider.of<ParameterModel>(context, listen: false);
     Provider.of<DataModel>(context, listen: false).loadDataPoints();
     parameterModel.loadParameters();
@@ -95,12 +100,20 @@ class _ControllerPageState extends State<ControllerPage>
     AgvService.ros.onMapPreviewImage = _onMapPreviewImage;
     AgvService.ros.onMapPreviewMetadata = _onMapPreviewMetadata;
     AgvService.ros.onMapPreviewRobotPixel = _onMapPreviewRobotPixel;
+    AgvService.ros.onActiveField = _onActiveField;
+    AgvService.ros.onFieldPackageStatus = _onFieldPackageStatus;
     AgvService.ros.onMappingSubscriptionsReady = _onMappingSubscriptionsReady;
     AgvService.ros.state.addListener(_onRosConnectionState);
     // Build bitmeden notifyListeners yasak — ilk durumu sonraki frame'de bas.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _mappingModel.applyConnectionState(AgvService.ros.state.value);
+      _fieldGraphModel.applyConnection(
+        AgvService.ros.state.value.isConnected,
+      );
+      if (AgvService.ros.state.value.isConnected) {
+        unawaited(_fieldGraphModel.synchronize());
+      }
     });
   }
 
@@ -109,6 +122,7 @@ class _ControllerPageState extends State<ControllerPage>
 
   void _applyRobotStatus(Map<String, dynamic> status) {
     if (!mounted) return;
+    _fieldGraphModel.applyRobotStatus(status);
     final poseStamped = status['pose'];
     final poseWithCovariance = poseStamped is Map ? poseStamped['pose'] : null;
     final pose = poseWithCovariance is Map ? poseWithCovariance['pose'] : null;
@@ -305,6 +319,12 @@ class _ControllerPageState extends State<ControllerPage>
     final previous = _mappingModel.mappingStatus;
     final previousMsg = _mappingModel.mappingMessage;
     _mappingModel.applyMappingStatus(status);
+    _fieldGraphModel.applyMappingActive(
+      status != null &&
+          status.status != MappingStatus.idle &&
+          status.status != MappingStatus.saved &&
+          status.status != MappingStatus.error,
+    );
     if (status == null) return;
     if (previous != status.status || previousMsg != status.message) {
       final line = _mappingModel.mappingStatusLine;
@@ -615,6 +635,7 @@ class _ControllerPageState extends State<ControllerPage>
   void _onMapPreviewMetadata(MapPreviewMetadata? metadata) {
     if (!mounted) return;
     _mappingModel.applyPreviewMetadata(metadata);
+    _syncCanonicalNodeProjection();
   }
 
   void _onMapPreviewRobotPixel(MapPreviewRobotPixel? pixel) {
@@ -625,6 +646,30 @@ class _ControllerPageState extends State<ControllerPage>
   void _onMappingSubscriptionsReady() {
     if (!mounted) return;
     _mappingModel.onSubscriptionsReady();
+  }
+
+  void _onActiveField(ActiveField? activeField) {
+    if (!mounted) return;
+    _fieldGraphModel.applyActiveTopic(activeField);
+    if (activeField != null && AgvService.ros.state.value.isConnected) {
+      unawaited(_fieldGraphModel.refreshFields());
+      final selected = _fieldGraphModel.selectedFieldName;
+      if (selected != null) unawaited(_fieldGraphModel.loadGraph(selected));
+    }
+  }
+
+  void _onFieldPackageStatus(FieldPackageStatus? status) {
+    if (!mounted) return;
+    _fieldGraphModel.applyPackageStatusTopic(status);
+  }
+
+  void _syncCanonicalNodeProjection() {
+    if (!mounted) return;
+    Provider.of<GcsNodeModel>(context, listen: false).replaceFromFieldGraph(
+      graphNodes: _fieldGraphModel.nodes,
+      fieldName: _fieldGraphModel.selectedFieldName ?? '',
+      metadata: _mappingModel.previewMetadata,
+    );
   }
 
   Future<void> _promptAndStartMapping() async {
@@ -806,6 +851,8 @@ class _ControllerPageState extends State<ControllerPage>
 
       await _refreshSavedFields();
       if (!mounted) return;
+      await _fieldGraphModel.synchronize(preferredField: fieldName);
+      if (!mounted) return;
       // Status IDLE gelmezse UI kilidi takılı kalmasın.
       mapping.endFinishMapping();
     } catch (error) {
@@ -848,6 +895,10 @@ class _ControllerPageState extends State<ControllerPage>
     if (!mounted) return;
     final rosState = AgvService.ros.state.value;
     _mappingModel.applyConnectionState(rosState);
+    _fieldGraphModel.applyConnection(rosState.isConnected);
+    if (rosState.status == RosConnectionStatus.connected) {
+      unawaited(_fieldGraphModel.synchronize());
+    }
     final durum = switch (rosState.status) {
       RosConnectionStatus.connected => ConnDurum.bagli,
       RosConnectionStatus.connecting ||
@@ -1119,7 +1170,10 @@ class _ControllerPageState extends State<ControllerPage>
     AgvService.ros.onMapPreviewImage = null;
     AgvService.ros.onMapPreviewMetadata = null;
     AgvService.ros.onMapPreviewRobotPixel = null;
+    AgvService.ros.onActiveField = null;
+    AgvService.ros.onFieldPackageStatus = null;
     AgvService.ros.onMappingSubscriptionsReady = null;
+    _fieldGraphModel.removeListener(_syncCanonicalNodeProjection);
     _occupancyImageGeneration++;
     _disposeOccupancyImage();
     AgvService.stopManual();
@@ -1136,6 +1190,7 @@ class _ControllerPageState extends State<ControllerPage>
     final alarms = context.watch<GcsAlarmModel>();
     final conn = context.watch<GcsConnectionModel>();
     final mapping = context.watch<GcsMappingModel>();
+    final fieldGraph = context.watch<GcsFieldGraphModel>();
     final eventLog = context.watch<GcsEventLogModel>();
     final dataPoints = context.watch<DataModel>().dataPoints;
     // Tek kaynak: GCS çalışma modu (Manuel / Otonom)
@@ -1216,6 +1271,29 @@ class _ControllerPageState extends State<ControllerPage>
                     fontFamily: 'monospace'),
               ),
             ),
+            if (fieldGraph.activeFresh &&
+                fieldGraph.activeField?.active == true) ...[
+              SizedBox(width: 1.w),
+              Container(
+                padding:
+                    EdgeInsets.symmetric(horizontal: 1.2.w, vertical: 0.5.h),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E2A1E),
+                  borderRadius: BorderRadius.circular(2.r),
+                  border: Border.all(color: success.withAlpha(100)),
+                ),
+                child: Text(
+                  'SAHA ${fieldGraph.activeField!.fieldName} · '
+                  '${fieldGraph.activeField!.packageVersion} · '
+                  '${_shortFieldHash(fieldGraph.activeField!.packageHash)}',
+                  style: TextStyle(
+                    color: success,
+                    fontSize: 2.4.sp,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
         actions: [
@@ -3329,3 +3407,6 @@ class _NavBtn extends StatelessWidget {
     );
   }
 }
+
+String _shortFieldHash(String value) =>
+    value.length <= 10 ? value : '${value.substring(0, 10)}…';

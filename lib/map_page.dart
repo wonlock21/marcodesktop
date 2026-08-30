@@ -1,4 +1,4 @@
-﻿import 'data_model.dart';
+import 'data_model.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'dart:math' as math;
@@ -918,7 +918,8 @@ class _MapPageState extends State<MapPage> {
                                     color:
                                         const Color(0xFFEF5350).withAlpha(120),
                                     child: Center(
-                                        child: Icon(Icons.file_download_outlined,
+                                        child: Icon(
+                                            Icons.file_download_outlined,
                                             size: 6.w)),
                                   ),
                                   childWhenDragging: Container(
@@ -926,7 +927,8 @@ class _MapPageState extends State<MapPage> {
                                     height: 50.h,
                                     color: const Color(0xFF3A1A1A),
                                     child: Center(
-                                        child: Icon(Icons.file_download_outlined,
+                                        child: Icon(
+                                            Icons.file_download_outlined,
                                             size: 6.w)),
                                   ),
                                   child: Container(
@@ -936,7 +938,8 @@ class _MapPageState extends State<MapPage> {
                                     height: 50.h,
                                     color: const Color(0xFFEF5350),
                                     child: Center(
-                                        child: Icon(Icons.file_download_outlined,
+                                        child: Icon(
+                                            Icons.file_download_outlined,
                                             size: 6.w)),
                                   ),
                                 ),

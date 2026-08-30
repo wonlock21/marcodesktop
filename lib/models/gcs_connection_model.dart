@@ -23,8 +23,8 @@ extension ConnDurumExt on ConnDurum {
   String get etiket => switch (this) {
         ConnDurum.cevrimdisi => 'Bağlı Değil',
         ConnDurum.baglaniyor => 'Bağlanıyor',
-        ConnDurum.bagli      => 'Bağlı',
-        ConnDurum.hata       => 'Hata',
+        ConnDurum.bagli => 'Bağlı',
+        ConnDurum.hata => 'Hata',
       };
 
   bool get aktif => this == ConnDurum.bagli;
@@ -119,12 +119,12 @@ class GcsConnectionModel extends ChangeNotifier {
     bool? manuelMod,
     bool? uzaktanKontrol,
   }) {
-    if (sistem        != null) sistemBaglanti      = sistem;
-    if (robot         != null) robotBaglanti       = robot;
-    if (plc           != null) plcBaglanti         = plc;
-    if (stm32         != null) stm32Baglanti       = stm32;
-    if (bt            != null) bluetooth           = bt;
-    if (manuelMod     != null) fizikselManuelMod   = manuelMod;
+    if (sistem != null) sistemBaglanti = sistem;
+    if (robot != null) robotBaglanti = robot;
+    if (plc != null) plcBaglanti = plc;
+    if (stm32 != null) stm32Baglanti = stm32;
+    if (bt != null) bluetooth = bt;
+    if (manuelMod != null) fizikselManuelMod = manuelMod;
     if (uzaktanKontrol != null) uzaktanKontrolAktif = uzaktanKontrol;
     notifyListeners();
   }
@@ -138,22 +138,23 @@ class GcsConnectionModel extends ChangeNotifier {
   void baglantiyiKes({bool hataMi = false}) {
     final yeniDurum = hataMi ? ConnDurum.hata : ConnDurum.cevrimdisi;
     sistemBaglanti = yeniDurum;
-    robotBaglanti  = yeniDurum;
-    plcBaglanti    = yeniDurum;
-    stm32Baglanti  = yeniDurum;
-    bluetooth      = yeniDurum;
+    robotBaglanti = yeniDurum;
+    plcBaglanti = yeniDurum;
+    stm32Baglanti = yeniDurum;
+    bluetooth = yeniDurum;
     notifyListeners();
   }
 
   // ── Kolaylık getter'ları ──────────────────────────────────────────────────
 
   /// Tüm temel kanallar bağlı mı?
-  bool get tamamenBagli =>
-      sistemBaglanti.aktif && robotBaglanti.aktif;
+  bool get tamamenBagli => sistemBaglanti.aktif && robotBaglanti.aktif;
 
   /// GCS bağlantı durumunu tek cümleyle özetler.
   String get ozet {
-    if (tamamenBagli) { return 'Sistem Bağlı'; }
+    if (tamamenBagli) {
+      return 'Sistem Bağlı';
+    }
     if (sistemBaglanti.baglaniyorMu || robotBaglanti.baglaniyorMu) {
       return 'Bağlanıyor...';
     }

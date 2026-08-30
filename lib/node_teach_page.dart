@@ -1,10 +1,14 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 
 import 'data_model.dart';
+import 'models/field_graph_models.dart';
+import 'models/gcs_field_graph_model.dart';
 import 'models/gcs_mapping_model.dart';
 import 'models/gcs_node_model.dart';
 import 'scenerio_page.dart';
@@ -30,21 +34,11 @@ class NodeTeachPage extends StatefulWidget {
 }
 
 class _NodeTeachPageState extends State<NodeTeachPage> {
-  static const _genericNodeBackendReason =
-      'Genel düğüm ekleme/düzenleme için ROS backend servisi yok. '
-      'A/B demo noktaları ve A/B dönüş noktaları kullanılabilir.';
   final Set<String> _savingDemoPoints = <String>{};
   final Set<String> _savingDemoRoutePoints = <String>{};
   final Set<String> _clearingDemoRoutes = <String>{};
   final Map<String, DemoPointSaveResult> _savedDemoPoints =
       <String, DemoPointSaveResult>{};
-
-  String _fieldName(GcsMappingModel mapping) {
-    if (mapping.activeLocalizedField?.trim().isNotEmpty == true) {
-      return mapping.activeLocalizedField!.trim();
-    }
-    return mapping.fieldName.trim();
-  }
 
   void _toast(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -52,8 +46,133 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
     );
   }
 
-  void _showGenericNodeBackendReason(BuildContext context) {
-    _toast(context, _genericNodeBackendReason);
+  String _errorText(Object error) =>
+      error.toString().replaceFirst('Bad state: ', '').trim();
+
+  Future<_NodeEditorValue?> _openNodeEditor({
+    FieldNode? existing,
+    required bool screenYaw,
+  }) =>
+      showDialog<_NodeEditorValue>(
+        context: context,
+        builder: (_) => _NodeEditorDialog(
+          existing: existing,
+          screenYaw: screenYaw,
+        ),
+      );
+
+  Future<void> _createAtRobot() async {
+    final graph = context.read<GcsFieldGraphModel>();
+    if (!graph.canEdit) return;
+    final value = await _openNodeEditor(screenYaw: false);
+    if (value == null || !mounted) return;
+    try {
+      final node = value.toNode(pose: FieldPose2D.zero);
+      final result = await graph.saveNode(node, currentPose: true);
+      if (mounted) _toast(context, result.message);
+    } catch (error) {
+      if (mounted) _toast(context, 'Düğüm kaydedilemedi: ${_errorText(error)}');
+    }
+  }
+
+  Future<void> _createAtPixel(double pixelX, double pixelY) async {
+    final graph = context.read<GcsFieldGraphModel>();
+    if (!graph.canEdit) return;
+    final value = await _openNodeEditor(screenYaw: true);
+    if (value == null || !mounted) return;
+    try {
+      final result = await graph.saveNodeAtPixel(
+        node: value.toNode(pose: FieldPose2D.zero),
+        pixelX: pixelX,
+        pixelY: pixelY,
+        screenYaw: value.yawRadians,
+      );
+      if (!mounted) return;
+      _toast(context, result.message);
+    } catch (error) {
+      if (mounted) _toast(context, 'Düğüm kaydedilemedi: ${_errorText(error)}');
+    }
+  }
+
+  Future<void> _editNode(TaughtFieldNode projected) async {
+    final graph = context.read<GcsFieldGraphModel>();
+    final id = int.tryParse(projected.id);
+    final existing = id == null ? null : graph.nodeById(id);
+    if (existing == null || !graph.canEdit) return;
+    final value = await _openNodeEditor(existing: existing, screenYaw: false);
+    if (value == null || !mounted) return;
+    try {
+      final pose = FieldPose2D(
+        x: existing.pose.x,
+        y: existing.pose.y,
+        theta: value.yawRadians,
+      );
+      final result = await graph.saveNode(
+        value.toNode(pose: pose, nodeId: existing.nodeId),
+        currentPose: false,
+      );
+      if (mounted) _toast(context, result.message);
+    } catch (error) {
+      if (mounted) {
+        _toast(context, 'Düğüm güncellenemedi: ${_errorText(error)}');
+      }
+    }
+  }
+
+  Future<void> _moveNodeToRobot(TaughtFieldNode projected) async {
+    final graph = context.read<GcsFieldGraphModel>();
+    final id = int.tryParse(projected.id);
+    final existing = id == null ? null : graph.nodeById(id);
+    if (existing == null || !graph.canEdit) return;
+    try {
+      final result = await graph.saveNode(existing, currentPose: true);
+      if (mounted) _toast(context, result.message);
+    } catch (error) {
+      if (mounted) _toast(context, 'Düğüm taşınamadı: ${_errorText(error)}');
+    }
+  }
+
+  Future<void> _deleteNode(TaughtFieldNode projected) async {
+    final graph = context.read<GcsFieldGraphModel>();
+    final id = int.tryParse(projected.id);
+    if (id == null || !graph.canEdit) return;
+    final connectedEdges = graph.connectedEdges(id);
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Düğümü sil'),
+            content: Text(
+              connectedEdges.isEmpty
+                  ? '${projected.name} silinecek.'
+                  : '${projected.name} ve bağlı ${connectedEdges.length} kenar silinecek.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Vazgeç'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: Text(
+                  connectedEdges.isEmpty
+                      ? 'Düğümü Sil'
+                      : 'Düğüm ve Kenarları Sil',
+                ),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed || !mounted) return;
+    try {
+      final result = await graph.deleteNode(
+        id,
+        deleteConnectedEdges: connectedEdges.isNotEmpty,
+      );
+      if (mounted) _toast(context, result.message);
+    } catch (error) {
+      if (mounted) _toast(context, 'Düğüm silinemedi: ${_errorText(error)}');
+    }
   }
 
   Future<void> _saveDemoPoint(String pointName) async {
@@ -231,12 +350,13 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
   @override
   Widget build(BuildContext context) {
     final mapping = context.watch<GcsMappingModel>();
+    final graph = context.watch<GcsFieldGraphModel>();
     final nodes = context.watch<GcsNodeModel>();
     final robot = mapping.visibleRobotPixel;
     final insideMap = robot?.insideMap == true;
     final specContext = _specTeachContext(mapping);
-    const canCreate = false;
-    final fieldHint = _fieldName(mapping).isEmpty ? null : _fieldName(mapping);
+    final canCreate = graph.canEdit && specContext;
+    final fieldHint = graph.selectedFieldName;
 
     final markers = nodes.nodes
         .map(
@@ -325,6 +445,7 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
                           awaitingFresh: mapping.awaitingFreshPreview,
                           sourceLabel: mapping.previewSourceLabel,
                           nodeMarkers: markers,
+                          onMapTap: canCreate ? _createAtPixel : null,
                         )
                       : _NoMapPlaceholder(
                           connected: mapping.isConnected,
@@ -355,12 +476,12 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
                       Expanded(
                         child: _NodeListPanel(
                           nodes: nodes.nodes,
-                          canMoveToRobot: insideMap,
-                          onEdit: (_) => _showGenericNodeBackendReason(context),
-                          onDelete: (_) =>
-                              _showGenericNodeBackendReason(context),
-                          onMoveToRobot: (_) =>
-                              _showGenericNodeBackendReason(context),
+                          canEdit: graph.canEdit,
+                          canMoveToRobot: insideMap && graph.canEdit,
+                          onEdit: (node) => unawaited(_editNode(node)),
+                          onDelete: (node) => unawaited(_deleteNode(node)),
+                          onMoveToRobot: (node) =>
+                              unawaited(_moveNodeToRobot(node)),
                         ),
                       ),
                       const Divider(height: 1, color: _borderC),
@@ -369,11 +490,12 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            if (!canCreate)
+                            if (!graph.hasSelectedField || !graph.graphFresh)
                               Padding(
                                 padding: EdgeInsets.only(bottom: 6.h),
                                 child: Text(
-                                  _genericNodeBackendReason,
+                                  graph.graphError ??
+                                      'Kayıtlı Haritalar’dan düzenlenecek sahayı seçin.',
                                   style: TextStyle(
                                     color: _warn,
                                     fontSize: 2.8.sp,
@@ -383,7 +505,9 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
                             SizedBox(
                               height: 40.h,
                               child: ElevatedButton(
-                                onPressed: null,
+                                onPressed: canCreate
+                                    ? () => unawaited(_createAtRobot())
+                                    : null,
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: _accent,
                                   disabledBackgroundColor:
@@ -393,7 +517,7 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
                                   elevation: 0,
                                 ),
                                 child: Text(
-                                  'Yeni düğüm oluştur',
+                                  'Robot konumundan düğüm ekle',
                                   style: TextStyle(
                                     fontSize: 2.8.sp,
                                     fontWeight: FontWeight.w600,
@@ -587,6 +711,7 @@ class _DemoPointPanel extends StatelessWidget {
 
 class _NodeListPanel extends StatelessWidget {
   final List<TaughtFieldNode> nodes;
+  final bool canEdit;
   final bool canMoveToRobot;
   final void Function(TaughtFieldNode) onEdit;
   final void Function(TaughtFieldNode) onDelete;
@@ -594,6 +719,7 @@ class _NodeListPanel extends StatelessWidget {
 
   const _NodeListPanel({
     required this.nodes,
+    required this.canEdit,
     required this.canMoveToRobot,
     required this.onEdit,
     required this.onDelete,
@@ -638,6 +764,7 @@ class _NodeListPanel extends StatelessWidget {
                     final n = nodes[index];
                     return _NodeListTile(
                       node: n,
+                      canEdit: canEdit,
                       canMoveToRobot: canMoveToRobot,
                       onEdit: () => onEdit(n),
                       onDelete: () => onDelete(n),
@@ -653,6 +780,7 @@ class _NodeListPanel extends StatelessWidget {
 
 class _NodeListTile extends StatelessWidget {
   final TaughtFieldNode node;
+  final bool canEdit;
   final bool canMoveToRobot;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
@@ -660,6 +788,7 @@ class _NodeListTile extends StatelessWidget {
 
   const _NodeListTile({
     required this.node,
+    required this.canEdit,
     required this.canMoveToRobot,
     required this.onEdit,
     required this.onDelete,
@@ -710,7 +839,7 @@ class _NodeListTile extends StatelessWidget {
               _MiniAction(
                 icon: Icons.edit_outlined,
                 tooltip: 'Düzenle',
-                onTap: onEdit,
+                onTap: canEdit ? onEdit : null,
               ),
               _MiniAction(
                 icon: Icons.my_location,
@@ -721,7 +850,7 @@ class _NodeListTile extends StatelessWidget {
                 icon: Icons.delete_outline,
                 tooltip: 'Sil',
                 color: _danger,
-                onTap: onDelete,
+                onTap: canEdit ? onDelete : null,
               ),
             ],
           ),
@@ -866,4 +995,248 @@ class _NoMapPlaceholder extends StatelessWidget {
       ),
     );
   }
+}
+
+class _NodeEditorValue {
+  final String name;
+  final FieldNodeRole role;
+  final String stationId;
+  final FieldLoadRule loadRule;
+  final FieldApproachMode approachMode;
+  final double yawRadians;
+  final String metadataJson;
+
+  const _NodeEditorValue({
+    required this.name,
+    required this.role,
+    required this.stationId,
+    required this.loadRule,
+    required this.approachMode,
+    required this.yawRadians,
+    required this.metadataJson,
+  });
+
+  FieldNode toNode({required FieldPose2D pose, int? nodeId}) => FieldNode(
+        nodeId: nodeId ?? FieldGraphId.next(),
+        name: name,
+        role: role,
+        stationId: stationId,
+        pose: pose,
+        loadRule: loadRule,
+        approachMode: approachMode,
+        metadataJson: metadataJson,
+      );
+}
+
+class _NodeEditorDialog extends StatefulWidget {
+  final FieldNode? existing;
+  final bool screenYaw;
+
+  const _NodeEditorDialog({this.existing, required this.screenYaw});
+
+  @override
+  State<_NodeEditorDialog> createState() => _NodeEditorDialogState();
+}
+
+class _NodeEditorDialogState extends State<_NodeEditorDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _name;
+  late final TextEditingController _stationId;
+  late final TextEditingController _yawDegrees;
+  late final TextEditingController _metadata;
+  late FieldNodeRole _role;
+  late FieldLoadRule _loadRule;
+  late FieldApproachMode _approachMode;
+
+  @override
+  void initState() {
+    super.initState();
+    final node = widget.existing;
+    _name = TextEditingController(text: node?.name ?? '');
+    _stationId = TextEditingController(text: node?.stationId ?? '');
+    _yawDegrees = TextEditingController(
+      text: ((node?.pose.theta ?? 0) * 180 / math.pi).toStringAsFixed(1),
+    );
+    _metadata = TextEditingController(text: node?.metadataJson ?? '{}');
+    _role = node?.role ?? FieldNodeRole.transit;
+    _loadRule = node?.loadRule ?? FieldLoadRule.any;
+    _approachMode = node?.approachMode ?? FieldApproachMode.navigate;
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _stationId.dispose();
+    _yawDegrees.dispose();
+    _metadata.dispose();
+    super.dispose();
+  }
+
+  String? _metadataValidator(String? value) {
+    try {
+      final decoded = jsonDecode(value ?? '');
+      if (decoded is! Map) return 'Metadata JSON object olmalıdır';
+      return null;
+    } catch (_) {
+      return 'Geçerli JSON object girin';
+    }
+  }
+
+  void _applyRoleDefaults(FieldNodeRole role) {
+    setState(() {
+      _role = role;
+      switch (role) {
+        case FieldNodeRole.pickupDock:
+          _loadRule = FieldLoadRule.empty;
+          _approachMode = FieldApproachMode.dock;
+          break;
+        case FieldNodeRole.dropoffDock:
+          _loadRule = FieldLoadRule.loaded;
+          _approachMode = FieldApproachMode.dock;
+          break;
+        case FieldNodeRole.gateQ5:
+          _loadRule = FieldLoadRule.any;
+          _approachMode = FieldApproachMode.trigger;
+          break;
+        case FieldNodeRole.qrTrigger:
+          _loadRule = FieldLoadRule.any;
+          _approachMode = FieldApproachMode.trigger;
+          break;
+        case FieldNodeRole.pickupApproach ||
+              FieldNodeRole.dropoffApproach ||
+              FieldNodeRole.wait ||
+              FieldNodeRole.transit:
+          _loadRule = FieldLoadRule.any;
+          _approachMode = FieldApproachMode.navigate;
+          break;
+      }
+    });
+  }
+
+  void _submit() {
+    if (!_formKey.currentState!.validate()) return;
+    final degrees = double.parse(_yawDegrees.text.trim());
+    Navigator.pop(
+      context,
+      _NodeEditorValue(
+        name: _name.text.trim(),
+        role: _role,
+        stationId: _stationId.text.trim(),
+        loadRule: _loadRule,
+        approachMode: _approachMode,
+        yawRadians: degrees * math.pi / 180,
+        metadataJson: _metadata.text.trim(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: Text(
+            widget.existing == null ? 'Yeni saha düğümü' : 'Düğümü düzenle'),
+        content: SizedBox(
+          width: 520,
+          child: Form(
+            key: _formKey,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextFormField(
+                    controller: _name,
+                    decoration: const InputDecoration(labelText: 'Düğüm adı'),
+                    validator: NodeNameRules.validate,
+                  ),
+                  DropdownButtonFormField<FieldNodeRole>(
+                    initialValue: _role,
+                    decoration: const InputDecoration(labelText: 'Rol'),
+                    items: [
+                      for (final value in FieldNodeRole.values)
+                        DropdownMenuItem(
+                          value: value,
+                          child: Text(value.wireName),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) _applyRoleDefaults(value);
+                    },
+                  ),
+                  TextFormField(
+                    controller: _stationId,
+                    decoration: const InputDecoration(
+                      labelText: 'İstasyon kimliği (station_id)',
+                    ),
+                  ),
+                  DropdownButtonFormField<FieldLoadRule>(
+                    initialValue: _loadRule,
+                    decoration: const InputDecoration(labelText: 'Yük kuralı'),
+                    items: [
+                      for (final value in FieldLoadRule.values)
+                        DropdownMenuItem(
+                          value: value,
+                          child: Text(value.wireName),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) setState(() => _loadRule = value);
+                    },
+                  ),
+                  DropdownButtonFormField<FieldApproachMode>(
+                    initialValue: _approachMode,
+                    decoration:
+                        const InputDecoration(labelText: 'Yaklaşma modu'),
+                    items: [
+                      for (final value in FieldApproachMode.values)
+                        DropdownMenuItem(
+                          value: value,
+                          child: Text(value.wireName),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) setState(() => _approachMode = value);
+                    },
+                  ),
+                  TextFormField(
+                    controller: _yawDegrees,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                      signed: true,
+                    ),
+                    decoration: InputDecoration(
+                      labelText: widget.screenYaw
+                          ? 'Ekran yönü (derece)'
+                          : 'Map yaw (derece)',
+                      helperText: widget.screenYaw
+                          ? 'ROS’a screen_yaw olarak radyan gönderilir'
+                          : 'ROS pose.theta alanına radyan yazılır',
+                    ),
+                    validator: (value) {
+                      final parsed = double.tryParse(value?.trim() ?? '');
+                      if (parsed == null || !parsed.isFinite) {
+                        return 'Geçerli açı girin';
+                      }
+                      return null;
+                    },
+                  ),
+                  TextFormField(
+                    controller: _metadata,
+                    minLines: 1,
+                    maxLines: 4,
+                    decoration:
+                        const InputDecoration(labelText: 'metadata_json'),
+                    validator: _metadataValidator,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Vazgeç'),
+          ),
+          FilledButton(onPressed: _submit, child: const Text('Kaydet')),
+        ],
+      );
 }

@@ -6,10 +6,10 @@ import 'map_page.dart';
 import 'parameter.dart';
 import 'models/agv_sensor_model.dart';
 import 'models/gcs_connection_model.dart';
+import 'models/gcs_field_graph_model.dart';
 import 'models/gcs_mapping_model.dart';
 import 'models/gcs_mission_model.dart';
 import 'models/gcs_node_model.dart';
-import 'models/gcs_route_model.dart';
 import 'models/gcs_event_log_model.dart';
 import 'models/gcs_alarm_model.dart';
 import 'parameter_model.dart';
@@ -37,8 +37,8 @@ void main() {
         // ── Yeni GCS modeller ─────────────────────────────────────────────
         ChangeNotifierProvider(create: (_) => GcsConnectionModel()),
         ChangeNotifierProvider(create: (_) => GcsMappingModel()),
+        ChangeNotifierProvider(create: (_) => GcsFieldGraphModel()),
         ChangeNotifierProvider(create: (_) => GcsNodeModel()),
-        ChangeNotifierProvider(create: (_) => GcsRouteModel()),
         ChangeNotifierProvider(create: (_) => GcsMissionModel()),
         ChangeNotifierProvider(create: (_) => GcsAlarmModel()),
         ChangeNotifierProvider(create: (_) => GcsEventLogModel()),
@@ -66,8 +66,8 @@ class MyApp extends StatelessWidget {
             ),
             elevatedButtonTheme: ElevatedButtonThemeData(
               style: ElevatedButton.styleFrom(
-                textStyle: const TextStyle(
-                    fontSize: 15, fontWeight: FontWeight.bold),
+                textStyle:
+                    const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
                 elevation: 15,
                 side: const BorderSide(color: Colors.black87),
                 backgroundColor: const Color.fromARGB(255, 6, 6, 6),

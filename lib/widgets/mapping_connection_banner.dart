@@ -15,9 +15,7 @@ class MappingConnectionBanner extends StatelessWidget {
     final accent = model.bannerColor;
     final icon = switch (model.connectionStatus) {
       RosConnectionStatus.connected =>
-        model.awaitingFreshPreview
-            ? Icons.sync
-            : Icons.check_circle_outline,
+        model.awaitingFreshPreview ? Icons.sync : Icons.check_circle_outline,
       RosConnectionStatus.connecting ||
       RosConnectionStatus.reconnecting =>
         Icons.hourglass_top,

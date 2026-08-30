@@ -225,6 +225,20 @@ abstract final class RosMappingTopics {
   static const mappingSave = '/mapping/save';
   static const fieldsList = '/fields/list';
 
+  static const fieldsActive = '/fields/active';
+  static const fieldsPackageStatus = '/fields/package_status';
+  static const fieldsGetGraph = '/fields/get_graph';
+  static const fieldsSaveNode = '/fields/save_node';
+  static const fieldsSaveCurrentPoseNode = '/fields/save_current_pose_node';
+  static const fieldsDeleteNode = '/fields/delete_node';
+  static const fieldsSaveEdge = '/fields/save_edge';
+  static const fieldsDeleteEdge = '/fields/delete_edge';
+  static const fieldsPixelToMap = '/fields/pixel_to_map';
+  static const fieldsValidate = '/fields/validate';
+  static const fieldsActivate = '/fields/activate';
+  static const fieldsArchive = '/fields/archive';
+  static const fieldsGetActive = '/fields/get_active';
+
   static const localizationStart = '/localization/start';
   static const localizationStop = '/localization/stop';
   static const localizationStatus = '/localization/status';
@@ -258,6 +272,19 @@ abstract final class RosMappingTypes {
 
   static const saveMappingSrv = 'marco_msgs/srv/SaveMapping';
   static const listFieldsSrv = 'marco_msgs/srv/ListFields';
+  static const activeFieldMsg = 'marco_msgs/msg/ActiveField';
+  static const fieldPackageStatusMsg = 'marco_msgs/msg/FieldPackageStatus';
+  static const getFieldGraphSrv = 'marco_msgs/srv/GetFieldGraph';
+  static const saveFieldNodeSrv = 'marco_msgs/srv/SaveFieldNode';
+  static const saveCurrentPoseNodeSrv = 'marco_msgs/srv/SaveCurrentPoseNode';
+  static const deleteFieldNodeSrv = 'marco_msgs/srv/DeleteFieldNode';
+  static const saveFieldEdgeSrv = 'marco_msgs/srv/SaveFieldEdge';
+  static const deleteFieldEdgeSrv = 'marco_msgs/srv/DeleteFieldEdge';
+  static const pixelToMapSrv = 'marco_msgs/srv/PixelToMap';
+  static const validateFieldSrv = 'marco_msgs/srv/ValidateField';
+  static const activateFieldSrv = 'marco_msgs/srv/ActivateField';
+  static const archiveFieldSrv = 'marco_msgs/srv/ArchiveField';
+  static const getActiveFieldSrv = 'marco_msgs/srv/GetActiveField';
   static const startLocalizationSrv = 'marco_msgs/srv/StartLocalization';
   static const stopLocalizationSrv = 'std_srvs/srv/Trigger';
   static const localizationStatusMsg = 'marco_msgs/msg/LocalizationStatus';

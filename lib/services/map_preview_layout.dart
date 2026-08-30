@@ -6,10 +6,7 @@ import 'dart:ui';
   int mapW,
   int mapH,
 ) {
-  if (view.width <= 0 ||
-      view.height <= 0 ||
-      mapW <= 0 ||
-      mapH <= 0) {
+  if (view.width <= 0 || view.height <= 0 || mapW <= 0 || mapH <= 0) {
     return (scale: 1, offset: Offset.zero);
   }
   final scaleX = view.width / mapW;

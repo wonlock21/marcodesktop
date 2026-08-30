@@ -10,7 +10,8 @@ void main() {
       const mapW = 100;
       const mapH = 100;
       // contain: scale=1, letterbox x=50
-      final hit = mapPreviewViewToPixel(const Offset(100, 50), view, mapW, mapH);
+      final hit =
+          mapPreviewViewToPixel(const Offset(100, 50), view, mapW, mapH);
       expect(hit.insideMap, isTrue);
       expect(hit.pixelX, closeTo(50, 0.01));
       expect(hit.pixelY, closeTo(50, 0.01));

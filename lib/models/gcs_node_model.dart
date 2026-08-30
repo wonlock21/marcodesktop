@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/ros_mapping_contract.dart';
+import 'field_graph_models.dart';
 
 /// Öğretilmiş düğüm (yerel draft; ROS `/stations/*` sonra).
 class TaughtFieldNode {
@@ -82,11 +83,45 @@ class GcsNodeModel extends ChangeNotifier {
 
   List<TaughtFieldNode> get nodes => _nodes;
 
+  /// Canonical field graph projection used by the legacy scenario widgets.
+  /// Runtime CRUD never writes this local model directly.
+  void replaceFromFieldGraph({
+    required List<FieldNode> graphNodes,
+    required String fieldName,
+    required MapPreviewMetadata? metadata,
+  }) {
+    final projected = <TaughtFieldNode>[];
+    for (final node in graphNodes) {
+      final type = switch (node.role) {
+        FieldNodeRole.pickupApproach ||
+        FieldNodeRole.pickupDock =>
+          FieldNodeType.alma,
+        FieldNodeRole.dropoffApproach ||
+        FieldNodeRole.dropoffDock =>
+          FieldNodeType.birakma,
+        FieldNodeRole.wait || FieldNodeRole.transit => FieldNodeType.baslangic,
+        FieldNodeRole.gateQ5 => FieldNodeType.kapi,
+        FieldNodeRole.qrTrigger => FieldNodeType.qr,
+      };
+      final pixel = metadata?.mapToPixel(node.pose.x, node.pose.y);
+      projected.add(TaughtFieldNode(
+        id: node.nodeId.toString(),
+        name: node.name,
+        type: type,
+        pixelX: pixel?.x ?? 0,
+        pixelY: pixel?.y ?? 0,
+        screenYaw: node.pose.theta,
+        fieldName: fieldName,
+      ));
+    }
+    _nodes = List.unmodifiable(projected);
+    notifyListeners();
+  }
+
   /// Senaryo A→B çiftleri için seçilebilir (alma / bırakma).
   List<TaughtFieldNode> get routeEligibleNodes => _nodes
       .where(
-        (n) =>
-            n.type == FieldNodeType.alma || n.type == FieldNodeType.birakma,
+        (n) => n.type == FieldNodeType.alma || n.type == FieldNodeType.birakma,
       )
       .toList(growable: false);
 

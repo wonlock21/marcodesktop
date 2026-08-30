@@ -1,11 +1,11 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 
+import 'models/field_graph_models.dart';
+import 'models/gcs_field_graph_model.dart';
 import 'models/gcs_mapping_model.dart';
 import 'services/agv_service.dart';
 import 'services/ros_mapping_contract.dart';
@@ -16,9 +16,10 @@ const _borderC = Color(0xFF333333);
 const _muted = Color(0xFF9E9E9E);
 const _bright = Color(0xFFE0E0E0);
 const _success = Color(0xFF43A047);
+const _accent = Color(0xFF42A5F5);
 const _danger = Color(0xFFE53935);
+const _warning = Color(0xFFFFA726);
 
-/// E.2 — Kayıtlı saha haritaları (`/fields/list`).
 class SavedFieldsPage extends StatefulWidget {
   const SavedFieldsPage({super.key});
 
@@ -30,55 +31,29 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(_refresh());
-    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_refresh()));
   }
 
   Future<void> _refresh() async {
-    final mapping = context.read<GcsMappingModel>();
-    if (!AgvService.ros.state.value.isConnected) {
-      mapping.applyFieldsListError('ROS bağlı değil — saha listesi alınamadı');
+    final graph = context.read<GcsFieldGraphModel>();
+    if (!graph.connected) {
+      _toast('ROS bağlı değil — saha listesi alınamadı');
       return;
     }
-    mapping.beginFieldsListLoad();
-    try {
-      final response = await AgvService.listFields();
-      if (!mounted) return;
-      if (!RosServiceResponse.fieldsListSucceeded(response)) {
-        mapping
-            .applyFieldsListError(RosServiceResponse.failureMessage(response));
-        return;
-      }
-      mapping.applyFieldsList(SavedFieldInfo.fromListFieldsResponse(response));
-    } catch (error) {
-      if (!mounted) return;
-      mapping.applyFieldsListError(_userError(error));
-    }
+    await graph.refreshFields();
   }
 
-  String _userError(Object error) {
-    final text = error.toString().toLowerCase();
-    if (text.contains('bagli degil') ||
-        text.contains('bağlı değil') ||
-        text.contains('not connected') ||
-        text.contains('timeout') ||
-        text.contains('zaman asim') ||
-        text.contains('servis') ||
-        text.contains('service')) {
-      return 'ROS hazır değil veya servis yanıt vermedi';
-    }
-    return RosMappingErrors.toUserMessage(error.toString());
-  }
+  String _userError(Object error) =>
+      error.toString().replaceFirst('Bad state: ', '').trim();
 
   void _toast(String message) {
-    if (!mounted) return;
+    if (!mounted || message.trim().isEmpty) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), duration: const Duration(seconds: 3)),
+      SnackBar(content: Text(message), duration: const Duration(seconds: 4)),
     );
   }
 
-  Future<void> _loadField(SavedFieldInfo field) async {
+  Future<void> _loadField(FieldInfo field) async {
     final mapping = context.read<GcsMappingModel>();
     if (!field.localizationReady ||
         mapping.localizationInFlight ||
@@ -89,14 +64,12 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
       _toast('ROS hazır değil veya servis yanıt vermedi');
       return;
     }
-    mapping.beginLocalization(field.name);
+    mapping.beginLocalization(field.fieldName);
     try {
       final response =
-          await AgvService.startLocalization(fieldName: field.name);
+          await AgvService.startLocalization(fieldName: field.fieldName);
       if (!mounted) return;
-      final ok = RosServiceResponse.localizationStartAccepted(response);
-      final msg = response['message']?.toString().trim() ?? '';
-      if (!ok) {
+      if (!RosServiceResponse.localizationStartAccepted(response)) {
         mapping.endLocalizationFlight();
         _toast(
           'Lokalizasyon başlatılamadı: '
@@ -104,12 +77,8 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
         );
         return;
       }
-      mapping.acknowledgeLocalizationStart(field.name);
-      _toast(
-        'Lokalizasyon başlatılıyor (${field.name})'
-        '${msg.isEmpty ? '' : ': ${RosMappingErrors.toUserMessage(msg)}'}'
-        ' — LOCALIZING durumu bekleniyor',
-      );
+      mapping.acknowledgeLocalizationStart(field.fieldName);
+      _toast('Lokalizasyon başlatılıyor (${field.fieldName})');
     } catch (error) {
       if (!mounted) return;
       mapping.endLocalizationFlight();
@@ -119,18 +88,15 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
 
   Future<void> _stopLocalization() async {
     final mapping = context.read<GcsMappingModel>();
-    if (mapping.localizationInFlight) return;
-    if (!AgvService.ros.state.value.isConnected) {
-      _toast('ROS hazır değil veya servis yanıt vermedi');
+    if (mapping.localizationInFlight ||
+        !AgvService.ros.state.value.isConnected) {
       return;
     }
     mapping.beginLocalization();
     try {
       final response = await AgvService.stopLocalization();
       if (!mounted) return;
-      final ok = RosServiceResponse.localizationStopSucceeded(response);
-      final msg = response['message']?.toString().trim() ?? '';
-      if (!ok) {
+      if (!RosServiceResponse.localizationStopSucceeded(response)) {
         mapping.endLocalizationFlight();
         _toast(
           'Lokalizasyon durdurulamadı: '
@@ -139,10 +105,7 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
         return;
       }
       mapping.acknowledgeLocalizationStop();
-      _toast(
-        'Lokalizasyon durduruluyor'
-        '${msg.isEmpty ? '' : ': ${RosMappingErrors.toUserMessage(msg)}'}',
-      );
+      _toast('Lokalizasyon durduruluyor');
     } catch (error) {
       if (!mounted) return;
       mapping.endLocalizationFlight();
@@ -150,10 +113,58 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
     }
   }
 
+  Future<void> _openGraph(FieldInfo field, String routeName) async {
+    final graph = context.read<GcsFieldGraphModel>();
+    await graph.selectField(field.fieldName);
+    if (!mounted) return;
+    if (graph.graphError != null) {
+      _toast(graph.graphError!);
+      return;
+    }
+    await Navigator.pushNamed(context, routeName);
+  }
+
+  Future<void> _archive(FieldInfo field) async {
+    if (field.active) return;
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Sahayı arşivle'),
+            content: Text(
+              '${field.fieldName} aktif listeden kaldırılacak. Bu işlem gerçek silme değildir.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Vazgeç'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Arşivle'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed || !mounted) return;
+    final graph = context.read<GcsFieldGraphModel>();
+    try {
+      await graph.selectField(field.fieldName);
+      final message = await graph.archiveSelected();
+      if (mounted) _toast(message);
+    } catch (error) {
+      _toast('Arşivleme başarısız: ${_userError(error)}');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final mapping = context.watch<GcsMappingModel>();
-    final active = mapping.activeLocalizedField;
+    final graph = context.watch<GcsFieldGraphModel>();
+    final localized = mapping.activeLocalizedField;
+    final active = graph.activeFresh && graph.activeField?.active == true
+        ? graph.activeField
+        : null;
 
     return Scaffold(
       backgroundColor: _bg,
@@ -170,7 +181,7 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
           ),
         ),
         actions: [
-          if (active != null)
+          if (localized != null)
             TextButton(
               onPressed: mapping.localizationInFlight
                   ? null
@@ -182,9 +193,8 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
             ),
           IconButton(
             tooltip: 'Yenile',
-            onPressed:
-                mapping.fieldsListLoading ? null : () => unawaited(_refresh()),
-            icon: mapping.fieldsListLoading
+            onPressed: graph.fieldsLoading ? null : () => unawaited(_refresh()),
+            icon: graph.fieldsLoading
                 ? SizedBox(
                     width: 4.w,
                     height: 4.w,
@@ -203,33 +213,55 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
               color: const Color(0xFF1E2A1E),
               padding: EdgeInsets.symmetric(horizontal: 3.w, vertical: 0.8.h),
               child: Text(
-                'Aktif lokalizasyon: $active · ${mapping.localizationStatus?.etiket ?? 'durum bekleniyor'}',
+                'Aktif saha: ${active.fieldName} · sürüm ${active.packageVersion} · hash ${_shortHash(active.packageHash)}',
                 style: TextStyle(color: _success, fontSize: 3.sp),
               ),
             ),
-          Expanded(child: _buildBody(mapping)),
+          if (!graph.activeFresh && graph.connected)
+            const _InfoBar(
+              text: 'Aktif saha bilgisi eşitleniyor…',
+              color: _warning,
+            ),
+          if (graph.fieldsError != null)
+            _InfoBar(text: graph.fieldsError!, color: _danger),
+          if (localized != null)
+            _InfoBar(
+              text:
+                  'Aktif lokalizasyon: $localized · ${mapping.localizationStatus?.etiket ?? 'durum bekleniyor'}',
+              color: _success,
+            ),
+          Expanded(child: _buildBody(graph, mapping)),
         ],
       ),
     );
   }
 
-  Widget _buildBody(GcsMappingModel mapping) {
-    if (mapping.fieldsListLoading && mapping.savedFields.isEmpty) {
+  Widget _buildBody(
+    GcsFieldGraphModel graph,
+    GcsMappingModel mapping,
+  ) {
+    if (!graph.connected && graph.fields.isEmpty) {
+      return const _EmptyState(
+        icon: Icons.cloud_off_outlined,
+        title: 'ROS bağlı değil',
+        subtitle: 'Saha bilgileri güncel değil; bağlantıyı yeniden kurun.',
+        actionLabel: null,
+        onAction: null,
+      );
+    }
+    if (graph.fieldsLoading && graph.fields.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
-
-    final error = mapping.fieldsListError;
-    if (error != null && mapping.savedFields.isEmpty) {
+    if (graph.fieldsError != null && graph.fields.isEmpty) {
       return _EmptyState(
         icon: Icons.cloud_off_outlined,
-        title: 'Liste alınamadı',
-        subtitle: error,
+        title: 'Saha listesi servisi kullanılamıyor',
+        subtitle: graph.fieldsError!,
         actionLabel: 'Tekrar Dene',
         onAction: () => unawaited(_refresh()),
       );
     }
-
-    if (mapping.savedFields.isEmpty) {
+    if (graph.fields.isEmpty) {
       return _EmptyState(
         icon: Icons.map_outlined,
         title: 'Kayıtlı harita yok',
@@ -248,21 +280,23 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
           crossAxisCount: 2,
           mainAxisSpacing: 2.h,
           crossAxisSpacing: 2.w,
-          childAspectRatio: 1.15,
+          childAspectRatio: 1.05,
         ),
-        itemCount: mapping.savedFields.length,
+        itemCount: graph.fields.length,
         itemBuilder: (context, index) {
-          final field = mapping.savedFields[index];
-          final isActive = mapping.activeLocalizedField == field.name;
+          final field = graph.fields[index];
           return _SavedFieldCard(
             field: field,
-            isActive: isActive,
-            busy: mapping.localizationInFlight,
-            onLoad: !field.localizationReady ||
+            localized: mapping.activeLocalizedField == field.fieldName,
+            busy: mapping.localizationInFlight || graph.busy,
+            onLocalization: !field.localizationReady ||
                     mapping.localizationInFlight ||
                     mapping.mappingActive
                 ? null
                 : () => unawaited(_loadField(field)),
+            onNodes: () => unawaited(_openGraph(field, 'node-teach-page')),
+            onRoute: () => unawaited(_openGraph(field, 'route-edit-page')),
+            onArchive: field.active ? null : () => unawaited(_archive(field)),
           );
         },
       ),
@@ -270,35 +304,49 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
   }
 }
 
+class _InfoBar extends StatelessWidget {
+  final String text;
+  final Color color;
+
+  const _InfoBar({required this.text, required this.color});
+
+  @override
+  Widget build(BuildContext context) => Container(
+        color: color.withAlpha(24),
+        padding: EdgeInsets.symmetric(horizontal: 3.w, vertical: 0.7.h),
+        child: Text(text, style: TextStyle(color: color, fontSize: 3.sp)),
+      );
+}
+
 class _SavedFieldCard extends StatelessWidget {
-  final SavedFieldInfo field;
-  final bool isActive;
+  final FieldInfo field;
+  final bool localized;
   final bool busy;
-  final VoidCallback? onLoad;
+  final VoidCallback? onLocalization;
+  final VoidCallback onNodes;
+  final VoidCallback onRoute;
+  final VoidCallback? onArchive;
 
   const _SavedFieldCard({
     required this.field,
-    required this.isActive,
+    required this.localized,
     required this.busy,
-    required this.onLoad,
+    required this.onLocalization,
+    required this.onNodes,
+    required this.onRoute,
+    required this.onArchive,
   });
 
   @override
   Widget build(BuildContext context) {
-    final ready = field.localizationReady;
-    final statusColor = field.isFaulty
-        ? _danger
-        : ready
-            ? _success
-            : _muted;
-    final statusLabel = ready ? 'Lokalizasyona Hazır' : 'Hazır Değil';
-
+    final faulty = !field.mapReady || !field.initialPoseReady;
+    final statusColor = faulty ? _danger : _success;
     return Container(
       decoration: BoxDecoration(
         color: _panelBg,
         border: Border.all(
-          color: isActive ? _success : _borderC,
-          width: isActive ? 1.5 : 1,
+          color: field.active ? _success : _borderC,
+          width: field.active ? 1.5 : 1,
         ),
         borderRadius: BorderRadius.circular(2.r),
       ),
@@ -306,68 +354,58 @@ class _SavedFieldCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(child: _Thumbnail(hint: field.thumbnailHint)),
-          SizedBox(height: 0.8.h),
-          Text(
-            field.name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: _bright,
-              fontSize: 4.sp,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          SizedBox(height: 0.3.h),
+          Expanded(child: _Thumbnail(hint: field.previewPng)),
+          SizedBox(height: 0.7.h),
           Row(
             children: [
-              Container(
-                width: 1.2.w,
-                height: 1.2.w,
-                decoration: BoxDecoration(
-                  color: statusColor,
-                  shape: BoxShape.circle,
+              Expanded(
+                child: Text(
+                  field.fieldName,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: _bright,
+                    fontSize: 3.8.sp,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
-              SizedBox(width: 1.w),
-              Text(
-                statusLabel,
-                style: TextStyle(color: statusColor, fontSize: 3.sp),
-              ),
-              const Spacer(),
-              Text(
-                field.createdAt?.trim().isNotEmpty == true
-                    ? field.createdAt!
-                    : 'Tarih yok',
-                style: TextStyle(color: _muted, fontSize: 2.8.sp),
-              ),
+              if (field.active)
+                Text('AKTİF',
+                    style: TextStyle(color: _success, fontSize: 2.5.sp)),
             ],
           ),
-          SizedBox(height: 0.6.h),
-          SizedBox(
-            height: 38.h,
-            child: TextButton(
-              onPressed: onLoad,
-              style: TextButton.styleFrom(
-                backgroundColor: isActive
-                    ? const Color(0xFF1E3A1E)
-                    : const Color(0xFF2A2A2A),
-                foregroundColor: onLoad == null ? _muted : _bright,
-                disabledForegroundColor: _muted,
-                side: BorderSide(color: isActive ? _success : _borderC),
-                padding: EdgeInsets.zero,
+          Text(
+            '${field.routeReady ? 'Rota hazır' : 'Rota eksik'} · '
+            '${field.validationPassed ? 'Doğrulandı' : 'Doğrulanmadı'} · '
+            '${field.packageVersion.isEmpty ? 'sürüm yok' : field.packageVersion}',
+            style: TextStyle(color: statusColor, fontSize: 2.5.sp),
+          ),
+          Text(
+            field.packageHash.isEmpty
+                ? (field.message.isEmpty ? 'Hash yok' : field.message)
+                : 'Hash ${_shortHash(field.packageHash)}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: _muted, fontSize: 2.3.sp),
+          ),
+          SizedBox(height: 0.5.h),
+          Wrap(
+            spacing: 0.7.w,
+            runSpacing: 0.4.h,
+            children: [
+              _CardAction(
+                label: localized ? 'Lokalizasyon Aktif' : 'Lokalizasyon',
+                onPressed: onLocalization,
               ),
-              child: busy && isActive
-                  ? SizedBox(
-                      width: 3.w,
-                      height: 3.w,
-                      child: const CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Text(
-                      isActive ? 'Lokalizasyon Aktif' : 'Lokalizasyonu Başlat',
-                      style: TextStyle(fontSize: 2.8.sp),
-                    ),
-            ),
+              _CardAction(label: 'Düğümler', onPressed: busy ? null : onNodes),
+              _CardAction(label: 'Rota', onPressed: busy ? null : onRoute),
+              if (!field.active)
+                _CardAction(
+                  label: 'Arşivle',
+                  color: _danger,
+                  onPressed: busy ? null : onArchive,
+                ),
+            ],
           ),
         ],
       ),
@@ -375,61 +413,53 @@ class _SavedFieldCard extends StatelessWidget {
   }
 }
 
+class _CardAction extends StatelessWidget {
+  final String label;
+  final VoidCallback? onPressed;
+  final Color color;
+
+  const _CardAction({
+    required this.label,
+    required this.onPressed,
+    this.color = _accent,
+  });
+
+  @override
+  Widget build(BuildContext context) => OutlinedButton(
+        onPressed: onPressed,
+        style: OutlinedButton.styleFrom(
+          foregroundColor: color,
+          padding: EdgeInsets.symmetric(horizontal: 1.2.w),
+          minimumSize: Size(0, 30.h),
+          side: BorderSide(color: onPressed == null ? _borderC : color),
+        ),
+        child: Text(label, style: TextStyle(fontSize: 2.4.sp)),
+      );
+}
+
 class _Thumbnail extends StatelessWidget {
   final String? hint;
-
   const _Thumbnail({this.hint});
 
   @override
   Widget build(BuildContext context) {
-    final bytes = _tryDecode(hint);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: _bg,
-        border: Border.all(color: _borderC),
-        borderRadius: BorderRadius.circular(1.5.r),
-      ),
-      child: bytes != null
-          ? ClipRRect(
-              borderRadius: BorderRadius.circular(1.5.r),
-              child: Image.memory(
-                bytes,
-                fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) => _placeholder(),
-              ),
-            )
-          : _placeholder(),
-    );
-  }
-
-  Widget _placeholder() {
-    return Center(
+    final value = hint?.trim() ?? '';
+    return Container(
+      color: const Color(0xFF101010),
+      alignment: Alignment.center,
+      // preview_png Orange Pi üzerindeki tanı yoludur; yerel dosya değildir.
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.map_outlined, color: _muted, size: 8.sp),
+          Icon(Icons.map_outlined, color: _muted, size: 7.sp),
           SizedBox(height: 0.5.h),
           Text(
-            'Önizleme yok',
-            style: TextStyle(color: _muted, fontSize: 2.8.sp),
+            value.isEmpty ? 'Önizleme yok' : 'Önizleme robotta',
+            style: TextStyle(color: _muted, fontSize: 2.5.sp),
           ),
         ],
       ),
     );
-  }
-
-  static Uint8List? _tryDecode(String? hint) {
-    if (hint == null) return null;
-    final trimmed = hint.trim();
-    if (trimmed.isEmpty || trimmed.length < 32) return null;
-    try {
-      final raw = trimmed.contains(',')
-          ? trimmed.substring(trimmed.indexOf(',') + 1)
-          : trimmed;
-      return base64Decode(raw);
-    } catch (_) {
-      return null;
-    }
   }
 }
 
@@ -437,8 +467,8 @@ class _EmptyState extends StatelessWidget {
   final IconData icon;
   final String title;
   final String subtitle;
-  final String actionLabel;
-  final VoidCallback onAction;
+  final String? actionLabel;
+  final VoidCallback? onAction;
 
   const _EmptyState({
     required this.icon,
@@ -449,41 +479,27 @@ class _EmptyState extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: 8.w),
+  Widget build(BuildContext context) => Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: _muted, size: 12.sp),
-            SizedBox(height: 1.5.h),
-            Text(
-              title,
-              style: TextStyle(
-                color: _bright,
-                fontSize: 4.5.sp,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            SizedBox(height: 0.8.h),
+            Icon(icon, color: _muted, size: 10.sp),
+            SizedBox(height: 1.h),
+            Text(title, style: TextStyle(color: _bright, fontSize: 4.sp)),
+            SizedBox(height: 0.5.h),
             Text(
               subtitle,
               textAlign: TextAlign.center,
-              style: TextStyle(color: _muted, fontSize: 3.2.sp),
+              style: TextStyle(color: _muted, fontSize: 3.sp),
             ),
-            SizedBox(height: 2.h),
-            TextButton(
-              onPressed: onAction,
-              style: TextButton.styleFrom(
-                foregroundColor: _bright,
-                side: const BorderSide(color: _borderC),
-              ),
-              child: Text(actionLabel),
-            ),
+            if (actionLabel != null) ...[
+              SizedBox(height: 1.h),
+              OutlinedButton(onPressed: onAction, child: Text(actionLabel!)),
+            ],
           ],
         ),
-      ),
-    );
-  }
+      );
 }
+
+String _shortHash(String value) =>
+    value.length <= 12 ? value : '${value.substring(0, 12)}…';

@@ -57,9 +57,9 @@ class GcsEventLogModel extends ChangeNotifier {
     final now = DateTime.now();
     final kayitlar = [
       // (kaç saniye önce, mesaj)
-      (10,  'Yüklü hareket başladı → B3 istikameti'),
-      (38,  'Yük alındı — Lift kaldırıldı'),
-      (72,  'QR okundu: QA2.1 — Konum doğrulandı'),
+      (10, 'Yüklü hareket başladı → B3 istikameti'),
+      (38, 'Yük alındı — Lift kaldırıldı'),
+      (72, 'QR okundu: QA2.1 — Konum doğrulandı'),
       (115, 'Yük alma noktasına ulaşıldı (A2)'),
       (158, 'Yüksüz hareket başladı → A2 istikameti'),
       (183, 'Görev alındı — ID: MSN-0042 | A2 → B3'),
@@ -102,8 +102,8 @@ class GcsEventLogModel extends ChangeNotifier {
       final existing = _kayitlar
           .map((e) => '${e.zaman.toIso8601String()}|${e.mesaj}')
           .toSet();
-      _kayitlar.addAll(saved.where((e) => existing
-          .add('${e.zaman.toIso8601String()}|${e.mesaj}')));
+      _kayitlar.addAll(saved.where(
+          (e) => existing.add('${e.zaman.toIso8601String()}|${e.mesaj}')));
       _kayitlar.sort((a, b) => b.zaman.compareTo(a.zaman));
       if (_kayitlar.length > _maxKayit) {
         _kayitlar.removeRange(_maxKayit, _kayitlar.length);

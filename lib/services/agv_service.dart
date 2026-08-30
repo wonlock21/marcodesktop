@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
+import '../models/field_graph_models.dart';
 import 'ros_bridge_client.dart';
 
 class AgvService {
@@ -54,6 +55,71 @@ class AgvService {
       ros.saveMapping(args);
 
   static Future<Map<String, dynamic>> listFields() => ros.listFields();
+
+  static Future<Map<String, dynamic>> getFieldGraph(String fieldName) =>
+      ros.getFieldGraph(fieldName);
+
+  static Future<Map<String, dynamic>> saveFieldNode({
+    required String fieldName,
+    required FieldNode node,
+  }) =>
+      ros.saveFieldNode(fieldName: fieldName, node: node);
+
+  static Future<Map<String, dynamic>> saveCurrentPoseNode({
+    required String fieldName,
+    required FieldNode node,
+  }) =>
+      ros.saveCurrentPoseNode(fieldName: fieldName, node: node);
+
+  static Future<Map<String, dynamic>> deleteFieldNode({
+    required String fieldName,
+    required int nodeId,
+    required bool deleteConnectedEdges,
+  }) =>
+      ros.deleteFieldNode(
+        fieldName: fieldName,
+        nodeId: nodeId,
+        deleteConnectedEdges: deleteConnectedEdges,
+      );
+
+  static Future<Map<String, dynamic>> saveFieldEdge({
+    required String fieldName,
+    required FieldEdge edge,
+  }) =>
+      ros.saveFieldEdge(fieldName: fieldName, edge: edge);
+
+  static Future<Map<String, dynamic>> deleteFieldEdge({
+    required String fieldName,
+    required int edgeId,
+  }) =>
+      ros.deleteFieldEdge(fieldName: fieldName, edgeId: edgeId);
+
+  static Future<Map<String, dynamic>> pixelToMap({
+    required String fieldName,
+    required double pixelX,
+    required double pixelY,
+    required double screenYaw,
+  }) =>
+      ros.pixelToMap(
+        fieldName: fieldName,
+        pixelX: pixelX,
+        pixelY: pixelY,
+        screenYaw: screenYaw,
+      );
+
+  static Future<Map<String, dynamic>> validateField(String fieldName) =>
+      ros.validateField(fieldName);
+
+  static Future<Map<String, dynamic>> activateField({
+    required String fieldName,
+    required String expectedHash,
+  }) =>
+      ros.activateField(fieldName: fieldName, expectedHash: expectedHash);
+
+  static Future<Map<String, dynamic>> archiveField(String fieldName) =>
+      ros.archiveField(fieldName);
+
+  static Future<Map<String, dynamic>> getActiveField() => ros.getActiveField();
 
   static Future<Map<String, dynamic>> startLocalization({
     required String fieldName,

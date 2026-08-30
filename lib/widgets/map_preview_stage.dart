@@ -22,6 +22,20 @@ class MapPreviewNodeMarker {
   });
 }
 
+class MapPreviewRouteSegment {
+  final Offset start;
+  final Offset end;
+  final bool bidirectional;
+  final Color color;
+
+  const MapPreviewRouteSegment({
+    required this.start,
+    required this.end,
+    required this.bidirectional,
+    this.color = const Color(0xFF42A5F5),
+  });
+}
+
 MapPreviewNodeMarker? mapPreviewDemoPointMarker({
   required String label,
   required DemoPointPose? pose,
@@ -50,6 +64,7 @@ class MapPreviewStage extends StatelessWidget {
     this.sourceLabel,
     this.nodeMarkers = const [],
     this.routePolylinePixels = const [],
+    this.routeSegments = const [],
     this.onMapTap,
     this.onNodeMarkerTap,
   });
@@ -63,6 +78,7 @@ class MapPreviewStage extends StatelessWidget {
 
   /// H.1 — sıralı rota noktaları (harita pikseli).
   final List<Offset> routePolylinePixels;
+  final List<MapPreviewRouteSegment> routeSegments;
 
   /// G.1 — harita pikseline dokunma (`insideMap` false ise çağrılmaz).
   final void Function(double pixelX, double pixelY)? onMapTap;
@@ -123,6 +139,16 @@ class MapPreviewStage extends StatelessWidget {
                       mapW: mapW,
                       mapH: mapH,
                       pixels: routePolylinePixels,
+                    ),
+                  ),
+                if (mapW != null && mapH != null && routeSegments.isNotEmpty)
+                  CustomPaint(
+                    size: view,
+                    painter: _EdgeSegmentsPainter(
+                      view: view,
+                      mapW: mapW,
+                      mapH: mapH,
+                      segments: routeSegments,
                     ),
                   ),
                 if (mapW != null && mapH != null && nodeMarkers.isNotEmpty)
@@ -236,6 +262,70 @@ class _RoutePolylinePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _RoutePolylinePainter old) =>
       old.pixels != pixels || old.mapW != mapW || old.mapH != mapH;
+}
+
+class _EdgeSegmentsPainter extends CustomPainter {
+  final Size view;
+  final int mapW;
+  final int mapH;
+  final List<MapPreviewRouteSegment> segments;
+
+  const _EdgeSegmentsPainter({
+    required this.view,
+    required this.mapW,
+    required this.mapH,
+    required this.segments,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final layout = mapPreviewLayout(view, mapW, mapH);
+    Offset viewPoint(Offset pixel) => Offset(
+          layout.offset.dx + pixel.dx * layout.scale,
+          layout.offset.dy + pixel.dy * layout.scale,
+        );
+
+    for (final segment in segments) {
+      final start = viewPoint(segment.start);
+      final end = viewPoint(segment.end);
+      final paint = Paint()
+        ..color = segment.color
+        ..strokeWidth = 2.2
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round;
+      canvas.drawLine(start, end, paint);
+      _drawArrow(canvas, paint, start, end);
+      if (segment.bidirectional) _drawArrow(canvas, paint, end, start);
+    }
+  }
+
+  void _drawArrow(Canvas canvas, Paint paint, Offset start, Offset end) {
+    final delta = end - start;
+    if (delta.distance < 12) return;
+    final angle = math.atan2(delta.dy, delta.dx);
+    final tip = Offset(
+      start.dx + delta.dx * 0.62,
+      start.dy + delta.dy * 0.62,
+    );
+    const length = 9.0;
+    final left = Offset(
+      tip.dx - length * math.cos(angle - math.pi / 6),
+      tip.dy - length * math.sin(angle - math.pi / 6),
+    );
+    final right = Offset(
+      tip.dx - length * math.cos(angle + math.pi / 6),
+      tip.dy - length * math.sin(angle + math.pi / 6),
+    );
+    final path = Path()
+      ..moveTo(left.dx, left.dy)
+      ..lineTo(tip.dx, tip.dy)
+      ..lineTo(right.dx, right.dy);
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _EdgeSegmentsPainter old) =>
+      old.segments != segments || old.mapW != mapW || old.mapH != mapH;
 }
 
 class _NodeMarkerOverlay extends StatelessWidget {

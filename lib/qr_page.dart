@@ -1,14 +1,14 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 import 'data_model.dart';
 
 // ─── Renk sabitleri ────────────────────────────────────────────────────────
-const _bg      = Color(0xFF121212);
+const _bg = Color(0xFF121212);
 const _panelBg = Color(0xFF1A1A1A);
 const _borderC = Color(0xFF333333);
-const _muted   = Color(0xFF9E9E9E);
-const _bright  = Color(0xFFE0E0E0);
+const _muted = Color(0xFF9E9E9E);
+const _bright = Color(0xFFE0E0E0);
 
 class QRPage extends StatefulWidget {
   const QRPage({super.key});
@@ -20,14 +20,13 @@ class QRPage extends StatefulWidget {
 }
 
 class _QRPageState extends State<QRPage> {
-
   /// QR etiket adından (QA2.1, QB3.1, CS1.1 vb.) tip döner.
   String _qrTipEtiket(String label) {
     final upper = label.toUpperCase();
-    if (upper.startsWith('QA'))  return 'Alma';
-    if (upper.startsWith('QB'))  return 'Bırakma';
-    if (upper.startsWith('CS'))  return 'Şarj';
-    if (upper.startsWith('S'))   return 'Başlangıç';
+    if (upper.startsWith('QA')) return 'Alma';
+    if (upper.startsWith('QB')) return 'Bırakma';
+    if (upper.startsWith('CS')) return 'Şarj';
+    if (upper.startsWith('S')) return 'Başlangıç';
     if (upper.startsWith('D') || upper.contains('KAPI')) return 'Kapı';
     if (upper.startsWith('W') || upper.contains('BEKL')) return 'Bekleme';
     return '--';
@@ -65,16 +64,19 @@ class _QRPageState extends State<QRPage> {
             ),
             decoration: InputDecoration(
               hintText: "Yeni QR adı girin",
-              hintStyle: TextStyle(color: const Color(0xFF444444), fontSize: 3.sp),
+              hintStyle:
+                  TextStyle(color: const Color(0xFF444444), fontSize: 3.sp),
               filled: true,
               fillColor: const Color(0xFF1E1E1E),
-              contentPadding: EdgeInsets.symmetric(horizontal: 2.w, vertical: 1.5.h),
+              contentPadding:
+                  EdgeInsets.symmetric(horizontal: 2.w, vertical: 1.5.h),
               enabledBorder: OutlineInputBorder(
                 borderSide: BorderSide(color: _borderC, width: 0.5.w),
                 borderRadius: BorderRadius.circular(4.r),
               ),
               focusedBorder: OutlineInputBorder(
-                borderSide: BorderSide(color: const Color(0xFF1565C0), width: 0.7.w),
+                borderSide:
+                    BorderSide(color: const Color(0xFF1565C0), width: 0.7.w),
                 borderRadius: BorderRadius.circular(4.r),
               ),
             ),
@@ -243,7 +245,8 @@ class _QRPageState extends State<QRPage> {
                           onTap: () => _showRenameDialog(context, qrPoint),
                           child: Container(
                             padding: EdgeInsets.symmetric(
-                              horizontal: 2.w, vertical: 0.8.h,
+                              horizontal: 2.w,
+                              vertical: 0.8.h,
                             ),
                             decoration: BoxDecoration(
                               border: Border.all(color: _borderC, width: 0.5.w),
