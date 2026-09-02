@@ -112,9 +112,11 @@ class _GcsMapViewState extends State<GcsMapView> {
           left: 2.w,
           bottom: 1.5.h,
           child: Text(
-            'X: ${widget.data.robotX.toStringAsFixed(2)} m  '
-            'Y: ${widget.data.robotY.toStringAsFixed(2)} m  '
-            'YAW: ${(widget.data.robotYaw * 57.2958).toStringAsFixed(1)}°',
+            widget.data.robotVisible
+                ? 'X: ${widget.data.robotX.toStringAsFixed(2)} m  '
+                    'Y: ${widget.data.robotY.toStringAsFixed(2)} m  '
+                    'YAW: ${(widget.data.robotYaw * 57.2958).toStringAsFixed(1)}°'
+                : 'ROBOT POZU: BAĞLANTI/TELEMETRİ BAYAT',
             style: TextStyle(
               color: const Color(0xFF4A4A4A),
               fontSize: 2.5.sp,
@@ -181,7 +183,7 @@ class _MapPainter extends CustomPainter {
     for (final p in data.points) {
       if (p.type == MapPointType.qrNoktasi) _paintPoint(canvas, size, p);
     }
-    _paintRobot(canvas, size);
+    if (data.robotVisible) _paintRobot(canvas, size);
   }
 
   /// OccupancyGrid görüntüsünü map origin/yaw/resolution ile çizer.
@@ -581,6 +583,7 @@ class _MapPainter extends CustomPainter {
       old.data.robotX != data.robotX ||
       old.data.robotY != data.robotY ||
       old.data.robotYaw != data.robotYaw ||
+      old.data.robotVisible != data.robotVisible ||
       old.data.points != data.points ||
       old.data.routes != data.routes ||
       old.data.zones != data.zones ||

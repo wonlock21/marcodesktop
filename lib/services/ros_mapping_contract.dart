@@ -238,6 +238,10 @@ abstract final class RosMappingTopics {
   static const fieldsActivate = '/fields/activate';
   static const fieldsArchive = '/fields/archive';
   static const fieldsGetActive = '/fields/get_active';
+  static const fieldsGetStationApproachConfigs =
+      '/fields/get_station_approach_configs';
+  static const fieldsSaveStationApproachConfig =
+      '/fields/save_station_approach_config';
 
   static const localizationStart = '/localization/start';
   static const localizationStop = '/localization/stop';
@@ -285,6 +289,10 @@ abstract final class RosMappingTypes {
   static const activateFieldSrv = 'marco_msgs/srv/ActivateField';
   static const archiveFieldSrv = 'marco_msgs/srv/ArchiveField';
   static const getActiveFieldSrv = 'marco_msgs/srv/GetActiveField';
+  static const getStationApproachConfigsSrv =
+      'marco_msgs/srv/GetStationApproachConfigs';
+  static const saveStationApproachConfigSrv =
+      'marco_msgs/srv/SaveStationApproachConfig';
   static const startLocalizationSrv = 'marco_msgs/srv/StartLocalization';
   static const stopLocalizationSrv = 'std_srvs/srv/Trigger';
   static const localizationStatusMsg = 'marco_msgs/msg/LocalizationStatus';

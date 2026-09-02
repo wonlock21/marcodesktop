@@ -20,6 +20,8 @@ import 'models/gcs_map_model.dart';
 import 'models/gcs_mapping_model.dart';
 import 'models/gcs_mission_model.dart';
 import 'models/gcs_node_model.dart';
+import 'models/gcs_robot_telemetry_model.dart';
+import 'models/gcs_station_approach_model.dart';
 import 'parameter_model.dart';
 import 'scenerio_page.dart';
 import 'services/agv_service.dart';
@@ -30,9 +32,11 @@ import 'services/ros_mapping_contract.dart';
 import 'widgets/control_buttons.dart';
 import 'widgets/gcs_map_view.dart';
 import 'widgets/map_preview_stage.dart';
+import 'widgets/mapping_field_name_dialog.dart';
 import 'widgets/mapping_connection_banner.dart';
 import 'widgets/mapping_field_bar.dart';
 import 'widgets/mjpeg_camera_view.dart';
+import 'widgets/station_approach_status_card.dart';
 
 class ControllerPage extends StatefulWidget {
   const ControllerPage({super.key});
@@ -54,6 +58,8 @@ class _ControllerPageState extends State<ControllerPage>
   late ParameterModel parameterModel;
   late AgvSensorModel _agvModel;
   late GcsFieldGraphModel _fieldGraphModel;
+  late GcsRobotTelemetryModel _robotTelemetryModel;
+  late GcsStationApproachModel _stationApproachModel;
   OccupancyGridMetadata? _mapMetadata;
   ui.Image? _occupancyImage;
   int _occupancyImageGeneration = 0;
@@ -82,6 +88,10 @@ class _ControllerPageState extends State<ControllerPage>
     WidgetsBinding.instance.addObserver(this);
     _agvModel = Provider.of<AgvSensorModel>(context, listen: false);
     _fieldGraphModel = Provider.of<GcsFieldGraphModel>(context, listen: false);
+    _robotTelemetryModel =
+        Provider.of<GcsRobotTelemetryModel>(context, listen: false);
+    _stationApproachModel =
+        Provider.of<GcsStationApproachModel>(context, listen: false);
     _fieldGraphModel.addListener(_syncCanonicalNodeProjection);
     parameterModel = Provider.of<ParameterModel>(context, listen: false);
     Provider.of<DataModel>(context, listen: false).loadDataPoints();
@@ -90,6 +100,7 @@ class _ControllerPageState extends State<ControllerPage>
     unawaited(_loadLastRosAddress());
     AgvService.ros.onRobotStatus = _applyRobotStatus;
     AgvService.ros.onMissionEvent = _onMissionEvent;
+    AgvService.ros.onSafetyState = _onSafetyState;
     AgvService.ros.onMapMetadata = _onMapMetadata;
     AgvService.ros.onMapFrame = _onMapFrame;
     AgvService.ros.onMappingStatus = _onMappingStatus;
@@ -111,6 +122,9 @@ class _ControllerPageState extends State<ControllerPage>
       _fieldGraphModel.applyConnection(
         AgvService.ros.state.value.isConnected,
       );
+      _stationApproachModel.applyConnection(
+        AgvService.ros.state.value.isConnected,
+      );
       if (AgvService.ros.state.value.isConnected) {
         unawaited(_fieldGraphModel.synchronize());
       }
@@ -122,7 +136,30 @@ class _ControllerPageState extends State<ControllerPage>
 
   void _applyRobotStatus(Map<String, dynamic> status) {
     if (!mounted) return;
+    _robotTelemetryModel.applyRobotStatus(status);
     _fieldGraphModel.applyRobotStatus(status);
+    _stationApproachModel.applyRobotStatus(status);
+    final mission = Provider.of<GcsMissionModel>(context, listen: false);
+    final alarms = Provider.of<GcsAlarmModel>(context, listen: false);
+    if (status.isEmpty) {
+      AgvService.stopManual();
+      _connModel.topluGuncelle(
+        sistem: AgvService.ros.state.value.isConnected
+            ? ConnDurum.bagli
+            : ConnDurum.cevrimdisi,
+        robot: ConnDurum.hata,
+        plc: ConnDurum.cevrimdisi,
+      );
+      _agvModel.updatePlc(durum: 'bağlantı/telemetri bayat');
+      alarms.setAlarm(
+        AlarmTur.robotBaglantiHata,
+        mesaj: 'Bağlantı/telemetri bayat',
+      );
+      setState(() {
+        isConnected = AgvService.ros.state.value.isConnected;
+      });
+      return;
+    }
     final poseStamped = status['pose'];
     final poseWithCovariance = poseStamped is Map ? poseStamped['pose'] : null;
     final pose = poseWithCovariance is Map ? poseWithCovariance['pose'] : null;
@@ -139,7 +176,6 @@ class _ControllerPageState extends State<ControllerPage>
       1 - 2 * (qy * qy + qz * qz),
     );
     final missionState = (status['mission_state'] as num?)?.toInt() ?? 0;
-    final hardwareManualMode = status['manual_mode_enabled'] == true;
     final estop = status['estop_active'] == true;
     final obstacle = status['obstacle_detected'] == true;
     final plcConnected = status['plc_connected'] == true;
@@ -178,8 +214,8 @@ class _ControllerPageState extends State<ControllerPage>
         temperature: _number(status['battery_temperature'], double.nan),
       );
 
-    final mission = Provider.of<GcsMissionModel>(context, listen: false);
     final rawRoute = status['route_nodes'];
+    final elapsedSeconds = _number(status['mission_elapsed_s']);
     mission.topluGuncelle(
       gorevId: status['task_id']?.toString() ?? '',
       gorevKaynagi: status['task_source']?.toString() ?? '',
@@ -189,13 +225,16 @@ class _ControllerPageState extends State<ControllerPage>
           ? rawRoute.map((node) => node.toString()).toList()
           : const <String>[],
       aktifDurakIndeksi: (status['current_stop_index'] as num?)?.toInt() ?? 0,
-      baslangicaDon: status['return_home'] != false,
+      baslangicaDon: status['return_home'] == true,
+      gorevSuresi: Duration(
+        milliseconds: (elapsedSeconds * 1000).round(),
+      ),
       asama: switch (missionState) {
         1 => GorevAsama.gorevAlindi,
         2 => GorevAsama.yuksuzHareket,
         3 => GorevAsama.yukluHareket,
         4 => GorevAsama.kapiIzniBekleniyor,
-        5 => GorevAsama.tamamlandi,
+        5 => GorevAsama.baslangicaDonuyor,
         6 => GorevAsama.hata,
         7 => GorevAsama.acilStop,
         _ => GorevAsama.bosta,
@@ -206,10 +245,8 @@ class _ControllerPageState extends State<ControllerPage>
       sistem: ConnDurum.bagli,
       robot: ConnDurum.bagli,
       plc: plcConnected ? ConnDurum.bagli : ConnDurum.cevrimdisi,
-      manuelMod: hardwareManualMode,
-      uzaktanKontrol: hardwareManualMode,
     );
-    final alarms = Provider.of<GcsAlarmModel>(context, listen: false);
+    alarms.clearAlarm(AlarmTur.robotBaglantiHata);
     alarms.topluGuncelle(
       aktifOlanlar: [
         if (estop) AlarmTur.acilStop,
@@ -227,7 +264,19 @@ class _ControllerPageState extends State<ControllerPage>
 
   void _onMissionEvent(String event) {
     if (!mounted) return;
-    Provider.of<GcsEventLogModel>(context, listen: false).ekle(event);
+    final summary = GcsRobotTelemetryModel.summarizeJsonMessage(event);
+    Provider.of<GcsEventLogModel>(context, listen: false)
+        .ekle(summary.isEmpty ? event : summary);
+  }
+
+  void _onSafetyState(String? state) {
+    if (!mounted) return;
+    final previous = _robotTelemetryModel.safetyStateRaw;
+    _robotTelemetryModel.applySafetyState(state);
+    if (state != null && state != previous) {
+      final summary = _robotTelemetryModel.safetyStateSummary;
+      if (summary.isNotEmpty) _onMissionEvent('Güvenlik: $summary');
+    }
   }
 
   /// I.1 — Türkçe hata: olay günlüğü + SnackBar.
@@ -683,71 +732,12 @@ class _ControllerPageState extends State<ControllerPage>
       return;
     }
 
-    final nameController = TextEditingController(
-      text: mapping.fieldName.trim().isEmpty
+    final fieldName = await showMappingFieldNameDialog(
+      context: context,
+      initialValue: mapping.fieldName.trim().isEmpty
           ? 'saha_01'
           : mapping.fieldName.trim(),
     );
-    final fieldName = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1A1A1A),
-        title: Text(
-          'Saha adı',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 3.sp,
-            fontFamily: 'monospace',
-          ),
-        ),
-        content: TextField(
-          controller: nameController,
-          autofocus: true,
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 2.8.sp,
-            fontFamily: 'monospace',
-          ),
-          cursorColor: const Color(0xFF4A90D9),
-          inputFormatters: [
-            FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9_-]')),
-          ],
-          decoration: InputDecoration(
-            hintText: 'saha_01',
-            hintStyle: const TextStyle(color: Color(0xFF555555)),
-            helperText: 'Yalnız harf, rakam, _ ve -',
-            helperStyle:
-                TextStyle(color: const Color(0xFF666666), fontSize: 2.2.sp),
-            enabledBorder: const OutlineInputBorder(
-              borderSide: BorderSide(color: Color(0xFF333333)),
-            ),
-            focusedBorder: const OutlineInputBorder(
-              borderSide: BorderSide(color: Color(0xFF4A90D9)),
-            ),
-          ),
-          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(
-              'İptal',
-              style:
-                  TextStyle(color: const Color(0xFF888888), fontSize: 2.6.sp),
-            ),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, nameController.text.trim()),
-            child: Text(
-              'Başlat',
-              style:
-                  TextStyle(color: const Color(0xFF4A90D9), fontSize: 2.6.sp),
-            ),
-          ),
-        ],
-      ),
-    );
-    nameController.dispose();
     if (!mounted || fieldName == null) return;
 
     final validationError = RosFieldNameRules.validate(fieldName);
@@ -896,6 +886,7 @@ class _ControllerPageState extends State<ControllerPage>
     final rosState = AgvService.ros.state.value;
     _mappingModel.applyConnectionState(rosState);
     _fieldGraphModel.applyConnection(rosState.isConnected);
+    _stationApproachModel.applyConnection(rosState.isConnected);
     if (rosState.status == RosConnectionStatus.connected) {
       unawaited(_fieldGraphModel.synchronize());
     }
@@ -920,8 +911,14 @@ class _ControllerPageState extends State<ControllerPage>
     // PLC durumu yalnızca robot /robot_status üzerinden gelir.
     // WiFi/ROS kopunca eski "PLC Bağlı" bilgisini tutma.
     if (rosState.isConnected) {
-      _connModel.topluGuncelle(sistem: durum, robot: durum);
+      _connModel.topluGuncelle(
+        sistem: durum,
+        robot:
+            _robotTelemetryModel.fresh ? ConnDurum.bagli : ConnDurum.baglaniyor,
+      );
     } else {
+      _robotTelemetryModel.markRobotStatusStale();
+      _robotTelemetryModel.applySafetyState(null);
       _connModel.topluGuncelle(
         sistem: durum,
         robot: durum,
@@ -934,7 +931,8 @@ class _ControllerPageState extends State<ControllerPage>
     final alarms = Provider.of<GcsAlarmModel>(context, listen: false);
     if (rosState.status == RosConnectionStatus.error) {
       alarms.setAlarm(AlarmTur.robotBaglantiHata, mesaj: rosState.message);
-    } else if (rosState.status == RosConnectionStatus.connected) {
+    } else if (rosState.status == RosConnectionStatus.connected &&
+        _robotTelemetryModel.fresh) {
       alarms.clearAlarm(AlarmTur.robotBaglantiHata);
     } else {
       alarms.clearAlarm(AlarmTur.plcBaglantiHata);
@@ -951,6 +949,9 @@ class _ControllerPageState extends State<ControllerPage>
     final saved = prefs.getString('rosBridgeAddress');
     if (!mounted || saved == null || saved.isEmpty) return;
     setState(() => _ipController.text = saved);
+    // Kayıtlı adres yalnız giriş alanını doldurur. İlk bağlantı operatörün
+    // BAĞLAN komutuyla başlar; bu yüzden uygulama açılışında hata/reconnect
+    // döngüsü oluşturulmaz.
   }
 
   // Kısa yol: model erişimi (listen: false — sadece write için)
@@ -1114,7 +1115,7 @@ class _ControllerPageState extends State<ControllerPage>
     );
     if (!sent) {
       _onMissionEvent(
-          'Manuel hareket reddedildi: ROS bağlantısını ve fiziksel manuel modu kontrol edin');
+          'Manuel hareket reddedildi: ROS bağlantısı veya /robot_status telemetrisi hazır değil');
     }
   }
 
@@ -1160,6 +1161,7 @@ class _ControllerPageState extends State<ControllerPage>
     AgvService.ros.state.removeListener(_onRosConnectionState);
     AgvService.ros.onRobotStatus = null;
     AgvService.ros.onMissionEvent = null;
+    AgvService.ros.onSafetyState = null;
     AgvService.ros.onMapMetadata = null;
     AgvService.ros.onMapFrame = null;
     AgvService.ros.onMappingStatus = null;
@@ -1187,6 +1189,7 @@ class _ControllerPageState extends State<ControllerPage>
   Widget build(BuildContext context) {
     final agv = context.watch<AgvSensorModel>();
     final mission = context.watch<GcsMissionModel>();
+    final telemetry = context.watch<GcsRobotTelemetryModel>();
     final alarms = context.watch<GcsAlarmModel>();
     final conn = context.watch<GcsConnectionModel>();
     final mapping = context.watch<GcsMappingModel>();
@@ -1195,7 +1198,7 @@ class _ControllerPageState extends State<ControllerPage>
     final dataPoints = context.watch<DataModel>().dataPoints;
     // Tek kaynak: GCS çalışma modu (Manuel / Otonom)
     final oto = !conn.fizikselManuelMod;
-    final calismaModu = conn.fizikselManuelMod ? 'Manuel' : 'Otonom';
+    final calismaModu = conn.fizikselManuelMod ? 'Manuel (GCS)' : 'Otonom';
     final buzzerButtonText = _buzzerCommandInFlight
         ? (_pendingBuzzerTarget == true
             ? 'Buzzer Açılıyor'
@@ -1217,7 +1220,8 @@ class _ControllerPageState extends State<ControllerPage>
     const Color success = Color(0xFF43A047);
     const Color danger = Color(0xFFE53935);
 
-    String safe(String v) => (v.isEmpty || v == 'null') ? '--' : v;
+    String safe(String v) =>
+        !telemetry.fresh || v.isEmpty || v == 'null' ? '--' : v;
 
     return Scaffold(
       backgroundColor: bg,
@@ -1237,7 +1241,7 @@ class _ControllerPageState extends State<ControllerPage>
               height: 2.5.w,
               decoration: BoxDecoration(
                 color: conn.sistemBaglanti == ConnDurum.bagli
-                    ? success
+                    ? (telemetry.fresh ? success : const Color(0xFFFF9800))
                     : conn.sistemBaglanti == ConnDurum.baglaniyor
                         ? const Color(0xFFFF9800)
                         : conn.sistemBaglanti == ConnDurum.hata
@@ -1316,6 +1320,10 @@ class _ControllerPageState extends State<ControllerPage>
           _NavBtn(
               label: "QR LİSTESİ",
               onTap: () => Navigator.pushNamed(context, 'QR-page')),
+          _NavBtn(
+              label: "İSTASYON AYARLARI",
+              onTap: () =>
+                  Navigator.pushNamed(context, 'station-approach-page')),
           _NavBtn(label: "VERİLER", onTap: () => _navigateToDataPage(_site)),
           _NavBtn(
               label: "PARAMETRELER",
@@ -1329,7 +1337,7 @@ class _ControllerPageState extends State<ControllerPage>
           child: KeyboardListener(
             focusNode: _focusNode,
             onKeyEvent: (keyEvent) {
-              // Kontrol modu fiziksel anahtardan /robot_status ile gelir.
+              // Klavye olaylarını ControlButton dead-man bileşenleri yönetir.
             },
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1363,6 +1371,7 @@ class _ControllerPageState extends State<ControllerPage>
                                   mission,
                                   alarms,
                                   agv,
+                                  telemetry,
                                   conn,
                                   panelBg,
                                   borderC,
@@ -1378,6 +1387,7 @@ class _ControllerPageState extends State<ControllerPage>
                                   flex: 8,
                                   child: _buildWorkAreaContent(
                                     agv,
+                                    telemetry,
                                     mapping,
                                     panelBg,
                                     borderC,
@@ -1495,7 +1505,9 @@ class _ControllerPageState extends State<ControllerPage>
                             children: [
                               _statusRow(
                                 'ROBOT BAĞLANTISI',
-                                conn.robotBaglanti.etiket,
+                                !telemetry.fresh && conn.sistemBaglanti.aktif
+                                    ? 'Bağlantı/telemetri bayat'
+                                    : conn.robotBaglanti.etiket,
                                 conn.robotBaglanti == ConnDurum.bagli
                                     ? success
                                     : conn.robotBaglanti == ConnDurum.baglaniyor
@@ -1551,13 +1563,12 @@ class _ControllerPageState extends State<ControllerPage>
                           child: Row(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                Expanded(
+                                const Expanded(
                                     child: _GcsTelCard(
                                   icon: Icons.battery_full,
                                   label: "GÜÇ",
-                                  value:
-                                      "${agv.bataryaYuzde.toStringAsFixed(0)}%",
-                                  valueColor: _battColor(agv.bataryaYuzde),
+                                  value: '--',
+                                  valueColor: muted,
                                   panelBg: panelBg,
                                   borderC: borderC,
                                   bright: bright,
@@ -1619,8 +1630,10 @@ class _ControllerPageState extends State<ControllerPage>
                                     child: _GcsTelCard(
                                   icon: Icons.speed,
                                   label: "HIZ",
-                                  value:
-                                      "${agv.anlikHiz.toStringAsFixed(2)} m/s",
+                                  value: telemetry.fresh &&
+                                          agv.anlikHiz.isFinite
+                                      ? "${agv.anlikHiz.toStringAsFixed(2)} m/s"
+                                      : '--',
                                   panelBg: panelBg,
                                   borderC: borderC,
                                   bright: bright,
@@ -1631,8 +1644,9 @@ class _ControllerPageState extends State<ControllerPage>
                                     child: _GcsTelCard(
                                   icon: Icons.location_on,
                                   label: "KONUM",
-                                  value:
-                                      "(${agv.currX.toStringAsFixed(1)}, ${agv.currY.toStringAsFixed(1)})",
+                                  value: telemetry.fresh
+                                      ? "(${agv.currX.toStringAsFixed(1)}, ${agv.currY.toStringAsFixed(1)})"
+                                      : '--',
                                   panelBg: panelBg,
                                   borderC: borderC,
                                   bright: bright,
@@ -1657,7 +1671,7 @@ class _ControllerPageState extends State<ControllerPage>
                                         fontSize: 2.5.sp,
                                         letterSpacing: 0.5)),
                                 Text(
-                                  mission.gorevAktif
+                                  telemetry.fresh && mission.gorevAktif
                                       ? mission.gorevSuresiFormatli
                                       : '--',
                                   style: TextStyle(
@@ -1671,6 +1685,8 @@ class _ControllerPageState extends State<ControllerPage>
                             ),
                           ]),
                         ),
+                        SizedBox(height: 2.h),
+                        StationApproachStatusCard(telemetry: telemetry),
                         SizedBox(height: 2.h),
                         // ── Mod ve Kontrol ────────────────────────────
                         _sectionLabel("MOD VE KONTROL"),
@@ -1718,7 +1734,18 @@ class _ControllerPageState extends State<ControllerPage>
                                         child: Switch(
                                           value: oto,
                                           activeThumbColor: accent,
-                                          onChanged: null,
+                                          onChanged: telemetry.fresh &&
+                                                  conn.robotBaglanti.aktif
+                                              ? (otonom) {
+                                                  if (otonom) {
+                                                    AgvService.stopManual();
+                                                  }
+                                                  _connModel.topluGuncelle(
+                                                    manuelMod: !otonom,
+                                                    uzaktanKontrol: !otonom,
+                                                  );
+                                                }
+                                              : null,
                                         ),
                                       ),
                                     ),
@@ -1728,9 +1755,8 @@ class _ControllerPageState extends State<ControllerPage>
                               Padding(
                                 padding: EdgeInsets.only(top: 0.8.h),
                                 child: Text(
-                                  oto
-                                      ? 'Otonom: fiziksel mod anahtarı, WASD kapalı'
-                                      : 'Manuel: fiziksel mod doğrulandı, WASD açık',
+                                  'Fiziksel mod switchi donanım bekliyor; '
+                                  '${oto ? 'otonom seçildi, WASD kapalı' : 'manuel GCS seçildi, WASD açık'}',
                                   style: TextStyle(
                                     color: muted,
                                     fontSize: 2.2.sp,
@@ -2244,6 +2270,7 @@ class _ControllerPageState extends State<ControllerPage>
     GcsMissionModel mission,
     GcsAlarmModel alarms,
     AgvSensorModel agv,
+    GcsRobotTelemetryModel telemetry,
     GcsConnectionModel conn,
     Color panelBg,
     Color borderC,
@@ -2252,9 +2279,9 @@ class _ControllerPageState extends State<ControllerPage>
     Color success,
     Color danger,
   ) {
-    String safe(String v) => (v.isEmpty || v == 'null') ? '--' : v;
-
-    final robotBagli = conn.robotBaglanti.aktif;
+    final rosConnected = conn.sistemBaglanti.aktif;
+    final robotBagli = conn.robotBaglanti.aktif && telemetry.fresh;
+    String safe(String v) => !robotBagli || v.isEmpty || v == 'null' ? '--' : v;
     final alarmColor = !robotBagli
         ? muted
         : alarms.kritikAlarmVar
@@ -2263,11 +2290,14 @@ class _ControllerPageState extends State<ControllerPage>
                 ? success
                 : const Color(0xFFFF9800);
 
-    final rota = mission.rotaDugumleri.isNotEmpty
-        ? mission.rotaDugumleri.join(' → ')
-        : (mission.almaNoktasi.isNotEmpty || mission.birakNoktasi.isNotEmpty)
-            ? '${safe(mission.almaNoktasi)} → ${safe(mission.birakNoktasi)}'
-            : '--';
+    final rota = !robotBagli
+        ? '--'
+        : mission.rotaDugumleri.isNotEmpty
+            ? mission.rotaDugumleri.join(' → ')
+            : (mission.almaNoktasi.isNotEmpty ||
+                    mission.birakNoktasi.isNotEmpty)
+                ? '${safe(mission.almaNoktasi)} → ${safe(mission.birakNoktasi)}'
+                : '--';
 
     // Robot/WiFi yokken eski agv.plcDurum ("bağlı") gösterilmesin.
     final plcEtiket = !robotBagli
@@ -2287,35 +2317,50 @@ class _ControllerPageState extends State<ControllerPage>
           Expanded(
               child: _SummaryCard(
             title: 'GÖREV ÖZETİ',
-            titleColor: mission.asama.hataVeyaStop ? danger : null,
-            borderC:
-                mission.asama.hataVeyaStop ? danger.withAlpha(100) : borderC,
+            titleColor:
+                robotBagli && mission.asama.hataVeyaStop ? danger : null,
+            borderC: robotBagli && mission.asama.hataVeyaStop
+                ? danger.withAlpha(100)
+                : borderC,
             muted: muted,
             bright: bright,
             rows: [
               _SRow('ID', safe(mission.gorevId)),
               _SRow('KAYNAK', safe(mission.gorevKaynagi)),
               _SRow('ROTA', rota, truncate: true),
-              _SRow('DURUM', mission.asama.etiket,
-                  valueColor: mission.asama.hataVeyaStop
-                      ? danger
-                      : mission.asama == GorevAsama.tamamlandi
-                          ? success
-                          : null,
+              _SRow(
+                  'DURUM',
+                  robotBagli
+                      ? mission.asama.etiket
+                      : rosConnected
+                          ? 'Bağlantı/telemetri bayat'
+                          : 'Bağlantı bekleniyor',
+                  valueColor: !robotBagli
+                      ? rosConnected
+                          ? danger
+                          : muted
+                      : mission.asama.hataVeyaStop
+                          ? danger
+                          : mission.asama == GorevAsama.tamamlandi
+                              ? success
+                              : null,
                   truncate: true),
               _SRow(
                 'SONRAKİ',
                 // Kapı izni zaten verilmişse "Kapı iznini bekle" yerine ileri adım yaz
-                (mission.asama == GorevAsama.yukluHareket ||
-                            mission.asama == GorevAsama.kapiIzniBekleniyor) &&
-                        mission.kapiIzni
-                    ? 'Kapıdan geç → Bırakma noktasına ilerle'
-                    : mission.asama.sonrakiAdim,
+                !robotBagli
+                    ? '--'
+                    : (mission.asama == GorevAsama.yukluHareket ||
+                                mission.asama ==
+                                    GorevAsama.kapiIzniBekleniyor) &&
+                            mission.kapiIzni
+                        ? 'Kapıdan geç → Bırakma noktasına ilerle'
+                        : mission.asama.sonrakiAdim,
                 truncate: true,
               ),
             ],
             footer: _MissionProgressBar(
-              asama: mission.asama,
+              asama: robotBagli ? mission.asama : GorevAsama.bosta,
               bright: bright,
               muted: muted,
               success: success,
@@ -2347,9 +2392,7 @@ class _ControllerPageState extends State<ControllerPage>
                   'GELEN',
                   !robotBagli
                       ? '--'
-                      : safe(mission.sonOtomasyonMesaj.isNotEmpty
-                          ? mission.sonOtomasyonMesaj
-                          : agv.plcSonMesaj),
+                      : 'PLC ayrıntılı mesaj geçmişi henüz bağlı değil',
                   truncate: true),
               _SRow('GÖNDERİLEN',
                   !robotBagli ? '--' : safe(mission.sonGonderilenMesaj),
@@ -2423,6 +2466,14 @@ class _ControllerPageState extends State<ControllerPage>
                         valueColor:
                             alarms.guvenliDurusAktif ? danger : success),
                     _SRow(
+                      'ROS SAFETY',
+                      telemetry.safetyStateFresh
+                          ? safe(telemetry.safetyStateSummary)
+                          : 'Bekleniyor',
+                      valueColor: telemetry.safetyStateFresh ? bright : muted,
+                      truncate: true,
+                    ),
+                    _SRow(
                         'ALARM',
                         alarms.temiz
                             ? 'Yok'
@@ -2444,6 +2495,7 @@ class _ControllerPageState extends State<ControllerPage>
                     _SRow('DURUM', 'Bağlı Değil', valueColor: danger),
                     const _SRow('ACİL STOP', '--'),
                     const _SRow('GÜV. DURUŞ', '--'),
+                    const _SRow('ROS SAFETY', '--'),
                     _SRow('ALARM', 'İzlenmiyor', valueColor: muted),
                     const _SRow('KRİTİK', '--'),
                   ],
@@ -2621,12 +2673,6 @@ class _ControllerPageState extends State<ControllerPage>
         borderRadius: BorderRadius.circular(4.r),
       );
 
-  Color _battColor(double pct) {
-    if (pct > 50) return const Color(0xFF43A047);
-    if (pct > 20) return Colors.orange;
-    return const Color(0xFFE53935);
-  }
-
   // ── Orta alan sekme yapısı ────────────────────────────────────────────────
 
   /// Sekme çubuğu — düz GCS stili.
@@ -2786,6 +2832,7 @@ class _ControllerPageState extends State<ControllerPage>
       robotX: agv.currX,
       robotY: agv.currY,
       robotYaw: agv.currYaw,
+      robotVisible: _robotTelemetryModel.fresh,
       points: _cachedMapPoints,
       routes: _cachedMapRoutes,
       occupancyImage: _occupancyImage,
@@ -2892,6 +2939,7 @@ class _ControllerPageState extends State<ControllerPage>
   /// Seçili sekmeye göre içerik döndürür.
   Widget _buildWorkAreaContent(
     AgvSensorModel agv,
+    GcsRobotTelemetryModel telemetry,
     GcsMappingModel mapping,
     Color panelBg,
     Color borderC,
@@ -2922,7 +2970,7 @@ class _ControllerPageState extends State<ControllerPage>
           body = MapPreviewStage(
             pngBytes: mapping.previewPng!,
             metadata: mapping.previewMetadata,
-            robotPixel: mapping.visibleRobotPixel,
+            robotPixel: telemetry.fresh ? mapping.visibleRobotPixel : null,
             awaitingFresh: mapping.awaitingFreshPreview,
             sourceLabel: mapping.previewSourceLabel,
             nodeMarkers: demoMarkers,
@@ -3290,6 +3338,7 @@ class _MissionProgressBar extends StatelessWidget {
     'Yüklü\nHareket',
     'Kapı\nİzni',
     'Yük\nBırakma',
+    'Başlangıca\nDön',
     'Tamamlandı',
   ];
 

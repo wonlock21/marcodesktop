@@ -130,11 +130,22 @@ class _QRButtonState extends State<QRButton> {
   }
 
   bool _handleKeyEvent(KeyEvent event) {
-    if (event is KeyDownEvent && event.logicalKey == widget.shortcutKey) {
+    if (event is KeyDownEvent &&
+        event.logicalKey == widget.shortcutKey &&
+        _shortcutsAllowed()) {
       widget.onPressed();
       return true;
     }
     return false;
+  }
+
+  bool _shortcutsAllowed() {
+    if (!mounted) return false;
+    final route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) return false;
+    final focusContext = FocusManager.instance.primaryFocus?.context;
+    return focusContext == null ||
+        focusContext.findAncestorWidgetOfExactType<EditableText>() == null;
   }
 
   @override
@@ -202,7 +213,7 @@ class _NormalButtonState extends State<NormalButton> {
   }
 
   bool _handleKeyEvent(KeyEvent event) {
-    if (!widget.enabled) return false;
+    if (!widget.enabled || !_shortcutsAllowed()) return false;
     if (event is KeyDownEvent && event.logicalKey == widget.assignedKey) {
       if (!isOn) {
         setState(() {
@@ -213,6 +224,18 @@ class _NormalButtonState extends State<NormalButton> {
       return true;
     }
     return false;
+  }
+
+  bool _shortcutsAllowed() {
+    if (!mounted) return false;
+    final route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) return false;
+    final focusContext = FocusManager.instance.primaryFocus?.context;
+    if (focusContext != null &&
+        focusContext.findAncestorWidgetOfExactType<EditableText>() != null) {
+      return false;
+    }
+    return true;
   }
 
   @override
@@ -330,6 +353,8 @@ class _ControlButtonState extends State<ControlButton> {
 
   @override
   void dispose() {
+    // Basılıyken sayfa/widget kapanırsa dead-man komutunu mutlaka bırak.
+    if (isPressed) widget.onReleased();
     HardwareKeyboard.instance.removeHandler(_handleKeyEvent);
     if (widget.customFocusNode == null) {
       _focusNode.dispose();

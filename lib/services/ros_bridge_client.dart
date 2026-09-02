@@ -37,11 +37,12 @@ class RosBridgeClient {
     this.connectTimeout = const Duration(seconds: 5),
     this.serviceTimeout = const Duration(seconds: 5),
     this.saveTimeout = const Duration(seconds: 40),
-    this.robotStatusTimeout = const Duration(seconds: 2),
+    this.robotStatusTimeout = const Duration(seconds: 1),
   });
 
   static const robotStatusTopic = '/robot_status';
   static const missionEventsTopic = '/mission/events';
+  static const safetyStateTopic = '/safety/state';
   static const mapTopic = '/map';
 
   /// Mapping sözleşmesindeki tek kaynak (`RosMappingTopics.cmdVelManual`).
@@ -58,6 +59,7 @@ class RosBridgeClient {
 
   void Function(Map<String, dynamic> message)? onRobotStatus;
   void Function(String message)? onMissionEvent;
+  void Function(String? message)? onSafetyState;
   void Function(OccupancyGridMetadata? metadata)? onMapMetadata;
   void Function(OccupancyGridFrame? frame)? onMapFrame;
 
@@ -90,12 +92,17 @@ class RosBridgeClient {
   Uri? _uri;
   bool _manualDisconnect = false;
 
-  bool _hardwareManualMode = false;
+  bool _robotStatusFresh = false;
   double _manualLinear = 0;
   double _manualAngular = 0;
 
-  bool get manualModeEnabled => _hardwareManualMode;
-  bool get hardwareManualMode => _hardwareManualMode;
+  /// Fiziksel mod switch'i hazır olana kadar manuel komut izni yalnız taze
+  /// RobotStatus ve açık rosbridge bağlantısına dayanır.
+  bool get manualModeEnabled => _robotStatusFresh;
+  bool get robotStatusFresh => _robotStatusFresh;
+
+  /// Geriye uyumluluk: fiziksel switch sinyali yetkilendirme kaynağı değildir.
+  bool get hardwareManualMode => false;
   String get url => _uri?.toString() ?? '';
 
   static Uri normalizeAddress(String input) {
@@ -108,6 +115,9 @@ class RosBridgeClient {
     if ((parsed.scheme != 'ws' && parsed.scheme != 'wss') ||
         parsed.host.isEmpty) {
       throw const FormatException('Adres ws://ROBOT_IP:9090 biciminde olmali');
+    }
+    if (parsed.hasPort && parsed.port == 8080) {
+      throw const FormatException('Rosbridge portu 9090 olmalı; 8080 kullanma');
     }
     return Uri(
       scheme: parsed.scheme,
@@ -223,6 +233,12 @@ class RosBridgeClient {
       'topic': missionEventsTopic,
       'type': 'std_msgs/msg/String',
       'queue_length': 20,
+    });
+    _send({
+      'op': 'subscribe',
+      'topic': safetyStateTopic,
+      'type': 'std_msgs/msg/String',
+      'queue_length': 1,
     });
     _send({
       'op': 'subscribe',
@@ -357,20 +373,21 @@ class RosBridgeClient {
     final raw = message['msg'];
     if (topic == robotStatusTopic && raw is Map) {
       final status = Map<String, dynamic>.from(raw);
-      final nextManualMode = status['manual_mode_enabled'] == true;
-      if (_hardwareManualMode && !nextManualMode) stopManual();
-      _hardwareManualMode = nextManualMode;
+      _robotStatusFresh = true;
       _robotStatusStaleTimer?.cancel();
       _robotStatusStaleTimer = Timer(robotStatusTimeout, () {
         if (!state.value.isConnected) return;
-        if (_hardwareManualMode) stopManual();
-        _hardwareManualMode = false;
+        stopManual();
+        _robotStatusFresh = false;
         onRobotStatus?.call(const <String, dynamic>{});
       });
       onRobotStatus?.call(status);
     } else if (topic == missionEventsTopic && raw is Map) {
       final event = raw['data'];
       if (event is String) onMissionEvent?.call(event);
+    } else if (topic == safetyStateTopic && raw is Map) {
+      final safetyState = raw['data'];
+      if (safetyState is String) onSafetyState?.call(safetyState);
     } else if (topic == RosMappingTopics.mappingStatus && raw is Map) {
       _handleMappingStatus(Map<String, dynamic>.from(raw));
     } else if (topic == RosMappingTopics.localizationStatus && raw is Map) {
@@ -670,15 +687,15 @@ class RosBridgeClient {
       throw ArgumentError('Piksel ve yön değerleri sonlu olmalıdır');
     }
     return callService(
-        RosMappingTopics.fieldsPixelToMap,
-        RosMappingTypes.pixelToMapSrv,
-        {
-          'field_name': fieldName.trim(),
-          'pixel_x': pixelX,
-          'pixel_y': pixelY,
-          'screen_yaw': screenYaw,
-        },
-      );
+      RosMappingTopics.fieldsPixelToMap,
+      RosMappingTypes.pixelToMapSrv,
+      {
+        'field_name': fieldName.trim(),
+        'pixel_x': pixelX,
+        'pixel_y': pixelY,
+        'screen_yaw': screenYaw,
+      },
+    );
   }
 
   Future<Map<String, dynamic>> validateField(String fieldName) => callService(
@@ -709,6 +726,23 @@ class RosBridgeClient {
   Future<Map<String, dynamic>> getActiveField() => callService(
         RosMappingTopics.fieldsGetActive,
         RosMappingTypes.getActiveFieldSrv,
+      );
+
+  Future<Map<String, dynamic>> getStationApproachConfigs(String fieldName) =>
+      callService(
+        RosMappingTopics.fieldsGetStationApproachConfigs,
+        RosMappingTypes.getStationApproachConfigsSrv,
+        {'field_name': fieldName.trim()},
+      );
+
+  Future<Map<String, dynamic>> saveStationApproachConfig({
+    required String fieldName,
+    required Map<String, dynamic> config,
+  }) =>
+      callService(
+        RosMappingTopics.fieldsSaveStationApproachConfig,
+        RosMappingTypes.saveStationApproachConfigSrv,
+        {'field_name': fieldName.trim(), 'config': config},
       );
 
   Future<Map<String, dynamic>> startLocalization({required String fieldName}) {
@@ -807,7 +841,6 @@ class RosBridgeClient {
   bool prepareSavedDemoStart() {
     if (!state.value.isConnected) return false;
     stopManual();
-    if (_hardwareManualMode) return false;
     return true;
   }
 
@@ -884,7 +917,7 @@ class RosBridgeClient {
       _manualHeartbeat = Timer.periodic(
         const Duration(milliseconds: RosManualDriveLimits.heartbeatDefaultMs),
         (_) {
-          if (!state.value.isConnected || !manualModeEnabled) {
+          if (!state.value.isConnected || !_robotStatusFresh) {
             _manualHeartbeat?.cancel();
             return;
           }
@@ -917,7 +950,7 @@ class RosBridgeClient {
     _manualHeartbeat = null;
     _manualLinear = 0;
     _manualAngular = 0;
-    if (state.value.isConnected && _hardwareManualMode) _publishTwist(0, 0);
+    if (state.value.isConnected) _publishTwist(0, 0);
   }
 
   /// Güncel ROS kaynaklarında genel string donanım komut topic'i yoktur.
@@ -960,7 +993,7 @@ class RosBridgeClient {
     _robotStatusStaleTimer = null;
     _manualLinear = 0;
     _manualAngular = 0;
-    _hardwareManualMode = false;
+    _robotStatusFresh = false;
     _generation++;
     _subscription?.cancel();
     _subscription = null;
@@ -1006,6 +1039,7 @@ class RosBridgeClient {
   void _clearMappingPreviewCallbacks() {
     onMappingStatus?.call(null);
     onLocalizationStatus?.call(null);
+    onSafetyState?.call(null);
     onDemoStatus?.call(null);
     onObstacleDetected?.call(null);
     onBuzzerState?.call(null);
@@ -1038,7 +1072,7 @@ class RosBridgeClient {
       await _closeSink(channel);
     }
     _channel = null;
-    _hardwareManualMode = false;
+    _robotStatusFresh = false;
     _failPendingServiceCalls('ROS bağlantısı kapatıldı');
     onRobotStatus?.call(const <String, dynamic>{});
     _clearOccupancyCallbacks();
