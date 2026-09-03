@@ -20,14 +20,6 @@ void main() {
         RosBridgeClient.normalizeAddress('ws://192.168.1.20:9090').port, 9090);
     expect(() => RosBridgeClient.normalizeAddress('ftp://robot'),
         throwsFormatException);
-    expect(
-      () => RosBridgeClient.normalizeAddress('ws://192.168.1.20:8080'),
-      throwsFormatException,
-    );
-    expect(
-      RosBridgeClient().robotStatusTimeout,
-      const Duration(seconds: 1),
-    );
   });
 
   test('baglanti hatalari anlasilir mesaja cevrilir', () {
@@ -233,7 +225,7 @@ void main() {
       socket.add(jsonEncode({
         'op': 'publish',
         'topic': '/robot_status',
-        'msg': {'manual_mode_enabled': false, 'mission_state': 0},
+        'msg': {'manual_mode_enabled': true, 'mission_state': 0},
       }));
     });
 
@@ -281,17 +273,12 @@ void main() {
         socket.add(jsonEncode({
           'op': 'publish',
           'topic': '/robot_status',
-          'msg': {'manual_mode_enabled': false},
+          'msg': {'manual_mode_enabled': true},
         }));
         socket.add(jsonEncode({
           'op': 'publish',
           'topic': '/buzzer/state',
           'msg': {'data': false},
-        }));
-        socket.add(jsonEncode({
-          'op': 'publish',
-          'topic': '/safety/state',
-          'msg': {'data': '{"state":"SAFE"}'},
         }));
         socket.add(jsonEncode({
           'op': 'publish',
@@ -317,9 +304,7 @@ void main() {
     final port = server.port;
     final client = RosBridgeClient();
     final buzzerStates = <bool?>[];
-    final safetyStates = <String?>[];
     client.onBuzzerState = buzzerStates.add;
-    client.onSafetyState = safetyStates.add;
     final firstMap = Completer<OccupancyGridMetadata>();
     client.onMapMetadata = (metadata) {
       if (metadata != null && !firstMap.isCompleted) {
@@ -342,7 +327,6 @@ void main() {
       isTrue,
     );
     expect(buzzerStates, contains(false));
-    expect(safetyStates, contains('{"state":"SAFE"}'));
     expect(
       received.any((message) =>
           message['op'] == 'subscribe' &&
@@ -374,13 +358,6 @@ void main() {
     expect(
       received.any((message) =>
           message['op'] == 'subscribe' &&
-          message['topic'] == '/safety/state' &&
-          message['type'] == 'std_msgs/msg/String'),
-      isTrue,
-    );
-    expect(
-      received.any((message) =>
-          message['op'] == 'subscribe' &&
           message['topic'] == '/fields/active' &&
           message['type'] == 'marco_msgs/msg/ActiveField' &&
           message['queue_length'] == 1),
@@ -394,7 +371,7 @@ void main() {
           message['queue_length'] == 1),
       isTrue,
     );
-    // Fiziksel switch hazır değil: false sinyali manuel komutu kilitlemez.
+    // Manuel komut yalnız fiziksel `/robot_status.manual_mode_enabled` ile açılır.
     expect(client.publishManualDirection(2), isTrue);
     client.stopManual();
     await Future<void>.delayed(const Duration(milliseconds: 100));

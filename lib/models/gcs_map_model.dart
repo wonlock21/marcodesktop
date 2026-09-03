@@ -129,7 +129,6 @@ class GcsMapData {
   final double robotX;
   final double robotY;
   final double robotYaw;
-  final bool robotVisible;
 
   /// Sabit ve dinamik harita noktaları.
   final List<MapPoint> points;
@@ -150,7 +149,6 @@ class GcsMapData {
     this.robotX = 0.0,
     this.robotY = 0.0,
     this.robotYaw = 0.0,
-    this.robotVisible = true,
     this.points = const [],
     this.routes = const [],
     this.zones = const [],
@@ -162,7 +160,6 @@ class GcsMapData {
     double? robotX,
     double? robotY,
     double? robotYaw,
-    bool? robotVisible,
     List<MapPoint>? points,
     List<MapRoute>? routes,
     List<MapZone>? zones,
@@ -174,7 +171,6 @@ class GcsMapData {
         robotX: robotX ?? this.robotX,
         robotY: robotY ?? this.robotY,
         robotYaw: robotYaw ?? this.robotYaw,
-        robotVisible: robotVisible ?? this.robotVisible,
         points: points ?? this.points,
         routes: routes ?? this.routes,
         zones: zones ?? this.zones,

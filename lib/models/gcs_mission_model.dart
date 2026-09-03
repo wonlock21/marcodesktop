@@ -30,9 +30,6 @@ enum GorevAsama {
   /// Bırakma noktasında yük indiriliyor.
   yukBirakma,
 
-  /// Görev sonunda başlangıç/bekleme noktasına dönülüyor.
-  baslangicaDonuyor,
-
   /// Görev başarıyla tamamlandı.
   tamamlandi,
 
@@ -68,7 +65,6 @@ extension GorevAsamaExt on GorevAsama {
         GorevAsama.yukluHareket => 'Yüklü Hareket',
         GorevAsama.kapiIzniBekleniyor => 'Kapı İzni Bekleniyor',
         GorevAsama.yukBirakma => 'Yük Bırakma',
-        GorevAsama.baslangicaDonuyor => 'Başlangıca Dönüyor',
         GorevAsama.tamamlandi => 'Görev Tamamlandı',
         GorevAsama.hata => 'Hata',
         GorevAsama.acilStop => 'Acil Stop',
@@ -99,7 +95,6 @@ extension GorevAsamaExt on GorevAsama {
         GorevAsama.yukluHareket => 'Kapı iznini bekle',
         GorevAsama.kapiIzniBekleniyor => 'Geçiş izni alındıktan sonra ilerle',
         GorevAsama.yukBirakma => 'Yükü bırak ve başlangıca dön',
-        GorevAsama.baslangicaDonuyor => 'Başlangıç noktasına ilerle',
         GorevAsama.tamamlandi => 'Yeni görev bekleniyor',
         GorevAsama.hata => 'Operatör müdahalesi bekleniyor',
         GorevAsama.acilStop => 'Operatör müdahalesi bekleniyor',
@@ -111,7 +106,7 @@ extension GorevAsamaExt on GorevAsama {
         GorevAsama.iptalEdildi => 'Operatör müdahalesi gerekli',
       };
 
-  /// İlerleme çubuğundaki index (0–7). -1 = hata/stop/bosta.
+  /// İlerleme çubuğundaki index (0–6). -1 = hata/stop/bosta.
   int get adimSirasi => switch (this) {
         GorevAsama.gorevAlindi => 0,
         GorevAsama.yuksuzHareket => 1,
@@ -123,8 +118,7 @@ extension GorevAsamaExt on GorevAsama {
         GorevAsama.kapiIzniBekleniyor => 4,
         GorevAsama.yukBirakma => 5,
         GorevAsama.yukBirakiliyor => 5,
-        GorevAsama.baslangicaDonuyor => 6,
-        GorevAsama.tamamlandi => 7,
+        GorevAsama.tamamlandi => 6,
         _ => -1,
       };
 }

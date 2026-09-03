@@ -10,8 +10,6 @@ import 'models/gcs_field_graph_model.dart';
 import 'models/gcs_mapping_model.dart';
 import 'models/gcs_mission_model.dart';
 import 'models/gcs_node_model.dart';
-import 'models/gcs_robot_telemetry_model.dart';
-import 'models/gcs_station_approach_model.dart';
 import 'models/gcs_event_log_model.dart';
 import 'models/gcs_alarm_model.dart';
 import 'parameter_model.dart';
@@ -19,7 +17,6 @@ import 'qr_page.dart';
 import 'node_teach_page.dart';
 import 'route_edit_page.dart';
 import 'saved_fields_page.dart';
-import 'station_approach_page.dart';
 import 'vehicle_3d_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -37,8 +34,6 @@ void main() {
         ChangeNotifierProvider(create: (_) => DataModel()),
         ChangeNotifierProvider(create: (_) => ParameterModel()),
         ChangeNotifierProvider(create: (_) => AgvSensorModel()),
-        ChangeNotifierProvider(create: (_) => GcsRobotTelemetryModel()),
-        ChangeNotifierProvider(create: (_) => GcsStationApproachModel()),
         // ── Yeni GCS modeller ─────────────────────────────────────────────
         ChangeNotifierProvider(create: (_) => GcsConnectionModel()),
         ChangeNotifierProvider(create: (_) => GcsMappingModel()),
@@ -107,7 +102,6 @@ class MyApp extends StatelessWidget {
             '3d-page': (context) => const Vehicle3DPage(),
             'map-page': (context) => const MapPage(),
             'saved-fields-page': (context) => const SavedFieldsPage(),
-            'station-approach-page': (context) => const StationApproachPage(),
             'node-teach-page': (context) => const NodeTeachPage(),
             'route-edit-page': (context) => const RouteEditPage(),
             'QR-page': (context) => const QRPage(),

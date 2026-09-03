@@ -19,7 +19,6 @@ class GcsMappingModel extends ChangeNotifier {
 
   LocalizationStatus? localizationStatus;
   String localizationMessage = '';
-  bool localizationStatusStale = true;
 
   DemoStatus? demoStatus;
   String demoMessage = '';
@@ -82,11 +81,6 @@ class GcsMappingModel extends ChangeNotifier {
   /// Canlı (stale olmayan) mapping status — kopuk last-good kapıları etkilemez.
   MappingStatus? get liveMappingStatus =>
       (mappingStatus != null && !mappingStatusStale) ? mappingStatus : null;
-
-  LocalizationStatus? get liveLocalizationStatus =>
-      (localizationStatus != null && !localizationStatusStale)
-          ? localizationStatus
-          : null;
 
   /// Dialog açılabilir mi? (bağlı + IDLE|ERROR; saha adı dialogda sorulur).
   bool get canPromptStartMapping {
@@ -341,14 +335,9 @@ class GcsMappingModel extends ChangeNotifier {
   }
 
   void applyLocalizationStatus(LocalizationStatusSnapshot? snap) {
-    if (snap == null) {
-      localizationStatusStale = true;
-      notifyListeners();
-      return;
-    }
+    if (snap == null) return;
     localizationStatus = snap.status;
     localizationMessage = snap.message;
-    localizationStatusStale = false;
     final statusField = snap.fieldName.trim();
     switch (snap.status) {
       case LocalizationStatus.starting:
@@ -448,12 +437,9 @@ class GcsMappingModel extends ChangeNotifier {
     final wasConnected = isConnected;
     connectionStatus = state.status;
     connectionMessage = state.message;
-    if (!state.isConnected) {
+    if (!state.isConnected && wasConnected) {
       // Status'u ERROR'a çekme; last-good stale işaretle.
       mappingStatusStale = true;
-      localizationStatusStale = true;
-    }
-    if (!state.isConnected && wasConnected) {
       final waiter = _mappingSavedWaiter;
       if (waiter != null && !waiter.isCompleted) {
         waiter.completeError(
@@ -466,17 +452,11 @@ class GcsMappingModel extends ChangeNotifier {
 
   void onSubscriptionsReady() {
     awaitingFreshPreview = true;
-    mappingStatusStale = true;
-    localizationStatusStale = true;
     notifyListeners();
   }
 
   void applyMappingStatus(MappingStatusSnapshot? snap) {
-    if (snap == null) {
-      mappingStatusStale = true;
-      notifyListeners();
-      return;
-    }
+    if (snap == null) return;
     mappingStatus = snap.status;
     mappingMessage = snap.message;
     mappingStatusStale = false;
@@ -575,7 +555,6 @@ class GcsMappingModel extends ChangeNotifier {
     finishInFlight = false;
     localizationStatus = null;
     localizationMessage = '';
-    localizationStatusStale = true;
     activeLocalizedField = null;
     pendingLocalizedField = null;
     localizationInFlight = false;

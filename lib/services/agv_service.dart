@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../models/field_graph_models.dart';
-import '../models/station_approach_models.dart';
 import 'ros_bridge_client.dart';
 
 class AgvService {
@@ -121,20 +120,6 @@ class AgvService {
       ros.archiveField(fieldName);
 
   static Future<Map<String, dynamic>> getActiveField() => ros.getActiveField();
-
-  static Future<Map<String, dynamic>> getStationApproachConfigs(
-    String fieldName,
-  ) =>
-      ros.getStationApproachConfigs(fieldName);
-
-  static Future<Map<String, dynamic>> saveStationApproachConfig({
-    required String fieldName,
-    required StationApproachConfig config,
-  }) =>
-      ros.saveStationApproachConfig(
-        fieldName: fieldName,
-        config: config.toRosJson(),
-      );
 
   static Future<Map<String, dynamic>> startLocalization({
     required String fieldName,
