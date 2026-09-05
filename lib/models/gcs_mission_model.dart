@@ -179,6 +179,53 @@ class GcsMissionModel extends ChangeNotifier {
       robotStatus?.estopActive == false &&
       robotStatus?.obstacleDetected == false;
 
+  /// Explain command locks; local scenario editing does not use these gates.
+  String? submitBlockReason(GcsFieldGraphModel graph) {
+    if (!connected) {
+      return 'ROS bağlantısı yok. Senaryo hazırlayabilir ve cihazda kaydedebilirsiniz; göndermek için bağlanın.';
+    }
+    if (!statusFresh) return 'Güncel robot durumu bekleniyor.';
+    if (commandPending) return 'ROS yanıtı bekleniyor: $pendingCommand';
+    if (!canSubmit) {
+      return 'ROS üzerinde hazırlanmış veya çalışan görev var; önce onu başlatın ya da iptal edin.';
+    }
+    if (!graph.hasSelectedField) {
+      return 'Önce Kayıtlı Haritalar’dan saha seçin.';
+    }
+    if (!graph.graphFresh) {
+      return 'Seçili saha grafiği güncel değil; yeniden yükleyin.';
+    }
+    if (!graph.activeFresh) return 'ROS aktif saha bilgisi bekleniyor.';
+    if (!graph.selectedFieldIsActive ||
+        graph.activeField?.fieldName != graph.selectedFieldName) {
+      return 'Seçili saha aktif değil; saha rotasını doğrulayıp aktifleştirin.';
+    }
+    if (graph.packageStatus?.packageHash != graph.activeField?.packageHash ||
+        robotStatus?.activeFieldHash != graph.activeField?.packageHash) {
+      return 'Robot ve saha paketi hash bilgileri eşleşmiyor; saha durumunu yenileyin.';
+    }
+    if (robotStatus?.activeFieldReady != true) {
+      return 'Robot aktif saha paketini henüz hazır olarak bildirmedi.';
+    }
+    return null;
+  }
+
+  String? get startBlockReason {
+    if (readyToStart) return null;
+    if (!connected) return 'ROS bağlantısı yok.';
+    if (!statusFresh) return 'Güncel robot durumu bekleniyor.';
+    if (commandPending) return 'ROS yanıtı bekleniyor: $pendingCommand';
+    if (robotStatus?.estopActive == true) return 'Acil durdurma aktif.';
+    if (robotStatus?.obstacleDetected == true) return 'Engel algılandı.';
+    if (robotStatus?.localizationValid != true) {
+      return 'Lokalizasyon geçerli değil.';
+    }
+    if (robotStatus?.activeFieldReady != true) {
+      return 'Aktif saha robotta hazır değil.';
+    }
+    return 'Önce Görevi Hazırla / Submit ile gönderin ve ROS hazır görevini bekleyin.';
+  }
+
   void applyConnection(bool value) {
     if (connected == value) return;
     connected = value;
@@ -241,20 +288,8 @@ class GcsMissionModel extends ChangeNotifier {
       {required GcsFieldGraphModel graph,
       required List<FieldNode> stops,
       required bool returnHome}) async {
-    if (!canSubmit) {
-      throw StateError(
-          'Görev hazırlama zaten sürüyor veya ROS görevi boşta değil');
-    }
-    if (!graph.graphFresh ||
-        !graph.activeFresh ||
-        !graph.selectedFieldIsActive ||
-        graph.activeField?.fieldName != graph.selectedFieldName ||
-        graph.packageStatus?.packageHash != graph.activeField?.packageHash ||
-        robotStatus?.activeFieldReady != true ||
-        robotStatus?.activeFieldHash != graph.activeField?.packageHash) {
-      throw StateError(
-          'Görev için ROS ile eşleşen aktif saha grafiğini yükleyin');
-    }
+    final blocked = submitBlockReason(graph);
+    if (blocked != null) throw StateError(blocked);
     if (stops.length < 2 || stops.length.isOdd) {
       throw StateError('Alma/bırakma çiftleri seçin');
     }

@@ -42,14 +42,11 @@ class _ProductionMissionPageState extends State<ProductionMissionPage> {
     }
     if (!pickups.any((n) => n.nodeId == pickup)) pickup = null;
     if (!dropoffs.any((n) => n.nodeId == dropoff)) dropoff = null;
-    final editable = mission.connected &&
-        mission.statusFresh &&
-        !mission.commandPending &&
-        graph.graphFresh &&
-        graph.selectedFieldIsActive;
+    // Selection is a local draft operation, including while disconnected.
+    final editable = graph.nodes.isNotEmpty;
     final status = mission.robotStatus;
     return Scaffold(
-      appBar: AppBar(title: const Text('Production Görev / İzleme')),
+      appBar: AppBar(title: const Text('Görev İzleme')),
       body: ListView(padding: const EdgeInsets.all(16), children: [
         Text(
             mission.statusFresh
@@ -105,13 +102,17 @@ class _ProductionMissionPageState extends State<ProductionMissionPage> {
                       onChanged: editable
                           ? (v) => setState(() => returnHome = v)
                           : null),
+                  if (mission.submitBlockReason(graph) case final reason?)
+                    Text('Gönderme: $reason'),
+                  if (mission.startBlockReason case final reason?)
+                    Text('Başlatma: $reason'),
                   Wrap(spacing: 12, runSpacing: 8, children: [
                     FilledButton(
                         key: const Key('mission-submit'),
                         onPressed: editable &&
                                 pickup != null &&
                                 dropoff != null &&
-                                mission.canSubmit
+                                mission.submitBlockReason(graph) == null
                             ? () => command(() => mission.submit(
                                 graph: graph,
                                 stops: [

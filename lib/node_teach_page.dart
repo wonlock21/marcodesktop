@@ -10,7 +10,8 @@ import 'models/field_graph_models.dart';
 import 'models/gcs_field_graph_model.dart';
 import 'models/gcs_mapping_model.dart';
 import 'models/gcs_node_model.dart';
-import 'production_mission_page.dart';
+import 'scenerio_page.dart';
+import 'data_model.dart';
 import 'services/agv_service.dart';
 import 'services/ros_mapping_contract.dart';
 import 'widgets/map_preview_stage.dart';
@@ -354,7 +355,10 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
     await Navigator.push<String>(
       context,
       MaterialPageRoute(
-        builder: (_) => const ProductionMissionPage(),
+        builder: (_) => ScenarioPage(
+            dataPoints: context.read<DataModel>().dataPoints,
+            site: AgvService.ros.url,
+            rota: ''),
       ),
     );
   }

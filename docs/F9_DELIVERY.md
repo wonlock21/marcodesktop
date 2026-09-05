@@ -131,7 +131,7 @@ sürümleri yükseltilmedi.
 |---|---|---|
 | dart format | PASS | Değişen/yeni 26 Dart dosyası formatlandı |
 | flutter analyze --no-pub | PASS | No issues found |
-| flutter test --no-pub | PASS | 75 geçti; 1 gerçek ROS testi ROS_BRIDGE_URL yok diye atlandı |
+| flutter test --no-pub | PASS | Senaryo ekranı düzeltmesi sonrası 78 geçti; 1 gerçek ROS testi ROS_BRIDGE_URL yok diye atlandı |
 | flutter build windows --no-pub | ENVIRONMENT UNSUPPORTED | İlk deneme Windows host gerektiriyor dedi; son kullanıcı talimatıyla Windows doğrulaması kullanıcıya bırakıldı |
 | flutter build apk --debug --no-pub | ENVIRONMENT UNSUPPORTED | Araç indirmeleri tamamlandı; Linux Android SDK bulunamadı. APK üretilmedi |
 
@@ -192,7 +192,9 @@ Windows build, kullanıcının son talimatına göre bu görevin blocker'ı değ
 9. Doğrula; tüm hataları/uyarıları kaydırıp incele. Değişiklik sonrası tekrar doğrula.
 10. Robot durmuş, mapping kapalı, görev yok ve durumlar güncelken Aktifleştir.
     Gerçek active field adı, package version/hash ve robot ready bilgisini doğrula.
-11. Görev / İzleme ekranında aktif graph'ı yükle; pickup/dropoff ve return home seç.
+11. Ana Senaryo ekranında aktif graph'tan alma/bırakma duraklarını sırayla seç;
+    birden çok çift ve başlangıca dönüş desteklenir. Yerel taslağı bağlantı olmadan
+    da düzenleyip Senaryoyu Kaydet ile cihazda saklayabilirsin. Bu kayıt ROS submit değildir.
 12. Görevi Hazırla / Submit'e bas. Gerçek ROS hazır görevini gör; ayrıca Başlat / Start'a bas.
 13. Görev/rota, gate yön/entry/crossing/izin, QR/armed/rejection, docking süre/kamera/
     lane/stopped/error ve mission event'lerini izle. Tamamlanma ROS event'inden görülür.
@@ -200,3 +202,18 @@ Windows build, kullanıcının son talimatına göre bu görevin blocker'ı değ
     Bağlantı koparsa eski durumdan hareket/başarı sonucu çıkarma; yeniden senkronizasyonu bekle.
 
 Bu kart istenen 38 adımın GUI karşılıklarını kapsar; fiziksel koşu kanıtı değildir.
+
+## Senaryo ekranı düzeltmesi
+
+Ana Senaryo tuşu ve Düğümler ekranındaki Senaryoya geç, mevcut görsel senaryo
+editörünü açar. Harita üzerinde durak seçme, çoklu alma/bırakma çiftleri, geri alma,
+sıfırlama ve taslak kaydetme korunur. Saha başına yerel taslak yeniden açılışta
+yüklenir. Görev İzleme, senaryo ekranının üst çubuğundan ayrı açılır.
+
+ROS bağlantısı ve aktif saha koşulları yerel düzenlemeyi kilitlemez. Yalnız
+Görevi Hazırla ve Başlat için ortak mission state koşulları uygulanır;
+engelleyen neden ekranda görünür. Submit sonrasında otomatik Start çağrılmaz.
+Yerel harita noktaları production graph düğümü yerine gönderilemez.
+
+Bu düzeltmede format ve analyze temiz; tam test paketi 78 PASS / 1 SKIP.
+Windows build kullanıcıya bırakıldı; önceki donanım kabul sınırları devam eder.

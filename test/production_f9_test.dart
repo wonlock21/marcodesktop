@@ -16,6 +16,8 @@ import 'package:liftant_v2_bitirme/models/gcs_mission_model.dart';
 import 'package:liftant_v2_bitirme/models/gcs_event_log_model.dart';
 import 'package:liftant_v2_bitirme/models/robot_status.dart';
 import 'package:liftant_v2_bitirme/production_mission_page.dart';
+import 'package:liftant_v2_bitirme/scenerio_page.dart';
+import 'package:liftant_v2_bitirme/data_model.dart';
 import 'package:liftant_v2_bitirme/services/angles.dart';
 import 'package:liftant_v2_bitirme/services/field_graph_repository.dart';
 import 'package:liftant_v2_bitirme/services/ros_bridge_client.dart';
@@ -365,6 +367,147 @@ void main() {
       await socket.close();
     }
     await server.close(force: true);
+  });
+  testWidgets('original scenario edits and saves offline without ROS commands',
+      (tester) async {
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final graph = GcsFieldGraphModel();
+    final client = Client();
+    final mission = GcsMissionModel(client: client);
+    Widget screen() => MultiProvider(
+            providers: [
+              ChangeNotifierProvider.value(value: graph),
+              ChangeNotifierProvider.value(value: mission),
+            ],
+            child: ScreenUtilInit(
+                designSize: const Size(390, 844),
+                builder: (_, __) => MaterialApp(
+                        home: ScenarioPage(
+                      dataPoints: [
+                        DataPoint(type: 'pickupPointLOCAL_PICK', x: 2, y: 3),
+                        DataPoint(type: 'dropoffPointLOCAL_DROP', x: 20, y: 10)
+                      ],
+                      site: '',
+                      rota: '',
+                    ))));
+    await tester.pumpWidget(screen());
+    await tester.pumpAndSettle();
+    expect(find.text('SENARYO OLUŞTURMA'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('scenario-station-LOCAL_PICK')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('scenario-station-LOCAL_DROP')));
+    await tester.pump();
+    await tester.tap(find.text('SENARYOYU KAYDET').first);
+    await tester.pumpAndSettle();
+    final prefs = await SharedPreferences.getInstance();
+    final draft = jsonDecode(prefs.getString('scenarioDraft:local')!);
+    expect(draft['stops'], ['LOCAL_PICK', 'LOCAL_DROP']);
+    expect(client.calls, isEmpty);
+    expect(
+        tester
+            .widget<OutlinedButton>(find.byKey(const Key('scenario-submit')))
+            .onPressed,
+        isNull);
+    expect(
+        tester
+            .widget<OutlinedButton>(find.byKey(const Key('scenario-start')))
+            .onPressed,
+        isNull);
+    expect(find.textContaining('Robota görev gönderilmedi'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(screen());
+    await tester.pumpAndSettle();
+    expect(find.text('LOCAL_PICK → LOCAL_DROP'), findsOneWidget);
+    await tester.tap(find.text('GERİ AL'));
+    await tester.pump();
+    expect(find.text('LOCAL_PICK → LOCAL_DROP'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    graph.dispose();
+    mission.dispose();
+    await client.dispose();
+  });
+  testWidgets(
+      'original scenario submits multiple pairs and starts only explicitly',
+      (tester) async {
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final graph = await graphModel();
+    final client = Client();
+    final mission = GcsMissionModel(client: client)
+      ..applyConnection(true)
+      ..applyStatus(status());
+    await tester.pumpWidget(MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: graph),
+          ChangeNotifierProvider.value(value: mission)
+        ],
+        child: ScreenUtilInit(
+            designSize: const Size(390, 844),
+            builder: (_, __) => const MaterialApp(
+                home: ScenarioPage(dataPoints: [], site: '', rota: '')))));
+    await tester.pumpAndSettle();
+    for (final name in [
+      'custom_pickup',
+      'custom_dropoff',
+      'custom_pickup',
+      'custom_dropoff'
+    ]) {
+      await tester.tap(find.byKey(ValueKey('scenario-station-$name')));
+      await tester.pump();
+    }
+    await tester.tap(find.byKey(const Key('scenario-submit')));
+    await tester.pumpAndSettle();
+    expect(client.submitted!['route_nodes'],
+        ['custom_pickup', 'custom_dropoff', 'custom_pickup', 'custom_dropoff']);
+    expect(client.calls, ['submit']);
+    mission.applyStatus(status(state: 1, task: client.submitted!['task_id']));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('scenario-start')));
+    await tester.pumpAndSettle();
+    expect(client.calls, ['submit', 'start']);
+    await tester.pumpWidget(const SizedBox());
+    graph.dispose();
+    mission.dispose();
+    await client.dispose();
+  });
+  testWidgets('cached graph permits scenario selection while disconnected',
+      (tester) async {
+    tester.view.physicalSize = const Size(1400, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final graph = await graphModel();
+    graph.applyConnection(false);
+    final client = Client();
+    final mission = GcsMissionModel(client: client);
+    final events = GcsEventLogModel();
+    await tester.pumpWidget(MultiProvider(providers: [
+      ChangeNotifierProvider.value(value: graph),
+      ChangeNotifierProvider.value(value: mission),
+      ChangeNotifierProvider.value(value: events)
+    ], child: const MaterialApp(home: ProductionMissionPage())));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(DropdownButtonFormField<int>).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('WAREHOUSE · custom_pickup').last);
+    await tester.pumpAndSettle();
+    expect(client.calls, isEmpty);
+    expect(
+        tester
+            .widget<FilledButton>(find.byKey(const Key('mission-submit')))
+            .onPressed,
+        isNull);
+    expect(find.textContaining('Gönderme: ROS bağlantısı yok'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    graph.dispose();
+    mission.dispose();
+    events.dispose();
+    await client.dispose();
   });
   testWidgets('production submit and start are separate buttons, no init start',
       (tester) async {

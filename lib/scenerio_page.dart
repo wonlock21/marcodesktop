@@ -1,12 +1,15 @@
+import 'dart:async';
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 
 import 'data_model.dart';
 import 'models/gcs_field_graph_model.dart';
-import 'models/gcs_node_model.dart';
+import 'models/field_graph_models.dart';
+import 'models/gcs_mission_model.dart';
 import 'production_mission_page.dart';
-import 'services/ros_gcs_contract.dart';
 import 'services/ros_mapping_contract.dart';
 
 // ─── Renk sabitleri (ana GCS ekranıyla birebir) ────────────────────────────
@@ -60,109 +63,121 @@ class _ScenarioPageState extends State<ScenarioPage> {
   final List<String> _selected = [];
   final Map<String, String> _nodeByLabel = {};
   final Map<String, Offset> _stationPositions = {};
-  final List<String> _unsupportedMissionPoints = [];
+  final Map<String, FieldNode> _graphNodes = {};
+  final Map<String, Offset> _mapPositions = {};
+  final Map<String, String> _qrByLabel = {};
+  bool _returnHome = true;
+  bool _savingDraft = false;
+  int _draftRevision = 0;
+  String? _draftKey;
   List<String> get _allPlaces => _nodeByLabel.keys.toList(growable: false);
   String arota = "";
   bool senaryoIsDone = false;
   String? _hoveredCode; // hover efekti için
 
-  final Map<String, String> _qrMap = const {
-    'A1': 'QA1.1',
-    'A2': 'QA2.1',
-    'A3': 'QA3.1',
-    'A4': 'QA4.1',
-    'B1': 'QB1.1',
-    'B2': 'QB2.1',
-    'B3': 'QB3.1',
-    'B4': 'QB4.1',
-    'S1': 'S1.1',
-    'S2': 'S2.1',
-    'CS': 'CS1.1',
-  };
-
-  /// F.3 — öğretilmiş düğüm türü (etiket → tip); legacy A/B için boş.
   final Map<String, FieldNodeType> _taughtTypeByLabel = {};
   final Set<String> _taughtLabels = {};
-  bool _taughtMerged = false;
 
   @override
   void initState() {
     super.initState();
-    senaryoIsDone = widget.rota.isNotEmpty;
+    arota = widget.rota;
   }
 
-  void _loadLegacyDataPoints() {
-    for (final point in widget.dataPoints) {
-      final node = RosGcsContract.nodeForPoint(point);
-      if (node == null &&
-          (point.type.startsWith('pickupPoint') ||
-              point.type.startsWith('dropoffPoint'))) {
-        _unsupportedMissionPoints.add(_mapPointLabel(point));
-      }
-      if (node == null ||
-          (!node.startsWith('alma_') && !node.startsWith('birak_'))) {
+  /// Planning remains available offline. Only actual ROS graph nodes can be submitted.
+  void _syncPlaces(GcsFieldGraphModel graph) {
+    final key = 'scenarioDraft:${graph.selectedFieldName ?? "local"}';
+    if (_draftKey != key) {
+      _draftKey = key;
+      _draftRevision++;
+      _selected.clear();
+      arota = '';
+      senaryoIsDone = false;
+      final revision = _draftRevision;
+      unawaited(_loadDraft(key, revision));
+    }
+    _nodeByLabel.clear();
+    _stationPositions.clear();
+    _taughtTypeByLabel.clear();
+    _taughtLabels.clear();
+    _graphNodes.clear();
+    _mapPositions.clear();
+    _qrByLabel.clear();
+    for (final node in graph.nodes) {
+      if (node.role != FieldNodeRole.pickupDock &&
+          node.role != FieldNodeRole.dropoffDock) {
         continue;
       }
-      final label = RosGcsContract.labelForNode(node);
-      _nodeByLabel.putIfAbsent(label, () => node);
-      final map = RosGcsContract.graphNodes[node]!;
-      _stationPositions[label] = Offset(
-        (map.dx + 4) * 1.25,
-        (3 - map.dy) * 1.5,
-      );
-    }
-    if (_unsupportedMissionPoints.isNotEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(
-            '${_unsupportedMissionPoints.join(', ')} ROS rota dosyasinda tanimli degil; gorevde kullanilamaz.',
-          ),
-        ));
-      });
-    }
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_taughtMerged) return;
-    _taughtMerged = true;
-    final graph = context.read<GcsFieldGraphModel>();
-    if (!graph.hasSelectedField) _loadLegacyDataPoints();
-    _mergeTaughtNodes(context.read<GcsNodeModel>());
-  }
-
-  /// Seçili kanonik sahanın kalıcı alma/bırakma düğümlerini projekte eder.
-  void _mergeTaughtNodes(GcsNodeModel model) {
-    var layoutIndex = 0;
-    for (final node in model.routeEligibleNodes) {
       final label = node.name;
-      final isNew = !_nodeByLabel.containsKey(label);
-      // Aynı etiket varsa legacy ROS node id korunur; tür yine öğretilmişten gelir.
-      _nodeByLabel.putIfAbsent(label, () => node.name);
-      _taughtTypeByLabel[label] = node.type;
+      _nodeByLabel[label] = node.name;
+      _graphNodes[label] = node;
+      _mapPositions[label] = Offset(node.pose.x, node.pose.y);
+      _taughtTypeByLabel[label] = node.role == FieldNodeRole.pickupDock
+          ? FieldNodeType.alma
+          : FieldNodeType.birakma;
       _taughtLabels.add(label);
-      if (isNew || !_stationPositions.containsKey(label)) {
-        _stationPositions[label] = Offset(
-          1.5 + (layoutIndex % 4) * 2.5,
-          6.5 + (layoutIndex ~/ 4) * 1.5,
-        );
-        layoutIndex++;
+      for (final config in graph.stationConfigs) {
+        if (config.stationNodeId == node.nodeId) {
+          _qrByLabel[label] = config.approachQrId;
+        }
       }
     }
+    if (_graphNodes.isEmpty && !graph.hasSelectedField) {
+      for (final point in widget.dataPoints) {
+        final pickup = point.type.startsWith('pickupPoint');
+        final dropoff = point.type.startsWith('dropoffPoint');
+        if (!pickup && !dropoff) continue;
+        final label = _mapPointLabel(point);
+        _nodeByLabel[label] = point.rosNodeName ?? '';
+        _taughtTypeByLabel[label] =
+            pickup ? FieldNodeType.alma : FieldNodeType.birakma;
+        // Local editor coordinates are only a draft visualization.
+        _stationPositions[label] =
+            Offset(1 + point.x / 28 * 8, 1 + point.y / 16 * 7);
+      }
+    } else if (_graphNodes.isNotEmpty) {
+      final xs = _mapPositions.values.map((p) => p.dx);
+      final ys = _mapPositions.values.map((p) => p.dy);
+      final minX = xs.reduce((a, b) => a < b ? a : b);
+      final maxX = xs.reduce((a, b) => a > b ? a : b);
+      final minY = ys.reduce((a, b) => a < b ? a : b);
+      final maxY = ys.reduce((a, b) => a > b ? a : b);
+      for (final entry in _mapPositions.entries) {
+        _stationPositions[entry.key] = Offset(
+          maxX == minX ? 5 : 1 + (entry.value.dx - minX) / (maxX - minX) * 8,
+          maxY == minY ? 5 : 1 + (maxY - entry.value.dy) / (maxY - minY) * 7,
+        );
+      }
+    }
+  }
+
+  Future<void> _loadDraft(String key, int revision) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted || _draftKey != key || revision != _draftRevision) return;
+    try {
+      final raw = prefs.getString(key);
+      if (raw == null) return;
+      final draft = jsonDecode(raw);
+      if (draft is! Map || draft['stops'] is! List) return;
+      setState(() {
+        _selected.addAll((draft['stops'] as List).whereType<String>());
+        _returnHome = draft['return_home'] != false;
+        arota = _selected.join(' → ');
+        senaryoIsDone = true;
+      });
+    } catch (_) {/* Invalid local draft never becomes a ROS mission. */}
   }
 
   bool _isAlma(String code) {
     final taught = _taughtTypeByLabel[code];
     if (taught != null) return taught == FieldNodeType.alma;
-    return code.startsWith('A');
+    return false;
   }
 
   bool _isBirak(String code) {
     final taught = _taughtTypeByLabel[code];
     if (taught != null) return taught == FieldNodeType.birakma;
-    return code.startsWith('B');
+    return false;
   }
 
   String _mapPointLabel(DataPoint point) {
@@ -186,15 +201,26 @@ class _ScenarioPageState extends State<ScenarioPage> {
       ));
       return;
     }
-    setState(() => _selected.add(code));
+    setState(() {
+      _draftRevision++;
+      _selected.add(code);
+      senaryoIsDone = false;
+      arota = _selected.join(' → ');
+    });
   }
 
   void _undo() {
     if (_selected.isEmpty) return;
-    setState(() => _selected.removeLast());
+    setState(() {
+      _draftRevision++;
+      _selected.removeLast();
+      senaryoIsDone = false;
+      arota = _selected.join(' → ');
+    });
   }
 
   void _reset() => setState(() {
+        _draftRevision++;
         _selected.clear();
         arota = "";
         senaryoIsDone = false;
@@ -202,7 +228,7 @@ class _ScenarioPageState extends State<ScenarioPage> {
 
   void _returnData() => Navigator.pop(context, arota);
 
-  String _displayName(String code) => code == 'CS' ? 'Şarj İstasyonu' : code;
+  String _displayName(String code) => code;
 
   _StationType _tipOf(String code) {
     final taught = _taughtTypeByLabel[code];
@@ -222,14 +248,84 @@ class _ScenarioPageState extends State<ScenarioPage> {
     return _stationTypes['C']!;
   }
 
-  Future<void> _buildScenarioAndSend() async {
-    await Navigator.push(context,
-        MaterialPageRoute(builder: (_) => const ProductionMissionPage()));
+  void _notice(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _saveDraft() async {
+    if (_savingDraft || _selected.isEmpty) return;
+    setState(() => _savingDraft = true);
+    final key = _draftKey!;
+    final revision = _draftRevision;
+    final selection = List<String>.of(_selected);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = await prefs.setString(
+          key, jsonEncode({'stops': selection, 'return_home': _returnHome}));
+      if (!saved) throw StateError('Yerel kayıt tamamlanamadı');
+      if (!mounted) return;
+      if (_draftKey == key && revision == _draftRevision) {
+        setState(() {
+          arota = selection.join(' → ');
+          senaryoIsDone = true;
+        });
+      }
+      _notice(
+          'Senaryo taslağı bu cihazda kaydedildi. Robota görev gönderilmedi.');
+    } catch (error) {
+      _notice('Senaryo kaydedilemedi: $error');
+    } finally {
+      if (mounted) setState(() => _savingDraft = false);
+    }
+  }
+
+  String? _submitReason(GcsFieldGraphModel graph, GcsMissionModel mission) {
+    if (_selected.isEmpty || _selected.length.isOdd) {
+      return 'Göndermek için alma → bırakma çiftlerini tamamlayın.';
+    }
+    for (var i = 0; i < _selected.length; i++) {
+      final node = _graphNodes[_selected[i]];
+      if (node == null ||
+          node.role !=
+              (i.isEven
+                  ? FieldNodeRole.pickupDock
+                  : FieldNodeRole.dropoffDock)) {
+        return 'Bu taslakta ROS saha grafiğine ait olmayan durak var. Göndermek için saha seçip gerçek dock düğümlerini kullanın.';
+      }
+    }
+    return mission.submitBlockReason(graph);
+  }
+
+  Future<void> _sendToRobot() async {
+    final graph = context.read<GcsFieldGraphModel>();
+    final mission = context.read<GcsMissionModel>();
+    final reason = _submitReason(graph, mission);
+    if (reason != null) {
+      _notice(reason);
+      return;
+    }
+    await _runCommand(() => mission.submit(
+        graph: graph,
+        stops: _selected.map((s) => _graphNodes[s]!).toList(),
+        returnHome: _returnHome));
+  }
+
+  Future<void> _runCommand(Future<void> Function() action) async {
+    try {
+      await action();
+    } catch (error) {
+      _notice(error.toString());
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final canSave = _selected.isNotEmpty;
+    final graph = context.watch<GcsFieldGraphModel>();
+    final mission = context.watch<GcsMissionModel>();
+    _syncPlaces(graph);
+    final canSave = _selected.isNotEmpty && !_savingDraft;
 
     return Scaffold(
       backgroundColor: _bg,
@@ -267,7 +363,7 @@ class _ScenarioPageState extends State<ScenarioPage> {
                         _panelLabel(
                           _taughtLabels.isEmpty
                               ? 'YAPILAR'
-                              : 'YAPILAR (harita + öğretilmiş)',
+                              : 'SAHA İSTASYONLARI',
                         ),
                         if (_taughtLabels.isNotEmpty) ...[
                           SizedBox(height: 0.6.h),
@@ -299,7 +395,7 @@ class _ScenarioPageState extends State<ScenarioPage> {
                   ),
                 ),
                 // Alt butonlar
-                _buildBottomActions(canSave),
+                _buildBottomActions(canSave, graph, mission),
               ],
             ),
           ),
@@ -332,6 +428,13 @@ class _ScenarioPageState extends State<ScenarioPage> {
           ),
         ),
         actions: [
+          IconButton(
+              tooltip: 'Görev İzleme',
+              icon: const Icon(Icons.monitor_heart_outlined),
+              onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => const ProductionMissionPage()))),
           // Sıfırla
           _appBarBtn(
             icon: Icons.restart_alt,
@@ -343,9 +446,9 @@ class _ScenarioPageState extends State<ScenarioPage> {
           // Haritayı Kaydet
           _appBarBtn(
             icon: Icons.save_outlined,
-            label: 'HARİTAYI KAYDET',
+            label: 'SENARYOYU KAYDET',
             color: _accent,
-            onTap: canSave ? _buildScenarioAndSend : null,
+            onTap: canSave ? _saveDraft : null,
           ),
           SizedBox(width: 3.w),
         ],
@@ -662,6 +765,7 @@ class _ScenarioPageState extends State<ScenarioPage> {
           final isSelected = _selected.contains(code);
 
           return GestureDetector(
+            key: ValueKey('scenario-station-$code'),
             onTap: () => _addPlace(code),
             child: Container(
               width: 38.w,
@@ -746,17 +850,11 @@ class _ScenarioPageState extends State<ScenarioPage> {
               children: [
                 _infoRow('TİP', _tipOf(last).label),
                 _infoRow('ETİKET', _displayName(last)),
-                _infoRow('QR', _qrMap[last] ?? '--'),
-                _infoRow(
-                    'X KON.',
-                    RosGcsContract.graphNodes[_nodeByLabel[last]]?.dx
-                            .toStringAsFixed(1) ??
-                        '--'),
-                _infoRow(
-                    'Y KON.',
-                    RosGcsContract.graphNodes[_nodeByLabel[last]]?.dy
-                            .toStringAsFixed(1) ??
-                        '--'),
+                _infoRow('QR', _qrByLabel[last] ?? '--'),
+                _infoRow('X KON.',
+                    _mapPositions[last]?.dx.toStringAsFixed(1) ?? '--'),
+                _infoRow('Y KON.',
+                    _mapPositions[last]?.dy.toStringAsFixed(1) ?? '--'),
                 _infoRow('SIRADA', '${_selected.length}. istasyon'),
               ],
             ),
@@ -804,7 +902,7 @@ class _ScenarioPageState extends State<ScenarioPage> {
           borderRadius: BorderRadius.circular(4.r),
         ),
         child: Text(
-          arota.isNotEmpty ? 'v$arota' : '-- Henüz oluşturulmadı --',
+          arota.isNotEmpty ? arota : '-- Henüz oluşturulmadı --',
           textAlign: TextAlign.center,
           style: TextStyle(
             color: arota.isNotEmpty ? _accent : _muted,
@@ -815,7 +913,9 @@ class _ScenarioPageState extends State<ScenarioPage> {
       );
 
   // ── Alt aksiyon butonları ────────────────────────────────────────────────
-  Widget _buildBottomActions(bool canSave) => Container(
+  Widget _buildBottomActions(
+          bool canSave, GcsFieldGraphModel graph, GcsMissionModel mission) =>
+      Container(
         decoration: BoxDecoration(
           color: _panelBg,
           border: Border(top: BorderSide(color: _borderC, width: 0.3.w)),
@@ -825,9 +925,52 @@ class _ScenarioPageState extends State<ScenarioPage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
+            Text(_submitReason(graph, mission) ?? 'ROS’a göndermeye hazır.',
+                key: const Key('scenario-submit-reason'),
+                style: TextStyle(color: _muted, fontSize: 2.6.sp)),
+            if (mission.commandMessage.isNotEmpty)
+              Text(mission.commandMessage,
+                  style: TextStyle(color: _bright, fontSize: 2.6.sp)),
+            if (mission.robotStatus?.routeNodes.isNotEmpty == true)
+              Text('ROS görevi: ${mission.robotStatus!.routeNodes.join(' → ')}',
+                  style: TextStyle(color: _bright, fontSize: 2.6.sp)),
+            SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text('Başlangıca dön',
+                    style: TextStyle(color: _bright, fontSize: 2.8.sp)),
+                value: _returnHome,
+                onChanged: (value) => setState(() {
+                      _draftRevision++;
+                      _returnHome = value;
+                    })),
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              OutlinedButton(
+                  key: const Key('scenario-submit'),
+                  onPressed: _submitReason(graph, mission) == null
+                      ? _sendToRobot
+                      : null,
+                  child: const Text('Görevi Hazırla / Submit')),
+              Tooltip(
+                  message:
+                      mission.startBlockReason ?? 'Hazır ROS görevini başlat',
+                  child: OutlinedButton(
+                      key: const Key('scenario-start'),
+                      onPressed: mission.readyToStart
+                          ? () => _runCommand(mission.start)
+                          : null,
+                      child: const Text('Başlat / Start'))),
+              TextButton(
+                  onPressed: () =>
+                      Navigator.pushNamed(context, 'saved-fields-page'),
+                  child: const Text('Saha seç')),
+            ]),
+            if (mission.startBlockReason != null)
+              Text('Başlat: ${mission.startBlockReason}',
+                  style: TextStyle(color: _muted, fontSize: 2.4.sp)),
+            SizedBox(height: 1.h),
             // Haritayı Kaydet
             GestureDetector(
-              onTap: canSave ? _buildScenarioAndSend : null,
+              onTap: canSave ? _saveDraft : null,
               child: Container(
                 padding: EdgeInsets.symmetric(vertical: 1.6.h),
                 decoration: BoxDecoration(
@@ -845,7 +988,7 @@ class _ScenarioPageState extends State<ScenarioPage> {
                         size: 4.sp, color: canSave ? _accent : _muted),
                     SizedBox(width: 1.5.w),
                     Text(
-                      'HARİTAYI KAYDET',
+                      'SENARYOYU KAYDET',
                       style: TextStyle(
                         color: canSave ? _accent : _muted,
                         fontSize: 3.sp,

@@ -21,7 +21,7 @@ import 'models/gcs_mapping_model.dart';
 import 'models/gcs_mission_model.dart';
 import 'models/gcs_node_model.dart';
 import 'parameter_model.dart';
-import 'production_mission_page.dart';
+import 'scenerio_page.dart';
 import 'services/camera_stream_config.dart';
 import 'services/agv_service.dart';
 import 'services/occupancy_grid_image.dart';
@@ -1078,8 +1078,11 @@ class _ControllerPageState extends State<ControllerPage>
   }
 
   Future<void> _navigateToScenarioPage(List<DataPoint> dataPoints) async {
-    await Navigator.push(context,
-        MaterialPageRoute(builder: (_) => const ProductionMissionPage()));
+    await Navigator.push(
+        context,
+        MaterialPageRoute(
+            builder: (_) =>
+                ScenarioPage(dataPoints: dataPoints, site: _site, rota: '')));
   }
 
   Future<void> _navigateToDataPage(String site) async {
@@ -1375,7 +1378,7 @@ class _ControllerPageState extends State<ControllerPage>
                                       SizedBox(width: 1.5.w),
                                       Expanded(
                                           child: NormalButton(
-                                        text: "Görev / İzleme",
+                                        text: "Senaryo",
                                         assignedKey: LogicalKeyboardKey.keyN,
                                         onPressed: () async {
                                           await _navigateToScenarioPage(

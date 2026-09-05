@@ -72,6 +72,9 @@ yarisma_plani F3/F4/F7A–F8C/F9–F11.
 - `gate_q6` parse/UI, rol çiftinden crossing metadata kontrolü tamamlandı.
 - İstasyon servisleri, typed config, ortak derece dönüşümü ve ROS'a kaydet/yeniden oku akışı eklendi.
 - Production görev seçimi aktif graph dock adlarından gelir; eski senaryonun local/demo fallback submit yolu kapatıldı.
+- Mevcut görsel Senaryo ekranı ana giriş olarak korunur; çevrimdışı çoklu durak
+  seçimi ve saha başına yerel taslak kaydı ROS komut kilitlerinden bağımsızdır.
+  Aynı ekrandaki Hazırla ve Başlat ayrı kullanıcı eylemleridir; Görev İzleme ayrı açılır.
 - Submit, Start, Cancel, Safety Reset ve yazılımsal E-stop ortak mission state üzerinden yürür.
 - Submit kabulü sonrası yeniden submit kilidi, eşleşen ROS hazır görevinden önce Start kilidi ve bağlantı epoch kontrolü eklendi.
 - Graph/active/mapping/robot freshness kapıları, harita/saha eşleşmesi ve yeniden bağlantıdaki istasyon sorguları eklendi.
