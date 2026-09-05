@@ -498,133 +498,6 @@ class _ControllerPageState extends State<ControllerPage>
     }
   }
 
-  Future<void> _startSavedDemo() async {
-    final mapping = _mappingModel;
-    if (!mapping.isConnected) {
-      _showUserError('ROS bağlı değil');
-      return;
-    }
-    if (mapping.localizationStatus != LocalizationStatus.localizing) {
-      _showUserError('Demodan önce lokalizasyon LOCALIZING olmalı');
-      return;
-    }
-    if (!mapping.demoPointsReady) {
-      _showUserError('Demodan önce A ve B noktalarını kaydedin');
-      return;
-    }
-    if (mapping.demoRunning || mapping.demoCommandInFlight) return;
-
-    mapping.beginDemoCommand();
-    try {
-      if (!AgvService.prepareSavedDemoStart()) {
-        throw StateError('ROS bağlı değil; otonom moda geçilemedi');
-      }
-      _connModel.topluGuncelle(
-        manuelMod: false,
-        uzaktanKontrol: false,
-      );
-      final response = await AgvService.startSavedDemo();
-      if (!RosServiceResponse.triggerSucceeded(response)) {
-        throw StateError(RosServiceResponse.failureMessage(
-          response,
-          fallback: 'Demo başlatılamadı',
-        ));
-      }
-      _onMissionEvent(
-        response['message']?.toString().trim().isNotEmpty == true
-            ? response['message'].toString()
-            : 'Demo başlatıldı',
-      );
-    } catch (error) {
-      _showUserError('Demo başlatılamadı: ${_rosServiceUserError(error)}');
-    } finally {
-      mapping.endDemoCommand();
-    }
-  }
-
-  Future<bool> _confirmDemoAreaClear() async {
-    if (!mounted) return false;
-    return await showDialog<bool>(
-          context: context,
-          builder: (dialogContext) => AlertDialog(
-            title: const Text('Hareket alanı güvenli mi?'),
-            content: const Text(
-              'Kullanıcının ve yükü yerleştiren kişinin aracın hareket '
-              'alanından çekildiğini doğrulayın.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('Vazgeç'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text('Alan Boş — Devam Et'),
-              ),
-            ],
-          ),
-        ) ??
-        false;
-  }
-
-  Future<void> _continueDemo() async {
-    final mapping = _mappingModel;
-    if (mapping.demoStatus != DemoStatus.waitingLoad) {
-      _showUserError('Demo şu anda yük onayı beklemiyor');
-      return;
-    }
-    if (mapping.obstacleDetected) {
-      _showUserError('Engel algılandı; devam komutu gönderilemez');
-      return;
-    }
-    if (!await _confirmDemoAreaClear() || !mounted) return;
-    if (!mapping.canContinueDemo) return;
-
-    mapping.beginDemoCommand();
-    try {
-      final response = await AgvService.continueDemo();
-      if (!RosServiceResponse.triggerSucceeded(response)) {
-        throw StateError(RosServiceResponse.failureMessage(
-          response,
-          fallback: 'Demo devam ettirilemedi',
-        ));
-      }
-      _onMissionEvent(
-        response['message']?.toString().trim().isNotEmpty == true
-            ? response['message'].toString()
-            : 'Yük onayı alındı; araç B’ye hareket ediyor',
-      );
-    } catch (error) {
-      _showUserError('Demo devam ettirilemedi: ${_rosServiceUserError(error)}');
-    } finally {
-      mapping.endDemoCommand();
-    }
-  }
-
-  Future<void> _cancelDemo() async {
-    final mapping = _mappingModel;
-    if (!mapping.canCancelDemo) return;
-    mapping.beginDemoCommand();
-    try {
-      final response = await AgvService.cancelDemo();
-      if (!RosServiceResponse.triggerSucceeded(response)) {
-        throw StateError(RosServiceResponse.failureMessage(
-          response,
-          fallback: 'Demo iptal edilemedi',
-        ));
-      }
-      _onMissionEvent(
-        response['message']?.toString().trim().isNotEmpty == true
-            ? response['message'].toString()
-            : 'Demo iptal edildi',
-      );
-    } catch (error) {
-      _showUserError('Demo iptal edilemedi: ${_rosServiceUserError(error)}');
-    } finally {
-      mapping.endDemoCommand();
-    }
-  }
-
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // Pause / arka plan / detach: dead-man — hız sıfır.
@@ -704,71 +577,12 @@ class _ControllerPageState extends State<ControllerPage>
       return;
     }
 
-    final nameController = TextEditingController(
-      text: mapping.fieldName.trim().isEmpty
+    final fieldName = await showMappingFieldNameDialog(
+      context,
+      initialValue: mapping.fieldName.trim().isEmpty
           ? 'saha_01'
           : mapping.fieldName.trim(),
     );
-    final fieldName = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1A1A1A),
-        title: Text(
-          'Saha adı',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 3.sp,
-            fontFamily: 'monospace',
-          ),
-        ),
-        content: TextField(
-          controller: nameController,
-          autofocus: true,
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 2.8.sp,
-            fontFamily: 'monospace',
-          ),
-          cursorColor: const Color(0xFF4A90D9),
-          inputFormatters: [
-            FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9_-]')),
-          ],
-          decoration: InputDecoration(
-            hintText: 'saha_01',
-            hintStyle: const TextStyle(color: Color(0xFF555555)),
-            helperText: 'Yalnız harf, rakam, _ ve -',
-            helperStyle:
-                TextStyle(color: const Color(0xFF666666), fontSize: 2.2.sp),
-            enabledBorder: const OutlineInputBorder(
-              borderSide: BorderSide(color: Color(0xFF333333)),
-            ),
-            focusedBorder: const OutlineInputBorder(
-              borderSide: BorderSide(color: Color(0xFF4A90D9)),
-            ),
-          ),
-          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(
-              'İptal',
-              style:
-                  TextStyle(color: const Color(0xFF888888), fontSize: 2.6.sp),
-            ),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, nameController.text.trim()),
-            child: Text(
-              'Başlat',
-              style:
-                  TextStyle(color: const Color(0xFF4A90D9), fontSize: 2.6.sp),
-            ),
-          ),
-        ],
-      ),
-    );
-    nameController.dispose();
     if (!mounted || fieldName == null) return;
 
     final validationError = RosFieldNameRules.validate(fieldName);
@@ -1335,8 +1149,8 @@ class _ControllerPageState extends State<ControllerPage>
                                     bright,
                                   ),
                                 ),
-                                _buildDemoControlBar(
-                                  mapping,
+                                _buildMissionControlBar(
+                                  mission,
                                   panelBg,
                                   borderC,
                                   muted,
@@ -1353,20 +1167,6 @@ class _ControllerPageState extends State<ControllerPage>
                                     crossAxisAlignment:
                                         CrossAxisAlignment.center,
                                     children: [
-                                      PowerButton(
-                                        labelOff: mission.readyToStart
-                                            ? 'Görevi\nBaşlat'
-                                            : 'Görev\nHazır Değil',
-                                        labelOn: 'Başlatılıyor',
-                                        onPressed: mission.readyToStart
-                                            ? _missionBaslat
-                                            : null,
-                                        onLongPress: mission.statusFresh &&
-                                                !mission.commandPending
-                                            ? _missionIptal
-                                            : null,
-                                      ),
-                                      SizedBox(width: 2.w),
                                       Expanded(
                                           child: NormalButton(
                                         text: mapping.startButtonLabel,
@@ -2744,8 +2544,8 @@ class _ControllerPageState extends State<ControllerPage>
   }
 
   /// Seçili sekmeye göre içerik döndürür.
-  Widget _buildDemoControlBar(
-    GcsMappingModel mapping,
+  Widget _buildMissionControlBar(
+    GcsMissionModel mission,
     Color panelBg,
     Color borderC,
     Color muted,
@@ -2753,12 +2553,14 @@ class _ControllerPageState extends State<ControllerPage>
     Color success,
     Color danger,
   ) {
-    final statusColor =
-        mapping.demoStatus == DemoStatus.complete ? success : bright;
-    final demoStatusText = mapping.demoMessage.trim().isNotEmpty
-        ? mapping.demoMessage.trim()
-        : mapping.demoStatus?.etiket ?? 'Demo durumu bekleniyor';
-    final points = mapping.demoPointsReady ? 'A/B hazır' : 'A/B eksik';
+    final status = mission.robotStatus;
+    final statusColor = mission.statusFresh ? success : muted;
+    final statusText = mission.statusFresh
+        ? '${mission.asama.etiket}${status?.statusDetail.trim().isNotEmpty == true ? ' · ${status!.statusDetail}' : ''}'
+        : 'Görev durumu bekleniyor';
+    final taskText = status?.taskId.trim().isNotEmpty == true
+        ? 'Görev: ${status!.taskId}'
+        : 'Hazırlanmış görev yok';
     return Container(
       padding: EdgeInsets.fromLTRB(3.w, 0.6.h, 3.w, 0.8.h),
       decoration: BoxDecoration(
@@ -2774,14 +2576,14 @@ class _ControllerPageState extends State<ControllerPage>
               SizedBox(width: 1.w),
               Expanded(
                 child: Text(
-                  'Test / Demo · $demoStatusText',
+                  statusText,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: statusColor, fontSize: 2.5.sp),
                 ),
               ),
               Text(
-                '$points${mapping.demoActiveTarget.isEmpty ? '' : ' · Hedef ${mapping.demoActiveTarget}'}',
+                taskText,
                 style: TextStyle(color: muted, fontSize: 2.2.sp),
               ),
             ],
@@ -2791,45 +2593,32 @@ class _ControllerPageState extends State<ControllerPage>
             children: [
               Expanded(
                 child: FilledButton(
-                  onPressed: mapping.canStartDemo
-                      ? () => unawaited(_startSavedDemo())
+                  key: const Key('main-mission-start'),
+                  onPressed: mission.readyToStart
+                      ? () => unawaited(_missionBaslat())
                       : null,
                   style: FilledButton.styleFrom(
                     disabledBackgroundColor: const Color(0xFF2A2A2A),
                     disabledForegroundColor: muted,
                   ),
-                  child: const Text('Demoyu Başlat'),
-                ),
-              ),
-              SizedBox(width: 1.w),
-              Expanded(
-                flex: 2,
-                child: FilledButton(
-                  onPressed: mapping.canContinueDemo
-                      ? () => unawaited(_continueDemo())
-                      : null,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: success,
-                    disabledBackgroundColor: const Color(0xFF2A2A2A),
-                    disabledForegroundColor: muted,
-                  ),
-                  child: const Text('Yük Yerleştirildi / Devam Et'),
+                  child: const Text('Görevi Başlat'),
                 ),
               ),
               SizedBox(width: 1.w),
               Expanded(
                 child: OutlinedButton(
-                  onPressed: mapping.canCancelDemo
-                      ? () => unawaited(_cancelDemo())
+                  key: const Key('main-mission-cancel'),
+                  onPressed: mission.canCancel
+                      ? () => unawaited(_missionIptal())
                       : null,
                   style: OutlinedButton.styleFrom(
                     foregroundColor: danger,
                     disabledForegroundColor: muted,
                     side: BorderSide(
-                      color: mapping.canCancelDemo ? danger : borderC,
+                      color: mission.canCancel ? danger : borderC,
                     ),
                   ),
-                  child: const Text('Demoyu İptal Et'),
+                  child: const Text('Görevi İptal Et'),
                 ),
               ),
             ],
@@ -3369,3 +3158,104 @@ class _NavBtn extends StatelessWidget {
 
 String _shortFieldHash(String value) =>
     value.length <= 10 ? value : '${value.substring(0, 10)}…';
+
+Future<String?> showMappingFieldNameDialog(
+  BuildContext context, {
+  required String initialValue,
+}) =>
+    showDialog<String>(
+      context: context,
+      builder: (_) => _MappingFieldNameDialog(initialValue: initialValue),
+    );
+
+class _MappingFieldNameDialog extends StatefulWidget {
+  const _MappingFieldNameDialog({required this.initialValue});
+
+  final String initialValue;
+
+  @override
+  State<_MappingFieldNameDialog> createState() =>
+      _MappingFieldNameDialogState();
+}
+
+class _MappingFieldNameDialogState extends State<_MappingFieldNameDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialValue);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(context, _controller.text.trim());
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A1A),
+        title: Text(
+          'Saha adı',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 3.sp,
+            fontFamily: 'monospace',
+          ),
+        ),
+        content: TextField(
+          controller: _controller,
+          autofocus: true,
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 2.8.sp,
+            fontFamily: 'monospace',
+          ),
+          cursorColor: const Color(0xFF4A90D9),
+          inputFormatters: [
+            FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9_-]')),
+          ],
+          decoration: InputDecoration(
+            hintText: 'saha_01',
+            hintStyle: const TextStyle(color: Color(0xFF555555)),
+            helperText: 'Yalnız harf, rakam, _ ve -',
+            helperStyle: TextStyle(
+              color: const Color(0xFF666666),
+              fontSize: 2.2.sp,
+            ),
+            enabledBorder: const OutlineInputBorder(
+              borderSide: BorderSide(color: Color(0xFF333333)),
+            ),
+            focusedBorder: const OutlineInputBorder(
+              borderSide: BorderSide(color: Color(0xFF4A90D9)),
+            ),
+          ),
+          onSubmitted: (_) => _submit(),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'İptal',
+              style: TextStyle(
+                color: const Color(0xFF888888),
+                fontSize: 2.6.sp,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: _submit,
+            child: Text(
+              'Başlat',
+              style: TextStyle(
+                color: const Color(0xFF4A90D9),
+                fontSize: 2.6.sp,
+              ),
+            ),
+          ),
+        ],
+      );
+}

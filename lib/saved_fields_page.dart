@@ -41,7 +41,7 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
       _toast('ROS bağlı değil — saha listesi alınamadı');
       return;
     }
-    await graph.refreshFields();
+    await graph.synchronize(preferredField: graph.selectedFieldName);
   }
 
   String _userError(Object error) =>
@@ -275,8 +275,10 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
             ),
           IconButton(
             tooltip: 'Yenile',
-            onPressed: graph.fieldsLoading ? null : () => unawaited(_refresh()),
-            icon: graph.fieldsLoading
+            onPressed: graph.fieldsLoading || graph.activeLoading
+                ? null
+                : () => unawaited(_refresh()),
+            icon: graph.fieldsLoading || graph.activeLoading
                 ? SizedBox(
                     width: 4.w,
                     height: 4.w,
@@ -299,7 +301,7 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
                 style: TextStyle(color: _success, fontSize: 3.sp),
               ),
             ),
-          if (!graph.activeFresh && graph.connected)
+          if (graph.activeLoading && graph.connected)
             const _InfoBar(
               text: 'Aktif saha bilgisi eşitleniyor…',
               color: _warning,

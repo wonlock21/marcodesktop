@@ -3,6 +3,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+bool _globalShortcutAllowed(BuildContext context) {
+  final route = ModalRoute.of(context);
+  if (route != null && !route.isCurrent) return false;
+  final focusContext = FocusManager.instance.primaryFocus?.context;
+  if (focusContext == null) return true;
+  if (focusContext.widget is EditableText) return false;
+  return focusContext.findAncestorWidgetOfExactType<EditableText>() == null;
+}
+
 class PowerButton extends StatefulWidget {
   final double height;
   final double width;
@@ -132,7 +141,9 @@ class _QRButtonState extends State<QRButton> {
   }
 
   bool _handleKeyEvent(KeyEvent event) {
-    if (event is KeyDownEvent && event.logicalKey == widget.shortcutKey) {
+    if (event is KeyDownEvent &&
+        event.logicalKey == widget.shortcutKey &&
+        _globalShortcutAllowed(context)) {
       widget.onPressed();
       return true;
     }
@@ -192,7 +203,6 @@ class _NormalButtonState extends State<NormalButton> {
   void initState() {
     super.initState();
     _focusNode = widget.customFocusNode ?? FocusNode();
-    _focusNode.requestFocus();
     HardwareKeyboard.instance.addHandler(_handleKeyEvent);
   }
 
@@ -205,7 +215,9 @@ class _NormalButtonState extends State<NormalButton> {
 
   bool _handleKeyEvent(KeyEvent event) {
     if (!widget.enabled) return false;
-    if (event is KeyDownEvent && event.logicalKey == widget.assignedKey) {
+    if (event is KeyDownEvent &&
+        event.logicalKey == widget.assignedKey &&
+        _globalShortcutAllowed(context)) {
       if (!isOn) {
         setState(() {
           _toggleState();
@@ -344,15 +356,7 @@ class _ControlButtonState extends State<ControlButton> {
   /// parent kısayolları kapattıysa WASD/QE çalışmasın.
   bool _shortcutsAllowed() {
     if (!mounted || !widget.shortcutsEnabled) return false;
-    final route = ModalRoute.of(context);
-    if (route != null && !route.isCurrent) return false;
-    final primary = FocusManager.instance.primaryFocus;
-    final focusCtx = primary?.context;
-    if (focusCtx != null &&
-        focusCtx.findAncestorWidgetOfExactType<EditableText>() != null) {
-      return false;
-    }
-    return true;
+    return _globalShortcutAllowed(context);
   }
 
   bool _handleKeyEvent(KeyEvent event) {

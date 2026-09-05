@@ -27,6 +27,23 @@ class RouteEditPage extends StatefulWidget {
   State<RouteEditPage> createState() => _RouteEditPageState();
 }
 
+Future<FieldEdge?> showFieldEdgeEditorDialog({
+  required BuildContext context,
+  required List<FieldNode> nodes,
+  FieldEdge? existing,
+  int? initialStartNodeId,
+  int? initialEndNodeId,
+}) =>
+    showDialog<FieldEdge>(
+      context: context,
+      builder: (_) => _EdgeEditorDialog(
+        nodes: nodes,
+        existing: existing,
+        initialStartNodeId: initialStartNodeId,
+        initialEndNodeId: initialEndNodeId,
+      ),
+    );
+
 class _RouteEditPageState extends State<RouteEditPage> {
   String _errorText(Object error) =>
       error.toString().replaceFirst('Bad state: ', '').trim();
@@ -41,9 +58,10 @@ class _RouteEditPageState extends State<RouteEditPage> {
   Future<void> _editEdge([FieldEdge? existing]) async {
     final graph = context.read<GcsFieldGraphModel>();
     if (!graph.canEdit || graph.nodes.length < 2) return;
-    final edge = await showDialog<FieldEdge>(
+    final edge = await showFieldEdgeEditorDialog(
       context: context,
-      builder: (_) => _EdgeEditorDialog(nodes: graph.nodes, existing: existing),
+      nodes: graph.nodes,
+      existing: existing,
     );
     if (edge == null || !mounted) return;
     try {
@@ -389,8 +407,15 @@ class _EdgePanel extends StatelessWidget {
 class _EdgeEditorDialog extends StatefulWidget {
   final List<FieldNode> nodes;
   final FieldEdge? existing;
+  final int? initialStartNodeId;
+  final int? initialEndNodeId;
 
-  const _EdgeEditorDialog({required this.nodes, this.existing});
+  const _EdgeEditorDialog({
+    required this.nodes,
+    this.existing,
+    this.initialStartNodeId,
+    this.initialEndNodeId,
+  });
 
   @override
   State<_EdgeEditorDialog> createState() => _EdgeEditorDialogState();
@@ -412,8 +437,17 @@ class _EdgeEditorDialogState extends State<_EdgeEditorDialog> {
   void initState() {
     super.initState();
     final edge = widget.existing;
-    _startNodeId = edge?.startNodeId ?? widget.nodes.first.nodeId;
-    _endNodeId = edge?.endNodeId ?? widget.nodes[1].nodeId;
+    _startNodeId = edge?.startNodeId ??
+        widget.initialStartNodeId ??
+        widget.nodes.first.nodeId;
+    _endNodeId = edge?.endNodeId ??
+        widget.initialEndNodeId ??
+        widget.nodes
+            .firstWhere(
+              (node) => node.nodeId != _startNodeId,
+              orElse: () => widget.nodes.last,
+            )
+            .nodeId;
     _bidirectional = edge?.bidirectional ?? false;
     _loadRule = edge?.loadRule ?? FieldLoadRule.any;
     _direction = edge?.movementDirection ?? FieldMovementDirection.forward;

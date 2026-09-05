@@ -411,11 +411,7 @@ void main() {
             .widget<OutlinedButton>(find.byKey(const Key('scenario-submit')))
             .onPressed,
         isNull);
-    expect(
-        tester
-            .widget<OutlinedButton>(find.byKey(const Key('scenario-start')))
-            .onPressed,
-        isNull);
+    expect(find.byKey(const Key('scenario-start')), findsNothing);
     expect(find.textContaining('Robota görev gönderilmedi'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     await tester.pumpWidget(screen());
@@ -430,7 +426,7 @@ void main() {
     await client.dispose();
   });
   testWidgets(
-      'original scenario submits multiple pairs and starts only explicitly',
+      'original scenario submits multiple pairs without starting the mission',
       (tester) async {
     tester.view.physicalSize = const Size(1600, 1000);
     tester.view.devicePixelRatio = 1;
@@ -467,15 +463,15 @@ void main() {
     expect(client.calls, ['submit']);
     mission.applyStatus(status(state: 1, task: client.submitted!['task_id']));
     await tester.pump();
-    await tester.tap(find.byKey(const Key('scenario-start')));
-    await tester.pumpAndSettle();
-    expect(client.calls, ['submit', 'start']);
+    expect(find.byKey(const Key('scenario-start')), findsNothing);
+    expect(find.textContaining('Ana ekrandan'), findsOneWidget);
+    expect(client.calls, ['submit']);
     await tester.pumpWidget(const SizedBox());
     graph.dispose();
     mission.dispose();
     await client.dispose();
   });
-  testWidgets('cached graph permits scenario selection while disconnected',
+  testWidgets('mission monitoring does not repeat scenario selection controls',
       (tester) async {
     tester.view.physicalSize = const Size(1400, 1400);
     tester.view.devicePixelRatio = 1;
@@ -492,24 +488,18 @@ void main() {
       ChangeNotifierProvider.value(value: events)
     ], child: const MaterialApp(home: ProductionMissionPage())));
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(DropdownButtonFormField<int>).first);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('WAREHOUSE · custom_pickup').last);
-    await tester.pumpAndSettle();
     expect(client.calls, isEmpty);
-    expect(
-        tester
-            .widget<FilledButton>(find.byKey(const Key('mission-submit')))
-            .onPressed,
-        isNull);
-    expect(find.textContaining('Gönderme: ROS bağlantısı yok'), findsOneWidget);
+    expect(find.byType(DropdownButtonFormField<int>), findsNothing);
+    expect(find.byKey(const Key('mission-submit')), findsNothing);
+    expect(find.byKey(const Key('mission-start')), findsNothing);
+    expect(find.textContaining('yalnız çalışan görevi izler'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     graph.dispose();
     mission.dispose();
     events.dispose();
     await client.dispose();
   });
-  testWidgets('production submit and start are separate buttons, no init start',
+  testWidgets('production monitoring never sends commands on init',
       (tester) async {
     tester.view.physicalSize = const Size(1400, 1600);
     tester.view.devicePixelRatio = 1;
@@ -528,22 +518,9 @@ void main() {
     ], child: const MaterialApp(home: ProductionMissionPage())));
     await tester.pumpAndSettle();
     expect(client.calls, isEmpty);
-    await tester.tap(find.byType(DropdownButtonFormField<int>).first);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('WAREHOUSE · custom_pickup').last);
-    await tester.pumpAndSettle();
-    await tester.tap(find.byType(DropdownButtonFormField<int>).last);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('DESTINATION · custom_dropoff').last);
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('mission-submit')));
-    await tester.pumpAndSettle();
-    expect(client.calls, ['submit']);
-    mission.applyStatus(status(state: 1, task: client.submitted!['task_id']));
-    await tester.pump();
-    await tester.tap(find.byKey(const Key('mission-start')));
-    await tester.pumpAndSettle();
-    expect(client.calls, ['submit', 'start']);
+    expect(find.byKey(const Key('mission-submit')), findsNothing);
+    expect(find.byKey(const Key('mission-start')), findsNothing);
+    expect(find.textContaining('Ana Ekrandan'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     mission.dispose();
     graph.dispose();

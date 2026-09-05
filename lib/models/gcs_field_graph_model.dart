@@ -31,6 +31,8 @@ class GcsFieldGraphModel extends ChangeNotifier {
   bool connected = false;
   bool fieldsLoading = false;
   bool graphLoading = false;
+  bool activeLoading = false;
+  String? activeError;
   bool activeFresh = false;
   bool packageStatusFresh = false;
   bool robotStatusFresh = false;
@@ -78,8 +80,15 @@ class GcsFieldGraphModel extends ChangeNotifier {
       !graphLoading &&
       graphError == null;
 
+  /// `/fields/active` veya `get_active` gecikse bile taze `/fields/list`
+  /// kaydındaki `active` alanı seçili sahanın salt-okunur durumunu belirler.
+  bool get selectedFieldActivityKnown => activeFresh || selectedField != null;
+
   bool get canEdit =>
-      graphFresh && activeFresh && !selectedFieldIsActive && !busy;
+      graphFresh &&
+      selectedFieldActivityKnown &&
+      !selectedFieldIsActive &&
+      !busy;
 
   bool get validationCurrent =>
       _validatedHash?.isNotEmpty == true &&
@@ -132,6 +141,8 @@ class GcsFieldGraphModel extends ChangeNotifier {
     robotActiveFieldHash = '';
     fieldsLoading = false;
     graphLoading = false;
+    activeLoading = false;
+    activeError = null;
     _invalidateValidation();
   }
 
@@ -174,11 +185,14 @@ class GcsFieldGraphModel extends ChangeNotifier {
   void applyActiveTopic(ActiveField? value) {
     if (value == null) {
       activeFresh = false;
+      activeLoading = false;
       notifyListeners();
       return;
     }
     activeField = value;
     activeFresh = true;
+    activeLoading = false;
+    activeError = null;
     lastMessage = value.message;
     notifyListeners();
   }
@@ -225,11 +239,15 @@ class GcsFieldGraphModel extends ChangeNotifier {
     }
     if (generation != _syncGeneration || !connected) return;
 
+    activeLoading = true;
+    activeError = null;
+    notifyListeners();
     try {
       final active = await _repository.getActive();
       if (generation != _syncGeneration) return;
       activeField = active.activeField;
       activeFresh = true;
+      activeError = null;
       lastMessage = active.message;
       if (active.status.fieldName == selectedFieldName) {
         packageStatus = active.status;
@@ -238,7 +256,10 @@ class GcsFieldGraphModel extends ChangeNotifier {
     } catch (error) {
       if (generation != _syncGeneration) return;
       activeFresh = false;
-      lastMessage = _userError(error);
+      activeError = _userError(error);
+      lastMessage = activeError!;
+    } finally {
+      if (generation == _syncGeneration) activeLoading = false;
     }
     notifyListeners();
 
@@ -554,7 +575,9 @@ class GcsFieldGraphModel extends ChangeNotifier {
   void _ensureEditable() {
     if (!connected) throw StateError('ROS bağlı değil');
     if (!hasSelectedField) throw StateError('Önce bir saha seçin');
-    if (!activeFresh) throw StateError('Aktif saha durumu güncel değil');
+    if (!selectedFieldActivityKnown) {
+      throw StateError('Aktif saha durumu güncel değil');
+    }
     if (selectedFieldIsActive) throw StateError('Aktif saha salt okunurdur');
     if (!graphFresh) throw StateError('Saha grafiği güncel değil');
     if (busy) throw StateError('Başka bir saha işlemi devam ediyor');

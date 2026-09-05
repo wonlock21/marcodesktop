@@ -179,6 +179,16 @@ class GcsMissionModel extends ChangeNotifier {
       robotStatus?.estopActive == false &&
       robotStatus?.obstacleDetected == false;
 
+  bool get canCancel {
+    final state = robotStatus?.missionState;
+    return connected &&
+        statusFresh &&
+        !commandPending &&
+        state != null &&
+        state >= 1 &&
+        state <= 5;
+  }
+
   /// Explain command locks; local scenario editing does not use these gates.
   String? submitBlockReason(GcsFieldGraphModel graph) {
     if (!connected) {

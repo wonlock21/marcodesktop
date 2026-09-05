@@ -950,23 +950,14 @@ class _ScenarioPageState extends State<ScenarioPage> {
                       ? _sendToRobot
                       : null,
                   child: const Text('Görevi Hazırla / Submit')),
-              Tooltip(
-                  message:
-                      mission.startBlockReason ?? 'Hazır ROS görevini başlat',
-                  child: OutlinedButton(
-                      key: const Key('scenario-start'),
-                      onPressed: mission.readyToStart
-                          ? () => _runCommand(mission.start)
-                          : null,
-                      child: const Text('Başlat / Start'))),
               TextButton(
                   onPressed: () =>
                       Navigator.pushNamed(context, 'saved-fields-page'),
                   child: const Text('Saha seç')),
             ]),
-            if (mission.startBlockReason != null)
-              Text('Başlat: ${mission.startBlockReason}',
-                  style: TextStyle(color: _muted, fontSize: 2.4.sp)),
+            if (mission.readyToStart)
+              Text('Görev hazır. Ana ekrandan başlatabilirsiniz.',
+                  style: TextStyle(color: _bright, fontSize: 2.4.sp)),
             SizedBox(height: 1.h),
             // Haritayı Kaydet
             GestureDetector(

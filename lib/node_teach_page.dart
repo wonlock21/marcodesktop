@@ -1,18 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
-import 'services/angles.dart';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 
 import 'models/field_graph_models.dart';
 import 'models/gcs_field_graph_model.dart';
 import 'models/gcs_mapping_model.dart';
-import 'models/gcs_node_model.dart';
-import 'scenerio_page.dart';
-import 'data_model.dart';
-import 'services/agv_service.dart';
+import 'route_edit_page.dart' show showFieldEdgeEditorDialog;
+import 'services/angles.dart';
 import 'services/ros_mapping_contract.dart';
 import 'widgets/map_preview_stage.dart';
 
@@ -21,11 +17,27 @@ const _panelBg = Color(0xFF1A1A1A);
 const _borderC = Color(0xFF333333);
 const _muted = Color(0xFF9E9E9E);
 const _bright = Color(0xFFE0E0E0);
-const _warn = Color(0xFFB7791F);
+const _warning = Color(0xFFFFA726);
 const _accent = Color(0xFF42A5F5);
+const _success = Color(0xFF43A047);
 const _danger = Color(0xFFE53935);
 
-/// Düğüm öğretme: yalnızca robot konumuna (pixel X/Y) basılır.
+enum _PanelSection { nodes, edges, selected }
+
+extension on FieldNodeRole {
+  String get operatorLabel => switch (this) {
+        FieldNodeRole.wait => 'Bekleme Noktası',
+        FieldNodeRole.pickupApproach => 'Yük Alma Alanına Yaklaşma',
+        FieldNodeRole.pickupDock => 'Yük Alma Noktası',
+        FieldNodeRole.dropoffApproach => 'Yük Bırakma Alanına Yaklaşma',
+        FieldNodeRole.dropoffDock => 'Yük Bırakma Noktası',
+        FieldNodeRole.gateQ5 => 'Gidiş Kapı İzin Noktası (Q5)',
+        FieldNodeRole.gateQ6 => 'Dönüş Kapı İzin Noktası (Q6)',
+        FieldNodeRole.qrTrigger => 'QR Okuma / Tetikleme Noktası',
+        FieldNodeRole.transit => 'Düğüm Noktası',
+      };
+}
+
 class NodeTeachPage extends StatefulWidget {
   const NodeTeachPage({super.key});
 
@@ -34,262 +46,381 @@ class NodeTeachPage extends StatefulWidget {
 }
 
 class _NodeTeachPageState extends State<NodeTeachPage> {
-  final Set<String> _savingDemoPoints = <String>{};
-  final Set<String> _savingDemoRoutePoints = <String>{};
-  final Set<String> _clearingDemoRoutes = <String>{};
-  final Map<String, DemoPointSaveResult> _savedDemoPoints =
-      <String, DemoPointSaveResult>{};
+  final TextEditingController _searchController = TextEditingController();
+  _PanelSection _section = _PanelSection.nodes;
+  FieldNodeRole? _roleFilter;
+  String? _stationFilter;
+  int? _selectedNodeId;
+  int? _selectedEdgeId;
+  bool _mapPickMode = false;
+  bool _fieldSyncScheduled = false;
 
-  void _toast(BuildContext context, String message) {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final graph = context.read<GcsFieldGraphModel>();
+      if (!graph.connected || !graph.hasSelectedField) return;
+      unawaited(
+        graph.synchronize(preferredField: graph.selectedFieldName),
+      );
+    });
+  }
+
+  String? _preferredField(
+    GcsFieldGraphModel graph,
+    GcsMappingModel mapping,
+  ) {
+    final selected = graph.selectedFieldName?.trim();
+    if (selected?.isNotEmpty == true) return selected;
+    final localized = mapping.activeLocalizedField?.trim();
+    if (localized?.isNotEmpty == true) return localized;
+    final pending = mapping.pendingLocalizedField?.trim();
+    if (pending?.isNotEmpty == true) return pending;
+    final mappingField = mapping.fieldName.trim();
+    return mappingField.isEmpty ? null : mappingField;
+  }
+
+  void _ensureFieldSelection(
+    GcsFieldGraphModel graph,
+    GcsMappingModel mapping,
+  ) {
+    if (_fieldSyncScheduled || !graph.connected || graph.hasSelectedField) {
+      return;
+    }
+    final preferred = _preferredField(graph, mapping);
+    if (preferred == null) return;
+    _fieldSyncScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        if (mounted) await graph.synchronize(preferredField: preferred);
+      } finally {
+        _fieldSyncScheduled = false;
+      }
+    });
+  }
+
+  Future<void> _selectField(String? fieldName) async {
+    if (fieldName == null || fieldName.trim().isEmpty) return;
+    setState(() {
+      _selectedNodeId = null;
+      _selectedEdgeId = null;
+      _mapPickMode = false;
+      _section = _PanelSection.nodes;
+    });
+    await context.read<GcsFieldGraphModel>().selectField(fieldName);
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _toast(String message) {
+    if (!mounted || message.trim().isEmpty) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
+      SnackBar(content: Text(message), duration: const Duration(seconds: 4)),
     );
   }
 
   String _errorText(Object error) =>
       error.toString().replaceFirst('Bad state: ', '').trim();
 
-  Future<_NodeEditorValue?> _openNodeEditor({
-    FieldNode? existing,
-    required bool screenYaw,
-  }) =>
-      showDialog<_NodeEditorValue>(
-        context: context,
-        builder: (_) => _NodeEditorDialog(
-          existing: existing,
-          screenYaw: screenYaw,
+  bool _robotPoseContext(GcsMappingModel mapping, GcsFieldGraphModel graph) {
+    if (!mapping.isConnected) return false;
+    if (mapping.localizationReady &&
+        mapping.activeLocalizedField == graph.selectedFieldName) {
+      return true;
+    }
+    return mapping.liveMappingStatus == MappingStatus.mapping &&
+        mapping.fieldName == graph.selectedFieldName;
+  }
+
+  bool _mapPickContext(GcsMappingModel mapping, GcsFieldGraphModel graph) =>
+      _robotPoseContext(mapping, graph) &&
+      mapping.hasPreviewPng &&
+      mapping.previewMetadata != null;
+
+  Future<void> _refresh() async {
+    final graph = context.read<GcsFieldGraphModel>();
+    final field = graph.selectedFieldName;
+    if (!graph.connected || field == null || graph.graphLoading) return;
+    await graph.synchronize(preferredField: field);
+  }
+
+  Future<void> _chooseAddMethod() async {
+    final graph = context.read<GcsFieldGraphModel>();
+    final mapping = context.read<GcsMappingModel>();
+    if (!graph.canEdit) {
+      _toast(_editBlockReason(graph));
+      return;
+    }
+    final robotReady = _robotPoseContext(mapping, graph);
+    final mapReady = _mapPickContext(mapping, graph);
+    final method = await showDialog<_AddMethod>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Düğüm ekleme yöntemi'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            FilledButton.icon(
+              onPressed: robotReady
+                  ? () => Navigator.pop(dialogContext, _AddMethod.robot)
+                  : null,
+              icon: const Icon(Icons.my_location),
+              label: const Text('Robot Konumundan Kaydet'),
+            ),
+            const SizedBox(height: 10),
+            FilledButton.icon(
+              onPressed: mapReady
+                  ? () => Navigator.pop(dialogContext, _AddMethod.map)
+                  : null,
+              icon: const Icon(Icons.add_location_alt_outlined),
+              label: const Text('Haritadan Konum Seç'),
+            ),
+            if (!robotReady || !mapReady) ...[
+              const SizedBox(height: 12),
+              const Text(
+                'Seçili saha için güncel mapping veya lokalizasyon önizlemesi bekleniyor.',
+                style: TextStyle(color: _warning),
+              ),
+            ],
+          ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Vazgeç'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || method == null) return;
+    if (method == _AddMethod.robot) {
+      await _createAtRobot();
+    } else {
+      _beginMapPick();
+    }
+  }
+
+  void _beginMapPick() {
+    final graph = context.read<GcsFieldGraphModel>();
+    final mapping = context.read<GcsMappingModel>();
+    if (!graph.canEdit) {
+      _toast(_editBlockReason(graph));
+      return;
+    }
+    if (!_mapPickContext(mapping, graph)) {
+      _toast(
+        'Seçili saha için güncel mapping veya lokalizasyon önizlemesi bekleniyor.',
       );
+      return;
+    }
+    setState(() => _mapPickMode = true);
+  }
 
   Future<void> _createAtRobot() async {
     final graph = context.read<GcsFieldGraphModel>();
-    if (!graph.canEdit) return;
-    final value = await _openNodeEditor(screenYaw: false);
-    if (value == null || !mounted) return;
+    if (!graph.canEdit || graph.busy) return;
+    final node = await showFieldNodeEditorDialog(
+      context: context,
+      currentPose: true,
+      existingNodeIds: graph.nodes.map((node) => node.nodeId).toSet(),
+    );
+    if (node == null || !mounted || !graph.canEdit) return;
+    if (graph.nodeById(node.nodeId) != null) {
+      _toast('Düğüm kaydedilemedi: Node ID zaten kullanılıyor');
+      return;
+    }
     try {
-      final node = value.toNode(pose: FieldPose2D.zero);
       final result = await graph.saveNode(node, currentPose: true);
-      if (mounted) _toast(context, result.message);
+      if (!mounted) return;
+      setState(() {
+        _selectedNodeId = result.savedNode?.nodeId ?? node.nodeId;
+        _selectedEdgeId = null;
+        _section = _PanelSection.selected;
+      });
+      _toast(result.message);
     } catch (error) {
-      if (mounted) _toast(context, 'Düğüm kaydedilemedi: ${_errorText(error)}');
+      _toast('Düğüm kaydedilemedi: ${_errorText(error)}');
     }
   }
 
   Future<void> _createAtPixel(double pixelX, double pixelY) async {
+    if (!_mapPickMode) return;
+    setState(() => _mapPickMode = false);
     final graph = context.read<GcsFieldGraphModel>();
-    if (!graph.canEdit || !_specTeachContext(context.read<GcsMappingModel>())) {
-      return;
-    }
-    final value = await _openNodeEditor(screenYaw: true);
-    if (value == null ||
-        !mounted ||
-        !_specTeachContext(context.read<GcsMappingModel>())) {
+    final mapping = context.read<GcsMappingModel>();
+    if (!graph.canEdit || !_mapPickContext(mapping, graph) || graph.busy) {
       return;
     }
     try {
-      final result = await graph.saveNodeAtPixel(
-        node: value.toNode(pose: FieldPose2D.zero),
+      final converted = await graph.pixelToMap(
         pixelX: pixelX,
         pixelY: pixelY,
-        screenYaw: value.yawRadians,
+        screenYaw: 0,
       );
-      if (!mounted) return;
-      _toast(context, result.message);
-    } catch (error) {
-      if (mounted) _toast(context, 'Düğüm kaydedilemedi: ${_errorText(error)}');
-    }
-  }
-
-  Future<void> _editNode(TaughtFieldNode projected) async {
-    final graph = context.read<GcsFieldGraphModel>();
-    final id = int.tryParse(projected.id);
-    final existing = id == null ? null : graph.nodeById(id);
-    if (existing == null || !graph.canEdit) return;
-    final value = await _openNodeEditor(existing: existing, screenYaw: false);
-    if (value == null || !mounted) return;
-    try {
-      final pose = FieldPose2D(
-        x: value.x ?? existing.pose.x,
-        y: value.y ?? existing.pose.y,
-        theta: value.yawRadians,
-      );
-      final result = await graph.saveNode(
-        value.toNode(pose: pose, nodeId: existing.nodeId),
-        currentPose: false,
-      );
-      if (mounted) _toast(context, result.message);
-    } catch (error) {
-      if (mounted) {
-        _toast(context, 'Düğüm güncellenemedi: ${_errorText(error)}');
+      if (!converted.insideMap) {
+        _toast('Seçilen nokta harita sınırlarının dışında');
+        return;
       }
+      if (!mounted || !graph.canEdit) return;
+      final node = await showFieldNodeEditorDialog(
+        context: context,
+        initialPose: converted.pose,
+        existingNodeIds: graph.nodes.map((node) => node.nodeId).toSet(),
+      );
+      if (node == null || !mounted || !graph.canEdit) return;
+      if (graph.nodeById(node.nodeId) != null) {
+        _toast('Düğüm kaydedilemedi: Node ID zaten kullanılıyor');
+        return;
+      }
+      final result = await graph.saveNode(node, currentPose: false);
+      if (!mounted) return;
+      setState(() {
+        _selectedNodeId = result.savedNode?.nodeId ?? node.nodeId;
+        _selectedEdgeId = null;
+        _section = _PanelSection.selected;
+      });
+      _toast(result.message);
+    } catch (error) {
+      _toast('Düğüm kaydedilemedi: ${_errorText(error)}');
     }
   }
 
-  Future<void> _moveNodeToRobot(TaughtFieldNode projected) async {
+  Future<void> _editNode(FieldNode node) async {
     final graph = context.read<GcsFieldGraphModel>();
-    final id = int.tryParse(projected.id);
-    final existing = id == null ? null : graph.nodeById(id);
-    if (existing == null ||
-        !graph.canEdit ||
-        !_specTeachContext(context.read<GcsMappingModel>())) {
+    if (!graph.canEdit || graph.busy) return;
+    final edited = await showFieldNodeEditorDialog(
+      context: context,
+      existing: node,
+      existingNodeIds: graph.nodes.map((node) => node.nodeId).toSet(),
+    );
+    if (edited == null || !mounted || !graph.canEdit) return;
+    try {
+      final result = await graph.saveNode(edited, currentPose: false);
+      if (mounted) _toast(result.message);
+    } catch (error) {
+      _toast('Düğüm güncellenemedi: ${_errorText(error)}');
+    }
+  }
+
+  Future<void> _moveNodeToRobot(FieldNode node) async {
+    final graph = context.read<GcsFieldGraphModel>();
+    final mapping = context.read<GcsMappingModel>();
+    if (!graph.canEdit || graph.busy || !_robotPoseContext(mapping, graph)) {
       return;
     }
     try {
-      final result = await graph.saveNode(existing, currentPose: true);
-      if (mounted) _toast(context, result.message);
+      final result = await graph.saveNode(node, currentPose: true);
+      if (mounted) _toast(result.message);
     } catch (error) {
-      if (mounted) _toast(context, 'Düğüm taşınamadı: ${_errorText(error)}');
+      _toast('Düğüm robot konumuna taşınamadı: ${_errorText(error)}');
     }
   }
 
-  Future<void> _deleteNode(TaughtFieldNode projected) async {
+  Future<void> _deleteNode(FieldNode node) async {
     final graph = context.read<GcsFieldGraphModel>();
-    final id = int.tryParse(projected.id);
-    if (id == null || !graph.canEdit) return;
-    final connectedEdges = graph.connectedEdges(id);
+    if (!graph.canEdit || graph.busy) return;
+    final connected = graph.connectedEdges(node.nodeId);
+    var deleteEdges = false;
     final confirmed = await showDialog<bool>(
           context: context,
-          builder: (dialogContext) => AlertDialog(
-            title: const Text('Düğümü sil'),
-            content: Text(
-              connectedEdges.isEmpty
-                  ? '${projected.name} silinecek.'
-                  : '${projected.name} ve bağlı ${connectedEdges.length} kenar silinecek.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('Vazgeç'),
+          builder: (dialogContext) => StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              title: const Text('Düğümü sil'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${node.name} düğümünü silmek istediğinize emin misiniz?',
+                  ),
+                  if (connected.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Text('${connected.length} bağlı bağlantı bulundu.'),
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Bağlı bağlantıları da sil'),
+                      value: deleteEdges,
+                      onChanged: (value) => setDialogState(
+                        () => deleteEdges = value == true,
+                      ),
+                    ),
+                  ],
+                ],
               ),
-              FilledButton(
-                onPressed: () => Navigator.pop(dialogContext, true),
-                child: Text(
-                  connectedEdges.isEmpty
-                      ? 'Düğümü Sil'
-                      : 'Düğüm ve Kenarları Sil',
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('Vazgeç'),
                 ),
-              ),
-            ],
+                FilledButton(
+                  onPressed: connected.isEmpty || deleteEdges
+                      ? () => Navigator.pop(dialogContext, true)
+                      : null,
+                  child: const Text('Düğümü Sil'),
+                ),
+              ],
+            ),
           ),
         ) ??
         false;
-    if (!confirmed || !mounted) return;
+    if (!confirmed || !mounted || !graph.canEdit) return;
     try {
       final result = await graph.deleteNode(
-        id,
-        deleteConnectedEdges: connectedEdges.isNotEmpty,
+        node.nodeId,
+        deleteConnectedEdges: deleteEdges,
       );
-      if (mounted) _toast(context, result.message);
+      if (!mounted) return;
+      setState(() {
+        _selectedNodeId = null;
+        _section = _PanelSection.nodes;
+      });
+      _toast(result.message);
     } catch (error) {
-      if (mounted) _toast(context, 'Düğüm silinemedi: ${_errorText(error)}');
+      _toast('Düğüm silinemedi: ${_errorText(error)}');
     }
   }
 
-  Future<void> _saveDemoPoint(String pointName) async {
-    final mapping = context.read<GcsMappingModel>();
-    if (!mapping.canSaveDemoPoint || _savingDemoPoints.contains(pointName)) {
-      return;
-    }
-    setState(() => _savingDemoPoints.add(pointName));
+  Future<void> _editEdge({FieldEdge? edge, int? startNodeId}) async {
+    final graph = context.read<GcsFieldGraphModel>();
+    if (!graph.canEdit || graph.busy || graph.nodes.length < 2) return;
+    final edited = await showFieldEdgeEditorDialog(
+      context: context,
+      nodes: graph.nodes,
+      existing: edge,
+      initialStartNodeId: startNodeId,
+    );
+    if (edited == null || !mounted || !graph.canEdit) return;
     try {
-      final response = await AgvService.saveDemoPoint(pointName);
+      final result = await graph.saveEdge(edited);
       if (!mounted) return;
-      final result = DemoPointSaveResult.fromServiceResponse(response);
-      if (!result.success) {
-        _toast(
-          context,
-          RosServiceResponse.failureMessage(
-            response,
-            fallback: '$pointName noktası kaydedilemedi',
-          ),
-        );
-        return;
-      }
-      if (result.pose == null) {
-        _toast(
-          context,
-          '$pointName noktası kaydedilemedi: servis cevabında pose yok',
-        );
-        return;
-      }
-      mapping.markDemoPointSaved(pointName, result);
-      setState(() => _savedDemoPoints[pointName] = result);
-      final pose = result.pose;
-      final poseText = pose == null
-          ? ''
-          : ' (x=${pose.x.toStringAsFixed(2)}, '
-              'y=${pose.y.toStringAsFixed(2)}, '
-              'θ=${pose.theta.toStringAsFixed(2)})';
-      _toast(
-        context,
-        result.message.isEmpty
-            ? '$pointName noktası kaydedildi$poseText'
-            : '${result.message}$poseText',
-      );
+      setState(() {
+        _selectedEdgeId = result.savedEdge?.edgeId ?? edited.edgeId;
+        _selectedNodeId = null;
+        _section = _PanelSection.selected;
+      });
+      _toast(result.message);
     } catch (error) {
-      if (!mounted) return;
-      final message = error.toString().replaceFirst('Bad state: ', '');
-      _toast(context, '$pointName noktası kaydedilemedi: $message');
-    } finally {
-      if (mounted) {
-        setState(() => _savingDemoPoints.remove(pointName));
-      }
+      _toast('Bağlantı kaydedilemedi: ${_errorText(error)}');
     }
   }
 
-  Future<void> _saveDemoRoutePoint(String targetName) async {
-    final mapping = context.read<GcsMappingModel>();
-    if (!mapping.canSaveDemoPoint ||
-        _savingDemoRoutePoints.contains(targetName) ||
-        _clearingDemoRoutes.contains(targetName)) {
-      return;
-    }
-    setState(() => _savingDemoRoutePoints.add(targetName));
-    try {
-      final response = await AgvService.saveDemoRoutePoint(targetName);
-      if (!mounted) return;
-      if (!RosServiceResponse.demoRouteOperationSucceeded(response)) {
-        _toast(
-          context,
-          RosServiceResponse.failureMessage(
-            response,
-            fallback: '$targetName rota noktası kaydedilemedi',
-          ),
-        );
-        return;
-      }
-      final message = response['message']?.toString().trim() ?? '';
-      _toast(
-        context,
-        message.isEmpty
-            ? '$targetName rotasına dönüş noktası eklendi'
-            : message,
-      );
-    } catch (error) {
-      if (!mounted) return;
-      final message = error.toString().replaceFirst('Bad state: ', '');
-      _toast(context, '$targetName rota noktası kaydedilemedi: $message');
-    } finally {
-      if (mounted) {
-        setState(() => _savingDemoRoutePoints.remove(targetName));
-      }
-    }
-  }
-
-  Future<void> _clearDemoRoute(String targetName) async {
-    final mapping = context.read<GcsMappingModel>();
-    if (!mapping.canSaveDemoPoint ||
-        _savingDemoRoutePoints.contains(targetName) ||
-        _clearingDemoRoutes.contains(targetName)) {
-      return;
-    }
+  Future<void> _deleteEdge(FieldEdge edge) async {
+    final graph = context.read<GcsFieldGraphModel>();
+    if (!graph.canEdit || graph.busy) return;
+    final start = graph.nodeById(edge.startNodeId)?.name ?? edge.startNodeId;
+    final end = graph.nodeById(edge.endNodeId)?.name ?? edge.endNodeId;
     final confirmed = await showDialog<bool>(
           context: context,
           builder: (dialogContext) => AlertDialog(
-            title: Text('$targetName rotasını temizle'),
-            content: Text(
-              '$targetName rotasına kaydedilmiş bütün dönüş noktaları silinecek.',
-            ),
+            title: const Text('Bağlantıyı sil'),
+            content: Text('$start → $end bağlantısı silinecek.'),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(dialogContext, false),
@@ -297,255 +428,215 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
               ),
               FilledButton(
                 onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text('Rotayı Temizle'),
+                child: const Text('Bağlantıyı Sil'),
               ),
             ],
           ),
         ) ??
         false;
-    if (!confirmed || !mounted) return;
-
-    setState(() => _clearingDemoRoutes.add(targetName));
+    if (!confirmed || !mounted || !graph.canEdit) return;
     try {
-      final response = await AgvService.clearDemoRoute(targetName);
+      final result = await graph.deleteEdge(edge.edgeId);
       if (!mounted) return;
-      if (!RosServiceResponse.demoRouteOperationSucceeded(response)) {
-        _toast(
-          context,
-          RosServiceResponse.failureMessage(
-            response,
-            fallback: '$targetName rotası temizlenemedi',
-          ),
-        );
+      setState(() {
+        _selectedEdgeId = null;
+        _section = _PanelSection.edges;
+      });
+      _toast(result.message);
+    } catch (error) {
+      _toast('Bağlantı silinemedi: ${_errorText(error)}');
+    }
+  }
+
+  void _selectNode(FieldNode node) {
+    setState(() {
+      _selectedNodeId = node.nodeId;
+      _selectedEdgeId = null;
+      _section = _PanelSection.selected;
+    });
+  }
+
+  void _selectNodeByName(String name, List<FieldNode> nodes) {
+    for (final node in nodes) {
+      if (node.name == name) {
+        _selectNode(node);
         return;
       }
-      final message = response['message']?.toString().trim() ?? '';
-      _toast(
-        context,
-        message.isEmpty ? '$targetName rotası temizlendi' : message,
-      );
-    } catch (error) {
-      if (!mounted) return;
-      final message = error.toString().replaceFirst('Bad state: ', '');
-      _toast(context, '$targetName rotası temizlenemedi: $message');
-    } finally {
-      if (mounted) {
-        setState(() => _clearingDemoRoutes.remove(targetName));
-      }
     }
-  }
-
-  /// F.5: haritalama sırasında veya lokalizasyon açıkken öğretme bağlamı.
-  bool _specTeachContext(GcsMappingModel mapping) {
-    if (!mapping.isConnected || !mapping.hasPreviewPng) return false;
-    if (mapping.localizationReady &&
-        mapping.activeLocalizedField ==
-            context.read<GcsFieldGraphModel>().selectedFieldName &&
-        !mapping.awaitingFreshPreview) {
-      return true;
-    }
-    final status = mapping.liveMappingStatus;
-    return status == MappingStatus.mapping &&
-        mapping.fieldName ==
-            context.read<GcsFieldGraphModel>().selectedFieldName &&
-        !mapping.awaitingFreshPreview;
-  }
-
-  Future<void> _openScenario(BuildContext context) async {
-    await Navigator.push<String>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => ScenarioPage(
-            dataPoints: context.read<DataModel>().dataPoints,
-            site: AgvService.ros.url,
-            rota: ''),
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final mapping = context.watch<GcsMappingModel>();
     final graph = context.watch<GcsFieldGraphModel>();
-    final nodes = context.watch<GcsNodeModel>();
-    final robot = mapping.visibleRobotPixel;
-    final insideMap = robot?.insideMap == true;
-    final specContext = _specTeachContext(mapping);
-    final canCreate = graph.canEdit && specContext;
-    final fieldHint = graph.selectedFieldName;
+    final mapping = context.watch<GcsMappingModel>();
+    _ensureFieldSelection(graph, mapping);
+    final metadata = mapping.previewMetadata;
+    final selectedNode = _nodeById(graph.nodes, _selectedNodeId);
+    final selectedEdge = _edgeById(graph.edges, _selectedEdgeId);
+    final robotPoseReady = _robotPoseContext(mapping, graph);
+    final mapPickReady = _mapPickContext(mapping, graph);
 
-    final markers = nodes.nodes
-        .map(
-          (n) => MapPreviewNodeMarker(
-            label: n.name,
-            pixelX: n.pixelX,
-            pixelY: n.pixelY,
-            color: n.markerColor,
+    final markers = <MapPreviewNodeMarker>[];
+    if (metadata != null) {
+      for (final node in graph.nodes) {
+        final pixel = metadata.mapToPixel(node.pose.x, node.pose.y);
+        if (!pixel.insideMap) continue;
+        markers.add(
+          MapPreviewNodeMarker(
+            label: node.name,
+            pixelX: pixel.x,
+            pixelY: pixel.y,
+            color: node.nodeId == _selectedNodeId
+                ? Colors.yellowAccent
+                : _nodeColor(node.role),
           ),
-        )
-        .toList(growable: true);
-    final demoA = mapPreviewDemoPointMarker(
-      label: 'A',
-      pose: mapping.demoPointA,
-      metadata: mapping.previewMetadata,
-      color: const Color(0xFF29B6F6),
-    );
-    final demoB = mapPreviewDemoPointMarker(
-      label: 'B',
-      pose: mapping.demoPointB,
-      metadata: mapping.previewMetadata,
-      color: const Color(0xFFFF7043),
-    );
-    if (demoA != null) markers.add(demoA);
-    if (demoB != null) markers.add(demoB);
+        );
+      }
+    }
+    final segments = <MapPreviewRouteSegment>[];
+    if (metadata != null) {
+      for (final edge in graph.edges) {
+        final start = graph.nodeById(edge.startNodeId);
+        final end = graph.nodeById(edge.endNodeId);
+        if (start == null || end == null) continue;
+        final a = metadata.mapToPixel(start.pose.x, start.pose.y);
+        final b = metadata.mapToPixel(end.pose.x, end.pose.y);
+        if (!a.insideMap || !b.insideMap) continue;
+        segments.add(
+          MapPreviewRouteSegment(
+            start: Offset(a.x, a.y),
+            end: Offset(b.x, b.y),
+            bidirectional: edge.bidirectional,
+            color: edge.edgeId == _selectedEdgeId
+                ? Colors.yellowAccent
+                : _edgeColor(edge),
+          ),
+        );
+      }
+    }
 
     return Scaffold(
       backgroundColor: _bg,
       appBar: AppBar(
         backgroundColor: _panelBg,
         surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        title: Text(
-          'Düğümler',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 5.sp,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
+        title: const Text('Düğümler'),
         actions: [
-          if (nodes.hasRouteEligibleNodes)
-            TextButton(
-              onPressed: () => _openScenario(context),
-              child: Text(
-                'Senaryoya geç',
-                style: TextStyle(color: _accent, fontSize: 3.sp),
-              ),
-            ),
-          if (fieldHint != null)
+          if (graph.fields.isNotEmpty)
             Padding(
-              padding: EdgeInsets.only(right: 2.w),
-              child: Center(
-                child: Text(
-                  'Saha: $fieldHint',
-                  style: TextStyle(color: _muted, fontSize: 3.sp),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  key: const Key('node-field-selector'),
+                  value: graph.fields.any(
+                    (field) => field.fieldName == graph.selectedFieldName,
+                  )
+                      ? graph.selectedFieldName
+                      : null,
+                  hint: const Text(
+                    'Saha seç',
+                    style: TextStyle(color: _bright),
+                  ),
+                  dropdownColor: _panelBg,
+                  style: const TextStyle(color: _bright),
+                  iconEnabledColor: _bright,
+                  items: [
+                    for (final field in graph.fields)
+                      DropdownMenuItem(
+                        value: field.fieldName,
+                        child: Text('Saha: ${field.fieldName}'),
+                      ),
+                  ],
+                  onChanged: graph.connected && !graph.busy
+                      ? (value) => unawaited(_selectField(value))
+                      : null,
                 ),
               ),
             ),
+          _PackageBadge(graph: graph),
+          IconButton(
+            tooltip: 'Grafiği yenile',
+            onPressed: graph.connected && !graph.graphLoading
+                ? () => unawaited(_refresh())
+                : null,
+            icon: graph.graphLoading
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh),
+          ),
+          const SizedBox(width: 8),
         ],
       ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _HintBar(
-            hasPreview: mapping.hasPreviewPng,
-            insideMap: insideMap,
-            hasRobot: robot != null,
-            localized: mapping.activeLocalizedField != null,
-            connected: mapping.isConnected,
-            specContext: specContext,
-            nodeCount: nodes.nodes.length,
-            routeEligibleCount: nodes.routeEligibleNodes.length,
+          _GraphStateBanner(
+            graph: graph,
+            mapping: mapping,
+            mapPickMode: _mapPickMode,
+            onCancelPick: () => setState(() => _mapPickMode = false),
           ),
           Expanded(
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Expanded(
-                  flex: 7,
                   child: mapping.hasPreviewPng
                       ? MapPreviewStage(
                           pngBytes: mapping.previewPng!,
-                          metadata: mapping.previewMetadata,
-                          robotPixel: robot,
+                          metadata: metadata,
+                          robotPixel: mapping.visibleRobotPixel,
                           awaitingFresh: mapping.awaitingFreshPreview,
                           sourceLabel: mapping.previewSourceLabel,
                           nodeMarkers: markers,
-                          onMapTap: canCreate ? _createAtPixel : null,
+                          routeSegments: segments,
+                          onMapTap: _mapPickMode &&
+                                  graph.canEdit &&
+                                  mapPickReady &&
+                                  !graph.busy
+                              ? _createAtPixel
+                              : null,
+                          onNodeMarkerTap: (name) =>
+                              _selectNodeByName(name, graph.nodes),
                         )
-                      : _NoMapPlaceholder(
-                          connected: mapping.isConnected,
-                          localized: mapping.activeLocalizedField != null,
-                        ),
+                      : _MapEmptyState(graph: graph, mapping: mapping),
                 ),
-                Container(
-                  width: 34.w,
-                  decoration: const BoxDecoration(
-                    color: _panelBg,
-                    border: Border(left: BorderSide(color: _borderC)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _DemoPointPanel(
-                        enabled: mapping.canSaveDemoPoint,
-                        localizationStatus: mapping.localizationStatus,
-                        savingPoints: _savingDemoPoints,
-                        savedPoints: _savedDemoPoints,
-                        savingRoutePoints: _savingDemoRoutePoints,
-                        clearingRoutes: _clearingDemoRoutes,
-                        onSave: _saveDemoPoint,
-                        onSaveRoutePoint: _saveDemoRoutePoint,
-                        onClearRoute: _clearDemoRoute,
-                      ),
-                      const Divider(height: 1, color: _borderC),
-                      Expanded(
-                        child: _NodeListPanel(
-                          nodes: nodes.nodes,
-                          canEdit: graph.canEdit,
-                          canMoveToRobot:
-                              insideMap && graph.canEdit && specContext,
-                          onEdit: (node) => unawaited(_editNode(node)),
-                          onDelete: (node) => unawaited(_deleteNode(node)),
-                          onMoveToRobot: (node) =>
-                              unawaited(_moveNodeToRobot(node)),
-                        ),
-                      ),
-                      const Divider(height: 1, color: _borderC),
-                      Padding(
-                        padding: EdgeInsets.all(2.w),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            if (!graph.hasSelectedField || !graph.graphFresh)
-                              Padding(
-                                padding: EdgeInsets.only(bottom: 6.h),
-                                child: Text(
-                                  graph.graphError ??
-                                      'Kayıtlı Haritalar’dan düzenlenecek sahayı seçin.',
-                                  style: TextStyle(
-                                    color: _warn,
-                                    fontSize: 2.8.sp,
-                                  ),
-                                ),
-                              ),
-                            SizedBox(
-                              height: 40.h,
-                              child: ElevatedButton(
-                                onPressed: canCreate
-                                    ? () => unawaited(_createAtRobot())
-                                    : null,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: _accent,
-                                  disabledBackgroundColor:
-                                      const Color(0xFF2A2A2A),
-                                  foregroundColor: Colors.white,
-                                  disabledForegroundColor: _muted,
-                                  elevation: 0,
-                                ),
-                                child: Text(
-                                  'Robot konumundan düğüm ekle',
-                                  style: TextStyle(
-                                    fontSize: 2.8.sp,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+                SizedBox(
+                  width: MediaQuery.sizeOf(context).width < 1000 ? 330 : 370,
+                  child: _ProductionPanel(
+                    graph: graph,
+                    section: _section,
+                    onSectionChanged: (value) =>
+                        setState(() => _section = value),
+                    searchController: _searchController,
+                    roleFilter: _roleFilter,
+                    stationFilter: _stationFilter,
+                    onFilterChanged: (role, station) => setState(() {
+                      _roleFilter = role;
+                      _stationFilter = station;
+                    }),
+                    selectedNode: selectedNode,
+                    selectedEdge: selectedEdge,
+                    onSelectNode: _selectNode,
+                    onSelectEdge: (edge) => setState(() {
+                      _selectedEdgeId = edge.edgeId;
+                      _selectedNodeId = null;
+                      _section = _PanelSection.selected;
+                    }),
+                    onAddNode: _chooseAddMethod,
+                    onAddNodeAtRobot: _createAtRobot,
+                    onAddNodeFromMap: _beginMapPick,
+                    onEditNode: _editNode,
+                    onMoveNode: _moveNodeToRobot,
+                    onDeleteNode: _deleteNode,
+                    onAddEdge: ({int? startNodeId}) =>
+                        _editEdge(startNodeId: startNodeId),
+                    onEditEdge: (edge) => _editEdge(edge: edge),
+                    onDeleteEdge: _deleteEdge,
+                    robotPoseReady: robotPoseReady,
+                    mapPickReady: mapPickReady,
                   ),
                 ),
               ],
@@ -557,319 +648,693 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
   }
 }
 
-class _DemoPointPanel extends StatelessWidget {
-  final bool enabled;
-  final LocalizationStatus? localizationStatus;
-  final Set<String> savingPoints;
-  final Map<String, DemoPointSaveResult> savedPoints;
-  final Set<String> savingRoutePoints;
-  final Set<String> clearingRoutes;
-  final Future<void> Function(String pointName) onSave;
-  final Future<void> Function(String targetName) onSaveRoutePoint;
-  final Future<void> Function(String targetName) onClearRoute;
+enum _AddMethod { robot, map }
 
-  const _DemoPointPanel({
-    required this.enabled,
-    required this.localizationStatus,
-    required this.savingPoints,
-    required this.savedPoints,
-    required this.savingRoutePoints,
-    required this.clearingRoutes,
-    required this.onSave,
-    required this.onSaveRoutePoint,
-    required this.onClearRoute,
+class _PanelTabButton extends StatelessWidget {
+  const _PanelTabButton({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
   });
 
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.all(2.w),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            'Demo A/B Noktaları',
-            style: TextStyle(
-              color: _bright,
-              fontSize: 3.2.sp,
-              fontWeight: FontWeight.w600,
+  Widget build(BuildContext context) => Expanded(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2),
+          child: Material(
+            color: selected ? _accent.withValues(alpha: 0.22) : _panelBg,
+            shape: RoundedRectangleBorder(
+              side: BorderSide(color: selected ? _accent : _borderC),
+              borderRadius: BorderRadius.circular(6),
             ),
-          ),
-          SizedBox(height: 0.4.h),
-          Row(
-            children: [
-              Expanded(child: _buildButton('A')),
-              SizedBox(width: 1.w),
-              Expanded(child: _buildButton('B')),
-            ],
-          ),
-          SizedBox(height: 0.8.h),
-          _buildRouteControls('A'),
-          SizedBox(height: 0.6.h),
-          _buildRouteControls('B'),
-          for (final point in const ['A', 'B'])
-            if (savedPoints[point] case final result?)
-              Padding(
-                padding: EdgeInsets.only(top: 0.5.h),
-                child: Text(
-                  _resultText(point, result),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: const Color(0xFF81C784),
-                    fontSize: 2.4.sp,
-                    fontFamily: 'monospace',
-                  ),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: onTap,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 9),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      icon,
+                      size: 17,
+                      color: selected ? _accent : _bright,
+                    ),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: selected ? Colors.white : _bright,
+                          fontSize: 12,
+                          fontWeight:
+                              selected ? FontWeight.w700 : FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildButton(String point) {
-    final saving = savingPoints.contains(point);
-    return SizedBox(
-      height: 38.h,
-      child: ElevatedButton(
-        onPressed: enabled && !saving ? () => unawaited(onSave(point)) : null,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: _accent,
-          disabledBackgroundColor: const Color(0xFF2A2A2A),
-          foregroundColor: Colors.white,
-          disabledForegroundColor: _muted,
-          elevation: 0,
-          padding: EdgeInsets.symmetric(horizontal: 1.w),
-        ),
-        child: saving
-            ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : Text(
-                '$point Noktasını Kaydet',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 2.4.sp),
-              ),
-      ),
-    );
-  }
-
-  Widget _buildRouteControls(String target) {
-    final saving = savingRoutePoints.contains(target);
-    final clearing = clearingRoutes.contains(target);
-    final busy = saving || clearing;
-    return Row(
-      children: [
-        SizedBox(
-          width: 5.w,
-          child: Text(
-            '$target Rotası',
-            style: TextStyle(color: _bright, fontSize: 2.4.sp),
-          ),
-        ),
-        SizedBox(width: 0.6.w),
-        Expanded(
-          child: SizedBox(
-            height: 34.h,
-            child: OutlinedButton.icon(
-              onPressed: enabled && !busy
-                  ? () => unawaited(onSaveRoutePoint(target))
-                  : null,
-              style: OutlinedButton.styleFrom(
-                foregroundColor: _bright,
-                disabledForegroundColor: _muted,
-                side: const BorderSide(color: _borderC),
-                padding: EdgeInsets.symmetric(horizontal: 0.6.w),
-              ),
-              icon: saving
-                  ? const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Icon(Icons.subdirectory_arrow_left, size: 2.8.sp),
-              label: Text(
-                'Dönüş Noktası Ekle',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 2.1.sp),
-              ),
             ),
           ),
         ),
-        SizedBox(width: 0.5.w),
-        IconButton(
-          tooltip: '$target rotasını temizle',
-          onPressed:
-              enabled && !busy ? () => unawaited(onClearRoute(target)) : null,
-          color: _danger,
-          disabledColor: _muted,
-          icon: clearing
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.delete_outline),
-        ),
-      ],
-    );
-  }
-
-  String _resultText(String point, DemoPointSaveResult result) {
-    final pose = result.pose;
-    if (pose == null) return '$point kaydedildi';
-    return '$point: x=${pose.x.toStringAsFixed(2)}, '
-        'y=${pose.y.toStringAsFixed(2)}, '
-        'θ=${pose.theta.toStringAsFixed(2)}';
-  }
+      );
 }
 
-class _NodeListPanel extends StatelessWidget {
-  final List<TaughtFieldNode> nodes;
-  final bool canEdit;
-  final bool canMoveToRobot;
-  final void Function(TaughtFieldNode) onEdit;
-  final void Function(TaughtFieldNode) onDelete;
-  final void Function(TaughtFieldNode) onMoveToRobot;
-
-  const _NodeListPanel({
-    required this.nodes,
-    required this.canEdit,
-    required this.canMoveToRobot,
-    required this.onEdit,
-    required this.onDelete,
-    required this.onMoveToRobot,
+class _ProductionPanel extends StatelessWidget {
+  const _ProductionPanel({
+    required this.graph,
+    required this.section,
+    required this.onSectionChanged,
+    required this.searchController,
+    required this.roleFilter,
+    required this.stationFilter,
+    required this.onFilterChanged,
+    required this.selectedNode,
+    required this.selectedEdge,
+    required this.onSelectNode,
+    required this.onSelectEdge,
+    required this.onAddNode,
+    required this.onAddNodeAtRobot,
+    required this.onAddNodeFromMap,
+    required this.onEditNode,
+    required this.onMoveNode,
+    required this.onDeleteNode,
+    required this.onAddEdge,
+    required this.onEditEdge,
+    required this.onDeleteEdge,
+    required this.robotPoseReady,
+    required this.mapPickReady,
   });
+
+  final GcsFieldGraphModel graph;
+  final _PanelSection section;
+  final ValueChanged<_PanelSection> onSectionChanged;
+  final TextEditingController searchController;
+  final FieldNodeRole? roleFilter;
+  final String? stationFilter;
+  final void Function(FieldNodeRole?, String?) onFilterChanged;
+  final FieldNode? selectedNode;
+  final FieldEdge? selectedEdge;
+  final ValueChanged<FieldNode> onSelectNode;
+  final ValueChanged<FieldEdge> onSelectEdge;
+  final VoidCallback onAddNode;
+  final VoidCallback onAddNodeAtRobot;
+  final VoidCallback onAddNodeFromMap;
+  final ValueChanged<FieldNode> onEditNode;
+  final ValueChanged<FieldNode> onMoveNode;
+  final ValueChanged<FieldNode> onDeleteNode;
+  final void Function({int? startNodeId}) onAddEdge;
+  final ValueChanged<FieldEdge> onEditEdge;
+  final ValueChanged<FieldEdge> onDeleteEdge;
+  final bool robotPoseReady;
+  final bool mapPickReady;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        decoration: const BoxDecoration(
+          color: _panelBg,
+          border: Border(left: BorderSide(color: _borderC)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Row(
+                children: [
+                  _PanelTabButton(
+                    key: const Key('nodes-tab'),
+                    icon: Icons.place_outlined,
+                    label: 'Düğümler',
+                    selected: section == _PanelSection.nodes,
+                    onTap: () => onSectionChanged(_PanelSection.nodes),
+                  ),
+                  _PanelTabButton(
+                    key: const Key('edges-tab'),
+                    icon: Icons.route_outlined,
+                    label: 'Bağlantılar',
+                    selected: section == _PanelSection.edges,
+                    onTap: () => onSectionChanged(_PanelSection.edges),
+                  ),
+                  _PanelTabButton(
+                    key: const Key('selected-tab'),
+                    icon: Icons.info_outline,
+                    label: 'Seçili',
+                    selected: section == _PanelSection.selected,
+                    onTap: () => onSectionChanged(_PanelSection.selected),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: _borderC),
+            Expanded(child: _content()),
+          ],
+        ),
+      );
+
+  Widget _content() => switch (section) {
+        _PanelSection.nodes => _NodeSection(
+            graph: graph,
+            searchController: searchController,
+            roleFilter: roleFilter,
+            stationFilter: stationFilter,
+            onFilterChanged: onFilterChanged,
+            onSelect: onSelectNode,
+            onAdd: onAddNode,
+            onAddAtRobot: onAddNodeAtRobot,
+            onAddFromMap: onAddNodeFromMap,
+            robotPoseReady: robotPoseReady,
+            mapPickReady: mapPickReady,
+          ),
+        _PanelSection.edges => _EdgeSection(
+            graph: graph,
+            onSelect: onSelectEdge,
+            onAdd: () => onAddEdge(),
+          ),
+        _PanelSection.selected => _SelectedSection(
+            graph: graph,
+            node: selectedNode,
+            edge: selectedEdge,
+            onEditNode: onEditNode,
+            onMoveNode: onMoveNode,
+            onDeleteNode: onDeleteNode,
+            onStartEdge: (node) => onAddEdge(startNodeId: node.nodeId),
+            onEditEdge: onEditEdge,
+            onDeleteEdge: onDeleteEdge,
+            canMoveNode: robotPoseReady,
+          ),
+      };
+}
+
+class _NodeSection extends StatefulWidget {
+  const _NodeSection({
+    required this.graph,
+    required this.searchController,
+    required this.roleFilter,
+    required this.stationFilter,
+    required this.onFilterChanged,
+    required this.onSelect,
+    required this.onAdd,
+    required this.onAddAtRobot,
+    required this.onAddFromMap,
+    required this.robotPoseReady,
+    required this.mapPickReady,
+  });
+
+  final GcsFieldGraphModel graph;
+  final TextEditingController searchController;
+  final FieldNodeRole? roleFilter;
+  final String? stationFilter;
+  final void Function(FieldNodeRole?, String?) onFilterChanged;
+  final ValueChanged<FieldNode> onSelect;
+  final VoidCallback onAdd;
+  final VoidCallback onAddAtRobot;
+  final VoidCallback onAddFromMap;
+  final bool robotPoseReady;
+  final bool mapPickReady;
+
+  @override
+  State<_NodeSection> createState() => _NodeSectionState();
+}
+
+class _NodeSectionState extends State<_NodeSection> {
+  @override
+  void initState() {
+    super.initState();
+    widget.searchController.addListener(_refresh);
+  }
+
+  @override
+  void didUpdateWidget(covariant _NodeSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.searchController != widget.searchController) {
+      oldWidget.searchController.removeListener(_refresh);
+      widget.searchController.addListener(_refresh);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.searchController.removeListener(_refresh);
+    super.dispose();
+  }
+
+  void _refresh() => setState(() {});
 
   @override
   Widget build(BuildContext context) {
+    final stations = widget.graph.nodes
+        .map((node) => node.stationId.trim())
+        .where((value) => value.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    final query = widget.searchController.text.trim().toLowerCase();
+    final nodes = widget.graph.nodes.where((node) {
+      final matchesText = query.isEmpty ||
+          node.name.toLowerCase().contains(query) ||
+          node.nodeId.toString().contains(query) ||
+          node.stationId.toLowerCase().contains(query);
+      return matchesText &&
+          (widget.roleFilter == null || node.role == widget.roleFilter) &&
+          (widget.stationFilter == null ||
+              node.stationId == widget.stationFilter);
+    }).toList(growable: false);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: EdgeInsets.symmetric(horizontal: 2.w, vertical: 1.h),
-          child: Text(
-            'Öğretilmiş düğümler (${nodes.length})',
-            style: TextStyle(
-              color: _bright,
-              fontSize: 3.2.sp,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-        const Divider(height: 1, color: _borderC),
-        Expanded(
-          child: nodes.isEmpty
-              ? Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(2.w),
-                    child: Text(
-                      'Henüz düğüm yok.\nRobotu noktaya götürüp oluşturun.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: _muted, fontSize: 2.8.sp),
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            children: [
+              TextField(
+                controller: widget.searchController,
+                style: const TextStyle(color: _bright),
+                cursorColor: _accent,
+                decoration: const InputDecoration(
+                  isDense: true,
+                  prefixIcon: Icon(Icons.search),
+                  labelText: 'Düğüm ara',
+                  labelStyle: TextStyle(color: _muted),
+                  floatingLabelStyle: TextStyle(color: _accent),
+                  prefixIconColor: _muted,
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<FieldNodeRole?>(
+                      initialValue: widget.roleFilter,
+                      isExpanded: true,
+                      dropdownColor: _panelBg,
+                      iconEnabledColor: _bright,
+                      style: const TextStyle(color: _bright),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        labelText: 'Rol',
+                        labelStyle: TextStyle(color: _muted),
+                        floatingLabelStyle: TextStyle(color: _accent),
+                      ),
+                      items: [
+                        const DropdownMenuItem(
+                            value: null, child: Text('Tümü')),
+                        for (final role in FieldNodeRole.values)
+                          DropdownMenuItem(
+                            value: role,
+                            child: Text(role.operatorLabel),
+                          ),
+                      ],
+                      onChanged: (value) =>
+                          widget.onFilterChanged(value, widget.stationFilter),
                     ),
                   ),
-                )
-              : ListView.separated(
-                  padding: EdgeInsets.symmetric(vertical: 0.5.h),
-                  itemCount: nodes.length,
-                  separatorBuilder: (_, __) =>
-                      const Divider(height: 1, color: _borderC),
-                  itemBuilder: (context, index) {
-                    final n = nodes[index];
-                    return _NodeListTile(
-                      node: n,
-                      canEdit: canEdit,
-                      canMoveToRobot: canMoveToRobot,
-                      onEdit: () => onEdit(n),
-                      onDelete: () => onDelete(n),
-                      onMoveToRobot: () => onMoveToRobot(n),
-                    );
-                  },
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: DropdownButtonFormField<String?>(
+                      initialValue: stations.contains(widget.stationFilter)
+                          ? widget.stationFilter
+                          : null,
+                      isExpanded: true,
+                      dropdownColor: _panelBg,
+                      iconEnabledColor: _bright,
+                      style: const TextStyle(color: _bright),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        labelText: 'Station',
+                        labelStyle: TextStyle(color: _muted),
+                        floatingLabelStyle: TextStyle(color: _accent),
+                      ),
+                      items: [
+                        const DropdownMenuItem(
+                            value: null, child: Text('Tümü')),
+                        for (final station in stations)
+                          DropdownMenuItem(
+                              value: station, child: Text(station)),
+                      ],
+                      onChanged: (value) =>
+                          widget.onFilterChanged(widget.roleFilter, value),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Düğümler (${widget.graph.nodes.length})',
+                  style: const TextStyle(
+                    color: _bright,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
+              ),
+              FilledButton.icon(
+                key: const Key('production-add-node'),
+                style: FilledButton.styleFrom(
+                  disabledBackgroundColor: const Color(0xFF2A2A2A),
+                  disabledForegroundColor: _muted,
+                ),
+                onPressed: widget.graph.selectedFieldIsActive ||
+                        widget.graph.busy ||
+                        !widget.graph.connected ||
+                        !widget.graph.hasSelectedField
+                    ? null
+                    : widget.onAdd,
+                icon: const Icon(Icons.add),
+                label: const Text('Düğüm Ekle'),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 6),
+        const Divider(height: 1, color: _borderC),
+        Expanded(
+          child: _NodeListBody(
+            graph: widget.graph,
+            nodes: nodes,
+            onSelect: widget.onSelect,
+            onAdd: widget.onAdd,
+            onAddAtRobot: widget.onAddAtRobot,
+            onAddFromMap: widget.onAddFromMap,
+            robotPoseReady: widget.robotPoseReady,
+            mapPickReady: widget.mapPickReady,
+          ),
         ),
       ],
     );
   }
 }
 
-class _NodeListTile extends StatelessWidget {
-  final TaughtFieldNode node;
-  final bool canEdit;
-  final bool canMoveToRobot;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
-  final VoidCallback onMoveToRobot;
-
-  const _NodeListTile({
-    required this.node,
-    required this.canEdit,
-    required this.canMoveToRobot,
-    required this.onEdit,
-    required this.onDelete,
-    required this.onMoveToRobot,
+class _NodeListBody extends StatelessWidget {
+  const _NodeListBody({
+    required this.graph,
+    required this.nodes,
+    required this.onSelect,
+    required this.onAdd,
+    required this.onAddAtRobot,
+    required this.onAddFromMap,
+    required this.robotPoseReady,
+    required this.mapPickReady,
   });
+
+  final GcsFieldGraphModel graph;
+  final List<FieldNode> nodes;
+  final ValueChanged<FieldNode> onSelect;
+  final VoidCallback onAdd;
+  final VoidCallback onAddAtRobot;
+  final VoidCallback onAddFromMap;
+  final bool robotPoseReady;
+  final bool mapPickReady;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 1.5.w, vertical: 0.6.h),
+    if (!graph.connected) return const _PanelMessage('Robot bağlantısı yok.');
+    if (!graph.hasSelectedField) {
+      return const _PanelMessage('Önce bir saha seçin.');
+    }
+    if (graph.graphLoading) {
+      return const _PanelMessage('Saha grafiği yükleniyor...', progress: true);
+    }
+    if (graph.graphError != null) return _PanelMessage(graph.graphError!);
+    if (graph.nodes.isEmpty) {
+      return _PanelMessage(
+        'Bu sahada henüz düğüm bulunmuyor.',
+        action: Column(
+          children: [
+            OutlinedButton.icon(
+              onPressed: graph.canEdit && !graph.busy && robotPoseReady
+                  ? onAddAtRobot
+                  : null,
+              icon: const Icon(Icons.my_location),
+              label: const Text('Robot Konumundan Düğüm Ekle'),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: graph.canEdit && !graph.busy && mapPickReady
+                  ? onAddFromMap
+                  : null,
+              icon: const Icon(Icons.add_location_alt_outlined),
+              label: const Text('Haritadan Düğüm Ekle'),
+            ),
+          ],
+        ),
+      );
+    }
+    if (nodes.isEmpty) return const _PanelMessage('Filtreye uyan düğüm yok.');
+    return ListView.separated(
+      itemCount: nodes.length,
+      separatorBuilder: (_, __) => const Divider(height: 1, color: _borderC),
+      itemBuilder: (context, index) {
+        final node = nodes[index];
+        return ListTile(
+          dense: true,
+          leading: Icon(Icons.location_on, color: _nodeColor(node.role)),
+          title: Text(
+            node.name.isEmpty ? node.nodeId.toString() : node.name,
+            style: const TextStyle(color: _bright, fontWeight: FontWeight.w600),
+          ),
+          subtitle: Text(
+            '${node.role.operatorLabel}${node.stationId.isEmpty ? '' : ' · ${node.stationId}'}\n'
+            'x: ${node.pose.x.toStringAsFixed(2)}  y: ${node.pose.y.toStringAsFixed(2)}',
+            style: const TextStyle(color: _muted, fontSize: 12),
+          ),
+          isThreeLine: true,
+          onTap: () => onSelect(node),
+        );
+      },
+    );
+  }
+}
+
+class _EdgeSection extends StatelessWidget {
+  const _EdgeSection({
+    required this.graph,
+    required this.onSelect,
+    required this.onAdd,
+  });
+
+  final GcsFieldGraphModel graph;
+  final ValueChanged<FieldEdge> onSelect;
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Bağlantılar (${graph.edges.length})',
+                    style: const TextStyle(
+                      color: _bright,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                FilledButton.icon(
+                  key: const Key('production-add-edge'),
+                  onPressed:
+                      graph.canEdit && graph.nodes.length >= 2 && !graph.busy
+                          ? onAdd
+                          : null,
+                  icon: const Icon(Icons.add_road),
+                  label: const Text('Bağlantı Ekle'),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: _borderC),
+          Expanded(
+            child: !graph.connected
+                ? const _PanelMessage('Robot bağlantısı yok.')
+                : !graph.hasSelectedField
+                    ? const _PanelMessage('Önce bir saha seçin.')
+                    : graph.graphLoading
+                        ? const _PanelMessage(
+                            'Saha grafiği yükleniyor...',
+                            progress: true,
+                          )
+                        : graph.edges.isEmpty
+                            ? _PanelMessage(
+                                graph.nodes.length < 2
+                                    ? 'Bağlantı için en az iki düğüm ekleyin.'
+                                    : 'Bu sahada henüz bağlantı bulunmuyor.',
+                              )
+                            : ListView.separated(
+                                itemCount: graph.edges.length,
+                                separatorBuilder: (_, __) => const Divider(
+                                  height: 1,
+                                  color: _borderC,
+                                ),
+                                itemBuilder: (context, index) {
+                                  final edge = graph.edges[index];
+                                  final start =
+                                      graph.nodeById(edge.startNodeId)?.name ??
+                                          edge.startNodeId.toString();
+                                  final end =
+                                      graph.nodeById(edge.endNodeId)?.name ??
+                                          edge.endNodeId.toString();
+                                  return ListTile(
+                                    dense: true,
+                                    leading: const Icon(
+                                      Icons.route_outlined,
+                                      color: _accent,
+                                    ),
+                                    title: Text(
+                                      '$start ${edge.bidirectional ? '↔' : '→'} $end',
+                                      style: const TextStyle(color: _bright),
+                                    ),
+                                    subtitle: Text(
+                                      '${edge.maxSpeed.toStringAsFixed(2)} m/s · '
+                                      '${edge.loadRule.wireName} · '
+                                      '${edge.movementDirection.wireName}'
+                                      '${edge.gateEvent.isEmpty ? '' : '\n${edge.gateEvent}'}',
+                                      style: const TextStyle(color: _muted),
+                                    ),
+                                    onTap: () => onSelect(edge),
+                                  );
+                                },
+                              ),
+          ),
+        ],
+      );
+}
+
+class _SelectedSection extends StatelessWidget {
+  const _SelectedSection({
+    required this.graph,
+    required this.node,
+    required this.edge,
+    required this.onEditNode,
+    required this.onMoveNode,
+    required this.onDeleteNode,
+    required this.onStartEdge,
+    required this.onEditEdge,
+    required this.onDeleteEdge,
+    required this.canMoveNode,
+  });
+
+  final GcsFieldGraphModel graph;
+  final FieldNode? node;
+  final FieldEdge? edge;
+  final ValueChanged<FieldNode> onEditNode;
+  final ValueChanged<FieldNode> onMoveNode;
+  final ValueChanged<FieldNode> onDeleteNode;
+  final ValueChanged<FieldNode> onStartEdge;
+  final ValueChanged<FieldEdge> onEditEdge;
+  final ValueChanged<FieldEdge> onDeleteEdge;
+  final bool canMoveNode;
+
+  @override
+  Widget build(BuildContext context) {
+    if (node == null && edge == null) {
+      return const _PanelMessage(
+        'Detaylarını görmek için haritadan veya listeden bir öğe seçin.',
+      );
+    }
+    if (node != null) {
+      final value = node!;
+      return SingleChildScrollView(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _DetailTitle(icon: Icons.location_on, title: value.name),
+            _detail('Node ID', value.nodeId.toString()),
+            _detail('Rol', value.role.operatorLabel),
+            _detail(
+                'Station', value.stationId.isEmpty ? '--' : value.stationId),
+            _detail('X / Y',
+                '${value.pose.x.toStringAsFixed(3)} / ${value.pose.y.toStringAsFixed(3)}'),
+            _detail('Yaw',
+                '${radiansToDegrees(value.pose.theta).toStringAsFixed(1)}°'),
+            _detail('Yük kuralı', value.loadRule.wireName),
+            _detail('Yaklaşma', value.approachMode.wireName),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed:
+                  graph.canEdit && !graph.busy ? () => onEditNode(value) : null,
+              icon: const Icon(Icons.edit_outlined),
+              label: const Text('Düzenle'),
+            ),
+            OutlinedButton.icon(
+              onPressed: graph.canEdit && !graph.busy && canMoveNode
+                  ? () => onMoveNode(value)
+                  : null,
+              icon: const Icon(Icons.my_location),
+              label: const Text('Robot Konumuna Taşı'),
+            ),
+            OutlinedButton.icon(
+              onPressed: graph.canEdit && !graph.busy && graph.nodes.length >= 2
+                  ? () => onStartEdge(value)
+                  : null,
+              icon: const Icon(Icons.add_road),
+              label: const Text('Buradan Bağlantı Başlat'),
+            ),
+            TextButton.icon(
+              onPressed: graph.canEdit && !graph.busy
+                  ? () => onDeleteNode(value)
+                  : null,
+              icon: const Icon(Icons.delete_outline),
+              label: const Text('Düğümü Sil'),
+              style: TextButton.styleFrom(foregroundColor: _danger),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final value = edge!;
+    final start = graph.nodeById(value.startNodeId)?.name ?? value.startNodeId;
+    final end = graph.nodeById(value.endNodeId)?.name ?? value.endNodeId;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Container(
-                width: 2.w,
-                height: 2.w,
-                decoration: BoxDecoration(
-                  color: node.markerColor,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              SizedBox(width: 1.w),
-              Expanded(
-                child: Text(
-                  node.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: _bright,
-                    fontSize: 3.2.sp,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
+          _DetailTitle(icon: Icons.route_outlined, title: '$start → $end'),
+          _detail('Edge ID', value.edgeId.toString()),
+          _detail('Çift yönlü', value.bidirectional ? 'Evet' : 'Hayır'),
+          _detail('Maliyet', value.cost.toString()),
+          _detail('Azami hız', '${value.maxSpeed} m/s'),
+          _detail('Yük kuralı', value.loadRule.wireName),
+          _detail('Hareket yönü', value.movementDirection.wireName),
+          _detail(
+              'Gate event', value.gateEvent.isEmpty ? '--' : value.gateEvent),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed:
+                graph.canEdit && !graph.busy ? () => onEditEdge(value) : null,
+            icon: const Icon(Icons.edit_road),
+            label: const Text('Bağlantıyı Düzenle'),
           ),
-          SizedBox(height: 0.2.h),
-          Text(
-            '${node.type.etiket} · '
-            '(${node.pixelX.toStringAsFixed(0)}, ${node.pixelY.toStringAsFixed(0)})',
-            style: TextStyle(color: _muted, fontSize: 2.5.sp),
-          ),
-          SizedBox(height: 0.4.h),
-          Row(
-            children: [
-              _MiniAction(
-                icon: Icons.edit_outlined,
-                tooltip: 'Düzenle',
-                onTap: canEdit ? onEdit : null,
-              ),
-              _MiniAction(
-                icon: Icons.my_location,
-                tooltip: 'Konumu robota taşı',
-                onTap: canMoveToRobot ? onMoveToRobot : null,
-              ),
-              _MiniAction(
-                icon: Icons.delete_outline,
-                tooltip: 'Sil',
-                color: _danger,
-                onTap: canEdit ? onDelete : null,
-              ),
-            ],
+          TextButton.icon(
+            onPressed:
+                graph.canEdit && !graph.busy ? () => onDeleteEdge(value) : null,
+            icon: const Icon(Icons.delete_outline),
+            label: const Text('Bağlantıyı Sil'),
+            style: TextButton.styleFrom(foregroundColor: _danger),
           ),
         ],
       ),
@@ -877,195 +1342,289 @@ class _NodeListTile extends StatelessWidget {
   }
 }
 
-class _MiniAction extends StatelessWidget {
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback? onTap;
-  final Color? color;
-
-  const _MiniAction({
-    required this.icon,
-    required this.tooltip,
-    required this.onTap,
-    this.color,
+class _GraphStateBanner extends StatelessWidget {
+  const _GraphStateBanner({
+    required this.graph,
+    required this.mapping,
+    required this.mapPickMode,
+    required this.onCancelPick,
   });
+
+  final GcsFieldGraphModel graph;
+  final GcsMappingModel mapping;
+  final bool mapPickMode;
+  final VoidCallback onCancelPick;
 
   @override
   Widget build(BuildContext context) {
-    return IconButton(
-      tooltip: tooltip,
-      onPressed: onTap,
-      visualDensity: VisualDensity.compact,
-      padding: EdgeInsets.zero,
-      constraints: BoxConstraints.tightFor(width: 5.w, height: 5.w),
-      icon: Icon(
-        icon,
-        size: 4.sp,
-        color: onTap == null ? const Color(0xFF555555) : (color ?? _bright),
+    String text;
+    Color color;
+    if (!graph.connected) {
+      text = 'Robot bağlantısı yok.';
+      color = _danger;
+    } else if (!graph.hasSelectedField) {
+      text = 'Önce Kayıtlı Haritalar’dan bir saha seçin.';
+      color = _warning;
+    } else if (graph.graphLoading) {
+      text = 'Saha grafiği yükleniyor...';
+      color = _accent;
+    } else if (graph.graphError != null) {
+      text = graph.graphError!;
+      color = _danger;
+    } else if (graph.selectedFieldIsActive) {
+      text =
+          'Bu saha aktif durumda. Düzenlemek için yeni bir draft/saha sürümü oluşturulmalıdır.';
+      color = _warning;
+    } else if (!graph.selectedFieldActivityKnown) {
+      text = 'Aktif saha durumu güncel değil; düzenleme kilitli.';
+      color = _warning;
+    } else if (mapPickMode) {
+      text = 'Haritada düğüm konumunu seçin.';
+      color = _accent;
+    } else if (graph.busy) {
+      text = 'ROS saha işlemi sürüyor: ${graph.operation}';
+      color = _accent;
+    } else {
+      text = 'Production saha grafiği düzenlemeye hazır.';
+      color = _success;
+    }
+    return Container(
+      color: color.withValues(alpha: 0.12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      child: Row(
+        children: [
+          Icon(Icons.info_outline, size: 17, color: color),
+          const SizedBox(width: 8),
+          Expanded(child: Text(text, style: TextStyle(color: color))),
+          if (mapPickMode)
+            TextButton(onPressed: onCancelPick, child: const Text('İptal')),
+        ],
       ),
     );
   }
 }
 
-class _HintBar extends StatelessWidget {
-  final bool hasPreview;
-  final bool insideMap;
-  final bool hasRobot;
-  final bool localized;
-  final bool connected;
-  final bool specContext;
-  final int nodeCount;
-  final int routeEligibleCount;
+class _MapEmptyState extends StatelessWidget {
+  const _MapEmptyState({required this.graph, required this.mapping});
 
-  const _HintBar({
-    required this.hasPreview,
-    required this.insideMap,
-    required this.hasRobot,
-    required this.localized,
-    required this.connected,
-    required this.specContext,
-    required this.nodeCount,
-    required this.routeEligibleCount,
-  });
+  final GcsFieldGraphModel graph;
+  final GcsMappingModel mapping;
 
   @override
   Widget build(BuildContext context) {
-    // Kopukken şerit yok; yalnız bağlı oturum durumları.
-    if (!connected) return const SizedBox.shrink();
-
-    final String text;
-    final Color color;
-    if (!hasPreview) {
-      text = localized
-          ? 'Lokalizasyon açık — harita önizlemesi bekleniyor…'
-          : 'Haritalama sonrası veya lokalizasyon: Kayıtlı Haritalar → '
-              'Haritayı Yükle, ya da mapping önizlemesi gelsin.';
-      color = _warn;
-    } else if (!hasRobot) {
-      text = 'Robot pikseli bekleniyor (/map_preview/robot_pixel)…';
-      color = _muted;
-    } else if (!insideMap) {
-      text = 'Robot harita dışında — düğüm oluşturulamaz.';
-      color = _warn;
-    } else {
-      final ctx = localized
-          ? 'Lokalizasyon'
-          : (specContext ? 'Harita oturumu' : 'Önizleme');
-      text = '$ctx · robot harita içinde — Yeni düğüm oluştur aktif'
-          '${nodeCount > 0 ? ' · $nodeCount düğüm' : ''}'
-          '${routeEligibleCount > 0 ? ' · $routeEligibleCount senaryoya uygun' : ''}';
-      color = const Color(0xFF43A047);
-    }
-
-    return Container(
-      width: double.infinity,
-      color: _panelBg,
-      padding: EdgeInsets.symmetric(horizontal: 3.w, vertical: 0.8.h),
-      child: Text(text, style: TextStyle(color: color, fontSize: 3.sp)),
+    final text = !graph.connected
+        ? 'Robot bağlantısı yok.'
+        : !graph.hasSelectedField
+            ? 'Önce bir saha seçin.'
+            : graph.graphLoading
+                ? 'Saha grafiği yükleniyor...'
+                : mapping.awaitingFreshPreview
+                    ? 'Seçili saha için güncel harita önizlemesi bekleniyor...'
+                    : 'Harita önizlemesi alınamadı.';
+    return Center(
+      child: Text(
+        text,
+        textAlign: TextAlign.center,
+        style: const TextStyle(color: _muted, fontSize: 16),
+      ),
     );
   }
 }
 
-class _NoMapPlaceholder extends StatelessWidget {
-  final bool connected;
-  final bool localized;
-
-  const _NoMapPlaceholder({
-    required this.connected,
-    required this.localized,
-  });
+class _PackageBadge extends StatelessWidget {
+  const _PackageBadge({required this.graph});
+  final GcsFieldGraphModel graph;
 
   @override
   Widget build(BuildContext context) {
-    return ColoredBox(
-      color: const Color(0xFF0D0D0D),
-      child: Center(
+    final active = graph.selectedFieldIsActive;
+    final valid = graph.packageStatus?.state == FieldPackageState.valid;
+    if (!active && !valid) return const SizedBox.shrink();
+    final state = active ? 'ACTIVE' : 'VALID';
+    final color = active
+        ? _success
+        : state == 'VALID'
+            ? _accent
+            : _warning;
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          border: Border.all(color: color),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(state, style: TextStyle(color: color, fontSize: 12)),
+      ),
+    );
+  }
+}
+
+class _PanelMessage extends StatelessWidget {
+  const _PanelMessage(this.message, {this.progress = false, this.action});
+  final String message;
+  final bool progress;
+  final Widget? action;
+
+  @override
+  Widget build(BuildContext context) => Center(
         child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: 8.w),
+          padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.hub_outlined, color: _muted, size: 12.sp),
-              SizedBox(height: 1.2.h),
+              if (progress) ...[
+                const CircularProgressIndicator(),
+                const SizedBox(height: 14),
+              ],
               Text(
-                'Harita önizlemesi yok',
-                style: TextStyle(
-                  color: _bright,
-                  fontSize: 4.5.sp,
-                  fontWeight: FontWeight.w600,
-                ),
+                message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: _muted),
               ),
-              if (connected) ...[
-                SizedBox(height: 0.6.h),
-                Text(
-                  localized
-                      ? 'Lokalizasyon açık — PNG karesi bekleniyor.'
-                      : 'Önce Kayıtlı Haritalar’dan bir saha yükleyin '
-                          'veya mapping önizlemesi gelsin.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: _muted, fontSize: 3.2.sp),
-                ),
+              if (action != null) ...[
+                const SizedBox(height: 14),
+                action!,
               ],
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _NodeEditorValue {
-  final String name;
-  final FieldNodeRole role;
-  final String stationId;
-  final FieldLoadRule loadRule;
-  final FieldApproachMode approachMode;
-  final double yawRadians;
-  final double? x;
-  final double? y;
-  final String metadataJson;
-
-  const _NodeEditorValue({
-    required this.name,
-    required this.role,
-    required this.stationId,
-    required this.loadRule,
-    required this.approachMode,
-    required this.yawRadians,
-    this.x,
-    this.y,
-    required this.metadataJson,
-  });
-
-  FieldNode toNode({required FieldPose2D pose, int? nodeId}) => FieldNode(
-        nodeId: nodeId ?? FieldGraphId.next(),
-        name: name,
-        role: role,
-        stationId: stationId,
-        pose: pose,
-        loadRule: loadRule,
-        approachMode: approachMode,
-        metadataJson: metadataJson,
       );
 }
 
-class _NodeEditorDialog extends StatefulWidget {
-  final FieldNode? existing;
-  final bool screenYaw;
-
-  const _NodeEditorDialog({this.existing, required this.screenYaw});
+class _DetailTitle extends StatelessWidget {
+  const _DetailTitle({required this.icon, required this.title});
+  final IconData icon;
+  final String title;
 
   @override
-  State<_NodeEditorDialog> createState() => _NodeEditorDialogState();
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(bottom: 14),
+        child: Row(
+          children: [
+            Icon(icon, color: _accent),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(
+                  color: _bright,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
 }
 
-class _NodeEditorDialogState extends State<_NodeEditorDialog> {
+Widget _detail(String label, String value) => Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 105,
+            child: Text(label, style: const TextStyle(color: _muted)),
+          ),
+          Expanded(
+            child: SelectableText(
+              value,
+              style: const TextStyle(color: _bright, fontFamily: 'monospace'),
+            ),
+          ),
+        ],
+      ),
+    );
+
+FieldNode? _nodeById(List<FieldNode> nodes, int? id) {
+  if (id == null) return null;
+  for (final node in nodes) {
+    if (node.nodeId == id) return node;
+  }
+  return null;
+}
+
+FieldEdge? _edgeById(List<FieldEdge> edges, int? id) {
+  if (id == null) return null;
+  for (final edge in edges) {
+    if (edge.edgeId == id) return edge;
+  }
+  return null;
+}
+
+String _editBlockReason(GcsFieldGraphModel graph) {
+  if (!graph.connected) return 'Robot bağlantısı yok.';
+  if (!graph.hasSelectedField) return 'Önce bir saha seçin.';
+  if (graph.graphLoading) return 'Saha grafiği yükleniyor...';
+  if (graph.graphError != null) return graph.graphError!;
+  if (!graph.selectedFieldActivityKnown) {
+    return 'Aktif saha durumu güncel değil.';
+  }
+  if (graph.selectedFieldIsActive) {
+    return 'Bu saha aktif ve salt okunur. Yeni bir draft/saha sürümü oluşturun.';
+  }
+  if (graph.busy) return 'Başka bir saha işlemi devam ediyor.';
+  return 'Saha şu anda düzenlenemiyor.';
+}
+
+Color _nodeColor(FieldNodeRole role) => switch (role) {
+      FieldNodeRole.pickupApproach => const Color(0xFF29B6F6),
+      FieldNodeRole.pickupDock => const Color(0xFF1565C0),
+      FieldNodeRole.dropoffApproach => const Color(0xFFFF8A65),
+      FieldNodeRole.dropoffDock => _danger,
+      FieldNodeRole.gateQ5 || FieldNodeRole.gateQ6 => Colors.purpleAccent,
+      FieldNodeRole.qrTrigger => Colors.cyanAccent,
+      FieldNodeRole.wait => _success,
+      FieldNodeRole.transit => _muted,
+    };
+
+Color _edgeColor(FieldEdge edge) =>
+    edge.loadRule == FieldLoadRule.loaded ? _warning : _accent;
+
+Future<FieldNode?> showFieldNodeEditorDialog({
+  required BuildContext context,
+  FieldNode? existing,
+  FieldPose2D? initialPose,
+  bool currentPose = false,
+  Set<int> existingNodeIds = const {},
+}) =>
+    showDialog<FieldNode>(
+      context: context,
+      builder: (_) => _FieldNodeEditorDialog(
+        existing: existing,
+        initialPose: initialPose,
+        currentPose: currentPose,
+        existingNodeIds: existingNodeIds,
+      ),
+    );
+
+class _FieldNodeEditorDialog extends StatefulWidget {
+  const _FieldNodeEditorDialog({
+    this.existing,
+    this.initialPose,
+    required this.currentPose,
+    required this.existingNodeIds,
+  });
+
+  final FieldNode? existing;
+  final FieldPose2D? initialPose;
+  final bool currentPose;
+  final Set<int> existingNodeIds;
+
+  @override
+  State<_FieldNodeEditorDialog> createState() => _FieldNodeEditorDialogState();
+}
+
+class _FieldNodeEditorDialogState extends State<_FieldNodeEditorDialog> {
   final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _nodeId;
   late final TextEditingController _name;
   late final TextEditingController _stationId;
-  late final TextEditingController _yawDegrees;
   late final TextEditingController _x;
   late final TextEditingController _y;
+  late final TextEditingController _yaw;
   late final TextEditingController _metadata;
   late FieldNodeRole _role;
   late FieldLoadRule _loadRule;
@@ -1075,12 +1634,17 @@ class _NodeEditorDialogState extends State<_NodeEditorDialog> {
   void initState() {
     super.initState();
     final node = widget.existing;
-    _x = TextEditingController(text: node?.pose.x.toString() ?? '');
-    _y = TextEditingController(text: node?.pose.y.toString() ?? '');
+    final pose = node?.pose ?? widget.initialPose ?? FieldPose2D.zero;
+    _nodeId = TextEditingController(
+      text: (node?.nodeId ?? _nextAvailableNodeId(widget.existingNodeIds))
+          .toString(),
+    );
     _name = TextEditingController(text: node?.name ?? '');
     _stationId = TextEditingController(text: node?.stationId ?? '');
-    _yawDegrees = TextEditingController(
-      text: radiansToDegrees(node?.pose.theta ?? 0).toStringAsFixed(1),
+    _x = TextEditingController(text: pose.x.toStringAsFixed(3));
+    _y = TextEditingController(text: pose.y.toStringAsFixed(3));
+    _yaw = TextEditingController(
+      text: radiansToDegrees(pose.theta).toStringAsFixed(1),
     );
     _metadata = TextEditingController(text: node?.metadataJson ?? '{}');
     _role = node?.role ?? FieldNodeRole.transit;
@@ -1090,26 +1654,38 @@ class _NodeEditorDialogState extends State<_NodeEditorDialog> {
 
   @override
   void dispose() {
-    _x.dispose();
-    _y.dispose();
+    _nodeId.dispose();
     _name.dispose();
     _stationId.dispose();
-    _yawDegrees.dispose();
+    _x.dispose();
+    _y.dispose();
+    _yaw.dispose();
     _metadata.dispose();
     super.dispose();
   }
 
-  String? _metadataValidator(String? value) {
-    try {
-      final decoded = jsonDecode(value ?? '');
-      if (decoded is! Map) return 'Metadata JSON object olmalıdır';
-      return null;
-    } catch (_) {
-      return 'Geçerli JSON object girin';
-    }
-  }
+  bool get _stationRole => switch (_role) {
+        FieldNodeRole.pickupApproach ||
+        FieldNodeRole.pickupDock ||
+        FieldNodeRole.dropoffApproach ||
+        FieldNodeRole.dropoffDock =>
+          true,
+        _ => false,
+      };
 
-  void _applyRoleDefaults(FieldNodeRole role) {
+  String get _roleHelp => switch (_role) {
+        FieldNodeRole.gateQ5 => 'Gidiş yönündeki kapı izin noktası',
+        FieldNodeRole.gateQ6 => 'Dönüş yönündeki kapı izin noktası',
+        FieldNodeRole.qrTrigger => 'QR doğrulamasını tetikleyen düğüm',
+        FieldNodeRole.pickupApproach => 'Alma istasyonuna yaklaşma noktası',
+        FieldNodeRole.pickupDock => 'Yükün alınacağı dock noktası',
+        FieldNodeRole.dropoffApproach => 'Bırakma istasyonuna yaklaşma noktası',
+        FieldNodeRole.dropoffDock => 'Yükün bırakılacağı dock noktası',
+        FieldNodeRole.wait => 'Görevler arasında bekleme noktası',
+        FieldNodeRole.transit => 'Normal rota geçiş noktası',
+      };
+
+  void _applyRole(FieldNodeRole role) {
     setState(() {
       _role = role;
       switch (role) {
@@ -1121,11 +1697,9 @@ class _NodeEditorDialogState extends State<_NodeEditorDialog> {
           _loadRule = FieldLoadRule.loaded;
           _approachMode = FieldApproachMode.dock;
           break;
-        case FieldNodeRole.gateQ5 || FieldNodeRole.gateQ6:
-          _loadRule = FieldLoadRule.any;
-          _approachMode = FieldApproachMode.trigger;
-          break;
-        case FieldNodeRole.qrTrigger:
+        case FieldNodeRole.gateQ5 ||
+              FieldNodeRole.gateQ6 ||
+              FieldNodeRole.qrTrigger:
           _loadRule = FieldLoadRule.any;
           _approachMode = FieldApproachMode.trigger;
           break;
@@ -1140,20 +1714,51 @@ class _NodeEditorDialogState extends State<_NodeEditorDialog> {
     });
   }
 
+  String? _safeId(String? value) {
+    final parsed = int.tryParse(value?.trim() ?? '');
+    if (parsed == null) return 'Node ID tam sayı olmalı';
+    if (widget.existingNodeIds.contains(parsed) &&
+        parsed != widget.existing?.nodeId) {
+      return 'Bu Node ID başka bir düğüm tarafından kullanılıyor';
+    }
+    try {
+      FieldGraphId.requireSafe(parsed, 'node_id');
+      return null;
+    } catch (error) {
+      return _cleanError(error);
+    }
+  }
+
+  String? _number(String? value) =>
+      _parseNumber(value) == null ? 'Sonlu sayı girin' : null;
+
+  String? _metadataObject(String? value) {
+    try {
+      return jsonDecode(value ?? '') is Map ? null : 'JSON object olmalı';
+    } catch (_) {
+      return 'Geçerli JSON object girin';
+    }
+  }
+
   void _submit() {
-    if (!_formKey.currentState!.validate()) return;
-    final degrees = double.parse(_yawDegrees.text.trim());
+    if (_formKey.currentState?.validate() != true) return;
+    final pose = widget.currentPose
+        ? FieldPose2D.zero
+        : FieldPose2D(
+            x: _parseNumber(_x.text)!,
+            y: _parseNumber(_y.text)!,
+            theta: degreesToRadians(_parseNumber(_yaw.text)!),
+          );
     Navigator.pop(
       context,
-      _NodeEditorValue(
+      FieldNode(
+        nodeId: int.parse(_nodeId.text.trim()),
         name: _name.text.trim(),
         role: _role,
         stationId: _stationId.text.trim(),
+        pose: pose,
         loadRule: _loadRule,
         approachMode: _approachMode,
-        yawRadians: degreesToRadians(degrees),
-        x: double.tryParse(_x.text.trim()),
-        y: double.tryParse(_y.text.trim()),
         metadataJson: _metadata.text.trim(),
       ),
     );
@@ -1162,9 +1767,10 @@ class _NodeEditorDialogState extends State<_NodeEditorDialog> {
   @override
   Widget build(BuildContext context) => AlertDialog(
         title: Text(
-            widget.existing == null ? 'Yeni saha düğümü' : 'Düğümü düzenle'),
+          widget.existing == null ? 'Yeni production düğümü' : 'Düğümü düzenle',
+        ),
         content: SizedBox(
-          width: 520,
+          width: 560,
           child: Form(
             key: _formKey,
             child: SingleChildScrollView(
@@ -1172,50 +1778,106 @@ class _NodeEditorDialogState extends State<_NodeEditorDialog> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   TextFormField(
+                    controller: _nodeId,
+                    readOnly: true,
+                    enableInteractiveSelection: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Node ID',
+                      helperText: 'Otomatik oluşturulur ve değiştirilemez',
+                      suffixIcon: Icon(Icons.lock_outline),
+                    ),
+                    validator: _safeId,
+                  ),
+                  TextFormField(
                     controller: _name,
-                    decoration: const InputDecoration(labelText: 'Düğüm adı'),
+                    decoration: const InputDecoration(labelText: 'Ad'),
                     validator: (value) => value?.trim().isNotEmpty == true
                         ? null
-                        : 'Düğüm adı boş olamaz',
+                        : 'Mevcut ROS modeli için ad boş olamaz',
                   ),
-                  if (widget.existing != null)
-                    for (final entry
-                        in {_x: 'Map X (m)', _y: 'Map Y (m)'}.entries)
-                      TextFormField(
-                          controller: entry.key,
-                          decoration: InputDecoration(labelText: entry.value),
-                          validator: (v) =>
-                              double.tryParse(v?.trim() ?? '')?.isFinite == true
-                                  ? null
-                                  : 'Sonlu sayı girin'),
                   DropdownButtonFormField<FieldNodeRole>(
                     initialValue: _role,
                     decoration: const InputDecoration(labelText: 'Rol'),
                     items: [
-                      for (final value in FieldNodeRole.values)
+                      for (final role in FieldNodeRole.values)
                         DropdownMenuItem(
-                          value: value,
-                          child: Text(value.wireName),
+                          value: role,
+                          child: Text(role.operatorLabel),
                         ),
                     ],
                     onChanged: (value) {
-                      if (value != null) _applyRoleDefaults(value);
+                      if (value != null) _applyRole(value);
                     },
                   ),
-                  TextFormField(
-                    controller: _stationId,
-                    decoration: const InputDecoration(
-                      labelText: 'İstasyon kimliği (station_id)',
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 5),
+                      child: Text(
+                        _roleHelp,
+                        style: const TextStyle(color: _muted, fontSize: 12),
+                      ),
                     ),
+                  ),
+                  if (_stationRole)
+                    TextFormField(
+                      controller: _stationId,
+                      decoration: const InputDecoration(
+                        labelText: 'Station ID',
+                        helperText:
+                            'Serbest station kimliği; sabit liste kullanılmaz',
+                      ),
+                      validator: (value) => value?.trim().isNotEmpty == true
+                          ? null
+                          : 'Bu rol için station_id gerekli',
+                    ),
+                  if (widget.currentPose)
+                    const ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.my_location),
+                      title: Text('X / Y robotun güncel pozundan alınacak'),
+                      subtitle: Text(
+                        '/fields/save_current_pose_node gerçek pozu kaydeder.',
+                      ),
+                    )
+                  else
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            controller: _x,
+                            decoration:
+                                const InputDecoration(labelText: 'X (m)'),
+                            validator: _number,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: TextFormField(
+                            controller: _y,
+                            decoration:
+                                const InputDecoration(labelText: 'Y (m)'),
+                            validator: _number,
+                          ),
+                        ),
+                      ],
+                    ),
+                  TextFormField(
+                    controller: _yaw,
+                    decoration: const InputDecoration(
+                      labelText: 'Yaw (derece)',
+                      helperText: 'ROS’a radyan olarak gönderilir',
+                    ),
+                    validator: _number,
                   ),
                   DropdownButtonFormField<FieldLoadRule>(
                     initialValue: _loadRule,
-                    decoration: const InputDecoration(labelText: 'Yük kuralı'),
+                    decoration: const InputDecoration(labelText: 'Load Rule'),
                     items: [
-                      for (final value in FieldLoadRule.values)
+                      for (final rule in FieldLoadRule.values)
                         DropdownMenuItem(
-                          value: value,
-                          child: Text(value.wireName),
+                          value: rule,
+                          child: Text(rule.wireName),
                         ),
                     ],
                     onChanged: (value) {
@@ -1225,47 +1887,33 @@ class _NodeEditorDialogState extends State<_NodeEditorDialog> {
                   DropdownButtonFormField<FieldApproachMode>(
                     initialValue: _approachMode,
                     decoration:
-                        const InputDecoration(labelText: 'Yaklaşma modu'),
+                        const InputDecoration(labelText: 'Approach Mode'),
                     items: [
-                      for (final value in FieldApproachMode.values)
+                      for (final mode in FieldApproachMode.values)
                         DropdownMenuItem(
-                          value: value,
-                          child: Text(value.wireName),
+                          value: mode,
+                          child: Text(mode.wireName),
                         ),
                     ],
                     onChanged: (value) {
-                      if (value != null) setState(() => _approachMode = value);
-                    },
-                  ),
-                  TextFormField(
-                    controller: _yawDegrees,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                      signed: true,
-                    ),
-                    decoration: InputDecoration(
-                      labelText: widget.screenYaw
-                          ? 'Ekran yönü (derece)'
-                          : 'Map yaw (derece)',
-                      helperText: widget.screenYaw
-                          ? 'ROS’a screen_yaw olarak radyan gönderilir'
-                          : 'ROS pose.theta alanına radyan yazılır',
-                    ),
-                    validator: (value) {
-                      final parsed = double.tryParse(value?.trim() ?? '');
-                      if (parsed == null || !parsed.isFinite) {
-                        return 'Geçerli açı girin';
+                      if (value != null) {
+                        setState(() => _approachMode = value);
                       }
-                      return null;
                     },
                   ),
-                  TextFormField(
-                    controller: _metadata,
-                    minLines: 1,
-                    maxLines: 4,
-                    decoration:
-                        const InputDecoration(labelText: 'metadata_json'),
-                    validator: _metadataValidator,
+                  ExpansionTile(
+                    tilePadding: EdgeInsets.zero,
+                    title: const Text('Gelişmiş'),
+                    children: [
+                      TextFormField(
+                        controller: _metadata,
+                        minLines: 2,
+                        maxLines: 5,
+                        decoration:
+                            const InputDecoration(labelText: 'metadata_json'),
+                        validator: _metadataObject,
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -1281,3 +1929,19 @@ class _NodeEditorDialogState extends State<_NodeEditorDialog> {
         ],
       );
 }
+
+double? _parseNumber(String? raw) {
+  final value = double.tryParse((raw ?? '').trim().replaceAll(',', '.'));
+  return value?.isFinite == true ? value : null;
+}
+
+int _nextAvailableNodeId(Set<int> existingNodeIds) {
+  var candidate = FieldGraphId.next();
+  while (existingNodeIds.contains(candidate)) {
+    candidate = FieldGraphId.next();
+  }
+  return candidate;
+}
+
+String _cleanError(Object error) =>
+    error.toString().replaceFirst('Bad state: ', '').trim();
