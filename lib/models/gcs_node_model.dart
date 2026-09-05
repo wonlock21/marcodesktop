@@ -100,7 +100,7 @@ class GcsNodeModel extends ChangeNotifier {
         FieldNodeRole.dropoffDock =>
           FieldNodeType.birakma,
         FieldNodeRole.wait || FieldNodeRole.transit => FieldNodeType.baslangic,
-        FieldNodeRole.gateQ5 => FieldNodeType.kapi,
+        FieldNodeRole.gateQ5 || FieldNodeRole.gateQ6 => FieldNodeType.kapi,
         FieldNodeRole.qrTrigger => FieldNodeType.qr,
       };
       final pixel = metadata?.mapToPixel(node.pose.x, node.pose.y);

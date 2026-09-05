@@ -7,7 +7,7 @@ class PowerButton extends StatefulWidget {
   final double height;
   final double width;
   final IconData icon;
-  final Function onPressed;
+  final VoidCallback? onPressed;
   final VoidCallback? onLongPress;
   final String? labelOn;
   final String? labelOff;
@@ -47,10 +47,12 @@ class _PowerButtonState extends State<PowerButton> {
   Widget build(BuildContext context) {
     return GestureDetector(
       onLongPress: widget.onLongPress,
-      onTap: () {
-        _toggleState();
-        widget.onPressed();
-      },
+      onTap: widget.onPressed == null
+          ? null
+          : () {
+              _toggleState();
+              widget.onPressed!();
+            },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         width: 55.w,

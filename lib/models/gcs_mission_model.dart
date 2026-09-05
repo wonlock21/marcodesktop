@@ -1,4 +1,11 @@
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import '../services/agv_service.dart';
+import '../services/ros_bridge_client.dart';
+import '../services/ros_mapping_contract.dart';
+import 'gcs_field_graph_model.dart';
+import 'field_graph_models.dart';
+import 'robot_status.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Görev aşaması
@@ -32,6 +39,7 @@ enum GorevAsama {
 
   /// Görev başarıyla tamamlandı.
   tamamlandi,
+  baslangicaDonuyor,
 
   /// Görev yazılım hatası ile kesildi.
   hata,
@@ -58,6 +66,7 @@ enum GorevAsama {
 
 extension GorevAsamaExt on GorevAsama {
   String get etiket => switch (this) {
+        GorevAsama.baslangicaDonuyor => 'Başlangıca Dönüyor',
         GorevAsama.bosta => 'Beklemede',
         GorevAsama.gorevAlindi => 'Görev Alındı',
         GorevAsama.yuksuzHareket => 'Yüksüz Hareket',
@@ -88,6 +97,7 @@ extension GorevAsamaExt on GorevAsama {
 
   /// Bir sonraki beklenen operasyon adımı (UI özeti için).
   String get sonrakiAdim => switch (this) {
+        GorevAsama.baslangicaDonuyor => 'WAIT noktasına dönüş sürüyor',
         GorevAsama.bosta => 'Görev bekleniyor',
         GorevAsama.gorevAlindi => 'Yüksüz harekete geç',
         GorevAsama.yuksuzHareket => 'Alma noktasında yük al',
@@ -133,6 +143,203 @@ extension GorevAsamaExt on GorevAsama {
 /// Telemetri (hız, voltaj, QR…) [AgvSensorModel] sorumluluğundadır;
 /// bu model yalnızca görev planı ve fabrika otomasyon katmanını yönetir.
 class GcsMissionModel extends ChangeNotifier {
+  GcsMissionModel({RosBridgeClient? client})
+      : _client = client ?? AgvService.ros;
+  final RosBridgeClient _client;
+  RobotStatus? robotStatus;
+  bool statusFresh = false;
+  bool connected = false;
+  String? pendingCommand;
+  bool emergencyPending = false;
+  String commandMessage = '';
+  String? _preparedTaskId;
+  String? _submittedTaskId;
+  String? _startedTaskId;
+  int _connectionEpoch = 0;
+
+  bool get commandPending => pendingCommand != null;
+  bool get canSubmit =>
+      connected &&
+      statusFresh &&
+      !commandPending &&
+      _submittedTaskId == null &&
+      _preparedTaskId == null &&
+      (robotStatus?.missionState == 0 || robotStatus?.missionState == 6);
+
+  bool get readyToStart =>
+      connected &&
+      statusFresh &&
+      !commandPending &&
+      robotStatus?.missionState == 1 &&
+      robotStatus?.taskSource == 'gui' &&
+      robotStatus?.taskId == _preparedTaskId &&
+      _preparedTaskId != _startedTaskId &&
+      robotStatus?.localizationValid == true &&
+      robotStatus?.activeFieldReady == true &&
+      robotStatus?.estopActive == false &&
+      robotStatus?.obstacleDetected == false;
+
+  void applyConnection(bool value) {
+    if (connected == value) return;
+    connected = value;
+    _connectionEpoch++;
+    if (!value) {
+      statusFresh = false;
+      _preparedTaskId = null;
+      _submittedTaskId = null;
+      _startedTaskId = null;
+    }
+    notifyListeners();
+  }
+
+  void applyStatus(Map<String, dynamic> raw) {
+    if (raw.isEmpty) {
+      statusFresh = false;
+      notifyListeners();
+      return;
+    }
+    robotStatus = RobotStatus.fromRosJson(raw);
+    statusFresh = connected && robotStatus!.valid;
+    final status = robotStatus!;
+    if (status.taskId == _submittedTaskId && status.missionState != 1) {
+      _submittedTaskId = null;
+    }
+    // ROS has no explicit queued flag in RobotStatus. Its queued detail and
+    // TASK_RECEIVED/GUI tuple are the recovery evidence after reconnect.
+    if (statusFresh &&
+        status.missionState == 1 &&
+        status.taskSource == 'gui' &&
+        status.statusDetail == 'gorev kabul edildi' &&
+        status.missionElapsedS == 0) {
+      _preparedTaskId = status.taskId;
+    }
+    if (status.missionState != 1) _preparedTaskId = null;
+    if (status.missionElapsedS.isFinite) {
+      gorevSuresi =
+          Duration(milliseconds: (status.missionElapsedS * 1000).round());
+    }
+    notifyListeners();
+  }
+
+  void applyEvent(String raw) {
+    try {
+      final event = jsonDecode(raw);
+      if (event is! Map) return;
+      if (event['event'] == 'mission_started') {
+        _startedTaskId = event['task_id']?.toString();
+        _preparedTaskId = null;
+      }
+      if (event['event'] == 'mission_complete' && event['task_id'] == gorevId) {
+        asama =
+            event['success'] == true ? GorevAsama.tamamlandi : GorevAsama.hata;
+      }
+      notifyListeners();
+    } catch (_) {/* Generic event log preserves non-JSON and future events. */}
+  }
+
+  Future<void> submit(
+      {required GcsFieldGraphModel graph,
+      required List<FieldNode> stops,
+      required bool returnHome}) async {
+    if (!canSubmit) {
+      throw StateError(
+          'Görev hazırlama zaten sürüyor veya ROS görevi boşta değil');
+    }
+    if (!graph.graphFresh ||
+        !graph.activeFresh ||
+        !graph.selectedFieldIsActive ||
+        graph.activeField?.fieldName != graph.selectedFieldName ||
+        graph.packageStatus?.packageHash != graph.activeField?.packageHash ||
+        robotStatus?.activeFieldReady != true ||
+        robotStatus?.activeFieldHash != graph.activeField?.packageHash) {
+      throw StateError(
+          'Görev için ROS ile eşleşen aktif saha grafiğini yükleyin');
+    }
+    if (stops.length < 2 || stops.length.isOdd) {
+      throw StateError('Alma/bırakma çiftleri seçin');
+    }
+    for (var i = 0; i < stops.length; i++) {
+      final canonical = graph.nodeById(stops[i].nodeId);
+      if (canonical == null ||
+          canonical.name != stops[i].name ||
+          canonical.role !=
+              (i.isEven
+                  ? FieldNodeRole.pickupDock
+                  : FieldNodeRole.dropoffDock)) {
+        throw StateError('Durak aktif saha grafiğinde uygun dock değil');
+      }
+    }
+    final taskId = 'gui_${DateTime.now().microsecondsSinceEpoch}';
+    await _command(
+        'submit',
+        () => _client.submitMission(
+            taskId: taskId,
+            routeNodes: stops.map((n) => n.name).toList(),
+            returnHome: returnHome), onAccepted: () {
+      _submittedTaskId = taskId;
+      _preparedTaskId = taskId;
+      commandMessage =
+          'Görev hazır; ROS durumunu doğruladıktan sonra Başlat düğmesine basın';
+    });
+  }
+
+  Future<void> start() async {
+    if (!readyToStart) {
+      throw StateError(
+          'ROS üzerinde başlatılabilir hazır GUI görevi yok veya durum güncel değil');
+    }
+    final task = _preparedTaskId;
+    await _command('start', _client.startMission, onAccepted: () {
+      _startedTaskId = task;
+      _preparedTaskId = null;
+    });
+  }
+
+  Future<void> cancel() => _command('cancel', _client.cancelMission);
+  Future<void> resetSafety() =>
+      _command('reset_safety', _client.resetMissionSafety);
+  Future<void> emergencyStop() =>
+      _command('emergency_stop', _client.emergencyStop, trigger: true);
+
+  Future<void> _command(
+      String name, Future<Map<String, dynamic>> Function() call,
+      {bool trigger = false, VoidCallback? onAccepted}) async {
+    if (!connected) throw StateError('ROS bağlantısı yok');
+    if (trigger ? emergencyPending : commandPending) {
+      throw StateError('İşlem zaten sürüyor');
+    }
+    if (!trigger && !statusFresh) throw StateError('Robot durumu güncel değil');
+    final epoch = _connectionEpoch;
+    if (trigger) {
+      emergencyPending = true;
+    } else {
+      pendingCommand = name;
+    }
+    notifyListeners();
+    try {
+      final response = await call();
+      if (epoch != _connectionEpoch || !connected) {
+        throw StateError('Bağlantı değişti; ROS durumu yeniden doğrulanmalı');
+      }
+      if (response[trigger ? 'success' : 'accepted'] != true) {
+        throw StateError(RosServiceResponse.failureMessage(response,
+            fallback: '$name reddedildi'));
+      }
+      commandMessage = response['message']?.toString() ?? '';
+      onAccepted?.call();
+    } catch (error) {
+      commandMessage = '$name başarısız: $error';
+      rethrow;
+    } finally {
+      if (trigger) {
+        emergencyPending = false;
+      } else {
+        pendingCommand = null;
+      }
+      notifyListeners();
+    }
+  }
+
   // ── 2. Görev bilgileri ───────────────────────────────────────────────────
 
   /// Unique görev tanımlayıcısı (örn. "MSN-0042").

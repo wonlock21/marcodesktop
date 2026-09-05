@@ -161,6 +161,12 @@ class _RouteEditPageState extends State<RouteEditPage> {
           ),
         ),
         actions: [
+          TextButton.icon(
+              onPressed: graph.graphFresh
+                  ? () => Navigator.pushNamed(context, 'station-config-page')
+                  : null,
+              icon: const Icon(Icons.qr_code),
+              label: const Text('İstasyon / QR')),
           if (graph.selectedFieldName case final field?)
             Center(
               child: Padding(
@@ -200,7 +206,7 @@ class _RouteEditPageState extends State<RouteEditPage> {
           : Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _GraphStatusBar(graph: graph),
+                FieldValidationPanel(graph: graph),
                 Expanded(
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -243,9 +249,9 @@ class _RouteEditPageState extends State<RouteEditPage> {
   }
 }
 
-class _GraphStatusBar extends StatelessWidget {
+class FieldValidationPanel extends StatelessWidget {
   final GcsFieldGraphModel graph;
-  const _GraphStatusBar({required this.graph});
+  const FieldValidationPanel({super.key, required this.graph});
 
   @override
   Widget build(BuildContext context) {
@@ -274,11 +280,20 @@ class _GraphStatusBar extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            '$state${status?.packageHash.isNotEmpty == true ? ' · ${_shortHash(status!.packageHash)}' : ''}',
+            '$state${status?.packageHash.isNotEmpty == true ? ' · ${status!.packageHash}' : ''}',
             style: TextStyle(color: color, fontSize: 2.8.sp),
           ),
-          for (final message in messages)
-            Text(message, style: TextStyle(color: color, fontSize: 2.5.sp)),
+          if (messages.isNotEmpty)
+            ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 200),
+                child: SingleChildScrollView(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                      for (final message in messages)
+                        SelectableText(message,
+                            style: TextStyle(color: color, fontSize: 2.5.sp)),
+                    ]))),
           if (!graph.canActivate && graph.validationCurrent)
             Text(
               _activationBlockReason(graph),
@@ -469,8 +484,8 @@ class _EdgeEditorDialogState extends State<_EdgeEditorDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final touchesQ5 = _node(_startNodeId)?.role == FieldNodeRole.gateQ5 ||
-        _node(_endNodeId)?.role == FieldNodeRole.gateQ5;
+    final expectedGate =
+        gateEventForRoles(_node(_startNodeId)?.role, _node(_endNodeId)?.role);
     return AlertDialog(
       title: Text(widget.existing == null ? 'Yeni kenar' : 'Kenarı düzenle'),
       content: SizedBox(
@@ -560,12 +575,13 @@ class _EdgeEditorDialogState extends State<_EdgeEditorDialog> {
                   controller: _gateEvent,
                   decoration: InputDecoration(
                     labelText: 'Kapı olayı (gate_event)',
-                    helperText:
-                        touchesQ5 ? 'Q5 kenarında zorunlu' : 'Opsiyonel',
+                    helperText: expectedGate == null
+                        ? 'Opsiyonel'
+                        : 'Yönlü crossing: $expectedGate',
                   ),
                   validator: (value) =>
-                      touchesQ5 && (value?.trim().isEmpty ?? true)
-                          ? 'Q5 kenarında kapı olayı zorunlu'
+                      expectedGate != null && value?.trim() != expectedGate
+                          ? 'Bu yön için $expectedGate gerekli'
                           : null,
                 ),
                 TextFormField(
@@ -616,7 +632,7 @@ class _NoField extends StatelessWidget {
 Color _nodeColor(FieldNodeRole role) => switch (role) {
       FieldNodeRole.pickupApproach || FieldNodeRole.pickupDock => _accent,
       FieldNodeRole.dropoffApproach || FieldNodeRole.dropoffDock => _danger,
-      FieldNodeRole.gateQ5 => Colors.purple,
+      FieldNodeRole.gateQ5 || FieldNodeRole.gateQ6 => Colors.purple,
       FieldNodeRole.qrTrigger => Colors.cyan,
       FieldNodeRole.wait => _success,
       FieldNodeRole.transit => _muted,

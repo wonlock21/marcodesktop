@@ -301,6 +301,9 @@ void main() {
       await model.synchronize(preferredField: 'saha_01');
       model.applyRobotStatus({
         'mission_state': 0,
+        'task_id': '',
+        'task_source': '',
+        'estop_active': false,
         'linear_speed': 0.0,
         'active_field_ready': false,
         'active_field_name': '',
@@ -308,6 +311,7 @@ void main() {
         'active_field_hash': '',
       });
 
+      model.applyMappingActive(false);
       expect(model.canActivate, isFalse);
       await model.validateSelected();
       expect(model.validatedHash, 'validated-hash');
@@ -351,6 +355,7 @@ void main() {
       expect(repository.listCalls, 2);
       expect(repository.activeCalls, 2);
       expect(repository.graphCalls, 2);
+      expect(repository.stationCalls, 2);
     });
 
     test('backend errors ve warnings dizilerinin tamamı korunur', () async {
@@ -371,6 +376,14 @@ void main() {
 }
 
 class _FakeRepository extends FieldGraphRepository {
+  int stationCalls = 0;
+  @override
+  Future<List<StationApproachConfig>> getStationConfigs(
+      String fieldName) async {
+    stationCalls++;
+    return [];
+  }
+
   int listCalls = 0;
   int activeCalls = 0;
   int graphCalls = 0;

@@ -227,6 +227,8 @@ abstract final class RosMappingTopics {
 
   static const fieldsActive = '/fields/active';
   static const fieldsPackageStatus = '/fields/package_status';
+  static const fieldsGetStationConfigs = '/fields/get_station_approach_configs';
+  static const fieldsSaveStationConfig = '/fields/save_station_approach_config';
   static const fieldsGetGraph = '/fields/get_graph';
   static const fieldsSaveNode = '/fields/save_node';
   static const fieldsSaveCurrentPoseNode = '/fields/save_current_pose_node';
@@ -336,7 +338,7 @@ abstract final class RosManualDriveLimits {
 
 abstract final class RosFieldNameRules {
   /// Yalnız harf, rakam, `_`, `-`
-  static final RegExp pattern = RegExp(r'^[A-Za-z0-9_-]+$');
+  static final RegExp pattern = RegExp(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$');
 
   static bool isValid(String value) {
     final v = value.trim();
@@ -479,12 +481,16 @@ class LocalizationStatusSnapshot {
   final String fieldName;
   final String message;
   final String mapYaml;
+  final int processId;
+  final Map<String, dynamic> header;
 
   const LocalizationStatusSnapshot({
     required this.status,
     this.fieldName = '',
     this.message = '',
     this.mapYaml = '',
+    this.processId = 0,
+    this.header = const {},
   });
 
   factory LocalizationStatusSnapshot.fromRosMessage(
@@ -493,6 +499,10 @@ class LocalizationStatusSnapshot {
     final code = (msg['state'] as num?)?.toInt();
     return LocalizationStatusSnapshot(
       status: LocalizationStatusExt.fromCode(code),
+      processId: msg['process_id'] is int ? msg['process_id'] as int : 0,
+      header: msg['header'] is Map
+          ? Map<String, dynamic>.from(msg['header'] as Map)
+          : const {},
       fieldName: msg['field_name']?.toString().trim() ?? '',
       message: msg['message']?.toString().trim() ?? '',
       mapYaml: msg['map_yaml']?.toString().trim() ?? '',
@@ -593,10 +603,16 @@ class DemoPointSaveResult {
 class MappingStatusSnapshot {
   final MappingStatus status;
   final String message;
+  final String fieldName;
+  final int processId;
+  final Map<String, dynamic> header;
 
   const MappingStatusSnapshot({
     required this.status,
     this.message = '',
+    this.fieldName = '',
+    this.processId = 0,
+    this.header = const {},
   });
 
   factory MappingStatusSnapshot.fromRosMessage(Map<String, dynamic> msg) {
@@ -606,6 +622,11 @@ class MappingStatusSnapshot {
     final rawMessage = msg['message']?.toString().trim() ?? '';
     return MappingStatusSnapshot(
       status: MappingStatusExt.fromCode(code),
+      fieldName: msg['field_name'] is String ? msg['field_name'] as String : '',
+      processId: msg['process_id'] is int ? msg['process_id'] as int : 0,
+      header: msg['header'] is Map
+          ? Map<String, dynamic>.from(msg['header'] as Map)
+          : const {},
       message:
           rawMessage.isEmpty ? '' : RosMappingErrors.toUserMessage(rawMessage),
     );

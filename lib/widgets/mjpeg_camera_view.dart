@@ -7,6 +7,8 @@ import 'package:http/http.dart' as http;
 
 import '../services/camera_stream_config.dart';
 
+final cameraRouteObserver = RouteObserver<ModalRoute<dynamic>>();
+
 enum MjpegCameraStatus {
   loading,
   connected,
@@ -20,17 +22,19 @@ enum MjpegCameraStatus {
 class MjpegCameraView extends StatefulWidget {
   const MjpegCameraView({
     super.key,
-    this.streamUri,
+    required this.streamUri,
+    this.clientFactory,
   });
 
-  /// Varsayılan: [CameraStreamConfig.streamUri].
-  final Uri? streamUri;
+  final Uri streamUri;
+  final http.Client Function()? clientFactory;
 
   @override
   State<MjpegCameraView> createState() => _MjpegCameraViewState();
 }
 
-class _MjpegCameraViewState extends State<MjpegCameraView> {
+class _MjpegCameraViewState extends State<MjpegCameraView>
+    with WidgetsBindingObserver, RouteAware {
   static const _accent = Color(0xFF4A90D9);
   static const _muted = Color(0xFF888888);
   static const _panel = Color(0xFF0D0D0D);
@@ -44,21 +48,77 @@ class _MjpegCameraViewState extends State<MjpegCameraView> {
   String? _errorMessage;
   int _session = 0;
   bool _disposed = false;
+  Timer? _frameTimer;
+  ModalRoute<dynamic>? _route;
+  bool _covered = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     unawaited(_connect());
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (_route != route) {
+      cameraRouteObserver.unsubscribe(this);
+      _route = route;
+      if (route != null) cameraRouteObserver.subscribe(this, route);
+    }
+  }
+
+  void _pauseStream() {
+    _session++;
+    _teardown();
+  }
+
+  @override
+  void didPushNext() {
+    _covered = true;
+    _pauseStream();
+  }
+
+  @override
+  void didPopNext() {
+    _covered = false;
+    if (!_disposed) unawaited(_reconnect());
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      if (!_covered && !_disposed) unawaited(_reconnect());
+    } else {
+      _pauseStream();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant MjpegCameraView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.streamUri != widget.streamUri) {
+      _frame = null;
+      unawaited(_connect());
+    }
+  }
+
+  String get _endpoint => '${widget.streamUri.host}:${widget.streamUri.port}';
+
+  @override
   void dispose() {
     _disposed = true;
+    cameraRouteObserver.unsubscribe(this);
+    WidgetsBinding.instance.removeObserver(this);
     _teardown();
     super.dispose();
   }
 
   void _teardown() {
+    _frameTimer?.cancel();
+    _frameTimer = null;
     _subscription?.cancel();
     _subscription = null;
     _client?.close();
@@ -86,13 +146,13 @@ class _MjpegCameraViewState extends State<MjpegCameraView> {
       });
     }
 
-    final client = http.Client();
+    final client = widget.clientFactory?.call() ?? http.Client();
     _client = client;
 
     try {
       // queryParameters ile kurulan Uri topic'i %2F yapar; web_video_server
       // bunu kabul etmez. Uri.parse(ham string) slash'ı korur.
-      final uri = widget.streamUri ?? CameraStreamConfig.streamUri;
+      final uri = widget.streamUri;
       final request = http.Request('GET', uri)
         ..headers['Accept'] = 'multipart/x-mixed-replace,*/*';
       final response = await client.send(request).timeout(
@@ -110,6 +170,7 @@ class _MjpegCameraViewState extends State<MjpegCameraView> {
         throw Exception('HTTP ${response.statusCode}');
       }
 
+      _armFrameTimeout();
       _subscription = response.stream.listen(
         (chunk) => _onChunk(chunk, session),
         onError: (Object error, StackTrace _) {
@@ -151,14 +212,14 @@ class _MjpegCameraViewState extends State<MjpegCameraView> {
   String _userMessage(String raw) {
     final t = raw.toLowerCase();
     if (t.contains('timeout') || t.contains('zaman')) {
-      return 'Bağlantı zaman aşımı — ${CameraStreamConfig.displayEndpoint}';
+      return 'Bağlantı zaman aşımı — $_endpoint';
     }
     if (t.contains('socket') ||
         t.contains('connection') ||
         t.contains('failed host') ||
         t.contains('network is unreachable') ||
         t.contains('bağlan')) {
-      return 'Kameraya ulaşılamadı — ${CameraStreamConfig.displayEndpoint}';
+      return 'Kameraya ulaşılamadı — $_endpoint';
     }
     if (t.contains('http ')) {
       return 'Sunucu yanıtı hatalı: $raw';
@@ -192,6 +253,11 @@ class _MjpegCameraViewState extends State<MjpegCameraView> {
       }
       final end = _indexOfJpegEoi(data);
       if (end < 0) {
+        if (data.length > 4 * 1024 * 1024) {
+          _fail('Kamera geçersiz veya aşırı büyük JPEG gönderdi',
+              status: MjpegCameraStatus.error);
+          return;
+        }
         _buffer.add(data);
         return;
       }
@@ -201,8 +267,18 @@ class _MjpegCameraViewState extends State<MjpegCameraView> {
     }
   }
 
+  void _armFrameTimeout() {
+    _frameTimer?.cancel();
+    _frameTimer = Timer(const Duration(seconds: 8), () {
+      if (!_disposed) {
+        _fail('Kamera karesi zaman aşımı', status: MjpegCameraStatus.error);
+      }
+    });
+  }
+
   void _publishFrame(Uint8List frame, int session) {
     if (_disposed || session != _session || !mounted) return;
+    _armFrameTimeout();
     setState(() {
       _frame = frame;
       _status = MjpegCameraStatus.connected;
@@ -234,7 +310,7 @@ class _MjpegCameraViewState extends State<MjpegCameraView> {
         children: [
           _StatusBar(
             status: _status,
-            endpoint: CameraStreamConfig.displayEndpoint,
+            endpoint: _endpoint,
           ),
           Expanded(child: _buildBody()),
         ],
@@ -277,7 +353,7 @@ class _MjpegCameraViewState extends State<MjpegCameraView> {
         return _OverlayMessage(
           icon: Icons.videocam_outlined,
           title: 'Yükleniyor…',
-          subtitle: 'MJPEG: ${CameraStreamConfig.displayEndpoint}',
+          subtitle: 'MJPEG: $_endpoint',
           showSpinner: true,
         );
       case MjpegCameraStatus.disconnected:

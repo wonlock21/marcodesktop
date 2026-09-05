@@ -18,6 +18,7 @@ class GcsMappingModel extends ChangeNotifier {
   bool mappingStatusStale = false;
 
   LocalizationStatus? localizationStatus;
+  bool localizationStatusStale = true;
   String localizationMessage = '';
 
   DemoStatus? demoStatus;
@@ -192,6 +193,7 @@ class GcsMappingModel extends ChangeNotifier {
   bool get localizationReady =>
       isConnected &&
       !localizationInFlight &&
+      !localizationStatusStale &&
       localizationStartAccepted &&
       localizationStatus == LocalizationStatus.localizing;
 
@@ -335,7 +337,13 @@ class GcsMappingModel extends ChangeNotifier {
   }
 
   void applyLocalizationStatus(LocalizationStatusSnapshot? snap) {
-    if (snap == null) return;
+    if (snap == null) {
+      localizationStatusStale = true;
+      localizationInFlight = false;
+      notifyListeners();
+      return;
+    }
+    localizationStatusStale = false;
     localizationStatus = snap.status;
     localizationMessage = snap.message;
     final statusField = snap.fieldName.trim();
@@ -350,7 +358,8 @@ class GcsMappingModel extends ChangeNotifier {
         activeLocalizedField =
             statusField.isNotEmpty ? statusField : pendingLocalizedField;
         pendingLocalizedField = null;
-        localizationInFlight = !localizationStartAccepted;
+        localizationStartAccepted = true;
+        localizationInFlight = false;
         awaitingFreshPreview = true;
         break;
       case LocalizationStatus.stopping:
@@ -440,6 +449,10 @@ class GcsMappingModel extends ChangeNotifier {
     if (!state.isConnected && wasConnected) {
       // Status'u ERROR'a çekme; last-good stale işaretle.
       mappingStatusStale = true;
+      localizationStatusStale = true;
+      startInFlight = false;
+      finishInFlight = false;
+      localizationInFlight = false;
       final waiter = _mappingSavedWaiter;
       if (waiter != null && !waiter.isCompleted) {
         waiter.completeError(
@@ -456,8 +469,13 @@ class GcsMappingModel extends ChangeNotifier {
   }
 
   void applyMappingStatus(MappingStatusSnapshot? snap) {
-    if (snap == null) return;
+    if (snap == null) {
+      mappingStatusStale = true;
+      notifyListeners();
+      return;
+    }
     mappingStatus = snap.status;
+    if (snap.fieldName.isNotEmpty) fieldName = snap.fieldName;
     mappingMessage = snap.message;
     mappingStatusStale = false;
     // Status geldiyse start uçuş kilidini bırak (durum makinesi devralır).

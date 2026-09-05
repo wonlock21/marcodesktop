@@ -21,7 +21,8 @@ import 'models/gcs_mapping_model.dart';
 import 'models/gcs_mission_model.dart';
 import 'models/gcs_node_model.dart';
 import 'parameter_model.dart';
-import 'scenerio_page.dart';
+import 'production_mission_page.dart';
+import 'services/camera_stream_config.dart';
 import 'services/agv_service.dart';
 import 'services/occupancy_grid_image.dart';
 import 'services/ros_bridge_client.dart';
@@ -49,7 +50,6 @@ class _ControllerPageState extends State<ControllerPage>
   String _site = '';
   bool isConnected = false;
   String nextQR = "null";
-  String _scenarioData = "";
   final FocusNode _focusNode = FocusNode();
   late ParameterModel parameterModel;
   late AgvSensorModel _agvModel;
@@ -107,6 +107,9 @@ class _ControllerPageState extends State<ControllerPage>
     // Build bitmeden notifyListeners yasak — ilk durumu sonraki frame'de bas.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      context
+          .read<GcsMissionModel>()
+          .applyConnection(AgvService.ros.state.value.isConnected);
       _mappingModel.applyConnectionState(AgvService.ros.state.value);
       _fieldGraphModel.applyConnection(
         AgvService.ros.state.value.isConnected,
@@ -122,7 +125,15 @@ class _ControllerPageState extends State<ControllerPage>
 
   void _applyRobotStatus(Map<String, dynamic> status) {
     if (!mounted) return;
+    final productionMission = context.read<GcsMissionModel>();
+    productionMission.applyStatus(status);
     _fieldGraphModel.applyRobotStatus(status);
+    if (status.isEmpty || !productionMission.statusFresh) {
+      _agvModel.updateRobotDurum('Durum güncel değil');
+      _connModel.topluGuncelle(
+          plc: ConnDurum.cevrimdisi, manuelMod: false, uzaktanKontrol: false);
+      return;
+    }
     final poseStamped = status['pose'];
     final poseWithCovariance = poseStamped is Map ? poseStamped['pose'] : null;
     final pose = poseWithCovariance is Map ? poseWithCovariance['pose'] : null;
@@ -188,14 +199,14 @@ class _ControllerPageState extends State<ControllerPage>
       rotaDugumleri: rawRoute is List
           ? rawRoute.map((node) => node.toString()).toList()
           : const <String>[],
-      aktifDurakIndeksi: (status['current_stop_index'] as num?)?.toInt() ?? 0,
+      aktifDurakIndeksi: productionMission.robotStatus!.currentStopIndex,
       baslangicaDon: status['return_home'] != false,
       asama: switch (missionState) {
         1 => GorevAsama.gorevAlindi,
         2 => GorevAsama.yuksuzHareket,
         3 => GorevAsama.yukluHareket,
         4 => GorevAsama.kapiIzniBekleniyor,
-        5 => GorevAsama.tamamlandi,
+        5 => GorevAsama.baslangicaDonuyor,
         6 => GorevAsama.hata,
         7 => GorevAsama.acilStop,
         _ => GorevAsama.bosta,
@@ -227,7 +238,8 @@ class _ControllerPageState extends State<ControllerPage>
 
   void _onMissionEvent(String event) {
     if (!mounted) return;
-    Provider.of<GcsEventLogModel>(context, listen: false).ekle(event);
+    context.read<GcsMissionModel>().applyEvent(event);
+    Provider.of<GcsEventLogModel>(context, listen: false).ekleRosEvent(event);
   }
 
   /// I.1 — Türkçe hata: olay günlüğü + SnackBar.
@@ -320,10 +332,11 @@ class _ControllerPageState extends State<ControllerPage>
     final previousMsg = _mappingModel.mappingMessage;
     _mappingModel.applyMappingStatus(status);
     _fieldGraphModel.applyMappingActive(
-      status != null &&
-          status.status != MappingStatus.idle &&
-          status.status != MappingStatus.saved &&
-          status.status != MappingStatus.error,
+      status == null
+          ? null
+          : status.status != MappingStatus.idle &&
+              status.status != MappingStatus.saved &&
+              status.status != MappingStatus.error,
     );
     if (status == null) return;
     if (previous != status.status || previousMsg != status.message) {
@@ -661,6 +674,14 @@ class _ControllerPageState extends State<ControllerPage>
   void _onFieldPackageStatus(FieldPackageStatus? status) {
     if (!mounted) return;
     _fieldGraphModel.applyPackageStatusTopic(status);
+    final selected = _fieldGraphModel.selectedFieldName;
+    if (status != null &&
+        selected == status.fieldName &&
+        selected != null &&
+        !_fieldGraphModel.busy &&
+        !_fieldGraphModel.graphFresh) {
+      unawaited(_fieldGraphModel.loadGraph(selected));
+    }
   }
 
   void _syncCanonicalNodeProjection() {
@@ -894,6 +915,7 @@ class _ControllerPageState extends State<ControllerPage>
   void _onRosConnectionState() {
     if (!mounted) return;
     final rosState = AgvService.ros.state.value;
+    context.read<GcsMissionModel>().applyConnection(rosState.isConnected);
     _mappingModel.applyConnectionState(rosState);
     _fieldGraphModel.applyConnection(rosState.isConnected);
     if (rosState.status == RosConnectionStatus.connected) {
@@ -1002,28 +1024,16 @@ class _ControllerPageState extends State<ControllerPage>
   ///
   /// Görevi iptal eder, komutu pasife alır, olay günlüğüne kaydeder.
   Future<void> _guvenliDurdur() async {
-    final log = Provider.of<GcsEventLogModel>(context, listen: false);
-    final mission = Provider.of<GcsMissionModel>(context, listen: false);
-    final alarms = Provider.of<GcsAlarmModel>(context, listen: false);
-
     AgvService.stopManual();
-    if (AgvService.ros.state.value.isConnected) {
-      try {
-        final response = await AgvService.emergencyStop();
-        final accepted = response['success'] == true;
-        if (accepted) {
-          mission.asamaGuncelle(GorevAsama.acilStop);
-          alarms.setAlarm(AlarmTur.acilStop,
-              mesaj: 'Yazılımsal acil durdurma kilitlendi');
-        }
-        log.ekle(response['message']?.toString() ??
-            'Yazılımsal acil durdurma istendi');
-      } catch (error) {
-        log.ekle('Güvenli durdurma gönderilemedi: $error');
-      }
-    } else {
-      log.ekle(
-          'Manuel hareket durduruldu; ROS bağlı olmadığı için görev iptali gönderilmedi');
+    await _runMissionCommand(
+        () => context.read<GcsMissionModel>().emergencyStop());
+  }
+
+  Future<void> _runMissionCommand(Future<void> Function() action) async {
+    try {
+      await action();
+    } catch (error) {
+      if (mounted) _showUserError(error.toString());
     }
   }
 
@@ -1045,63 +1055,12 @@ class _ControllerPageState extends State<ControllerPage>
     await AgvService.disconnectRos();
   }
 
-  Future<void> _missionBaslat() async {
-    if (!AgvService.ros.state.value.isConnected) {
-      _onMissionEvent('Görev başlatılamadı: ROS bağlı değil');
-      return;
-    }
-    try {
-      final response = await AgvService.startMission();
-      if (!RosServiceResponse.missionAccepted(response)) {
-        throw StateError(RosServiceResponse.failureMessage(
-          response,
-          fallback: 'Görev başlatma isteği reddedildi',
-        ));
-      }
-      _onMissionEvent(
-          response['message']?.toString() ?? 'Başlatma yanıtı alındı');
-    } catch (error) {
-      _onMissionEvent('Başlatma hatası: $error');
-    }
-  }
-
-  Future<void> _missionIptal() async {
-    if (!AgvService.ros.state.value.isConnected) {
-      _onMissionEvent('Görev iptal edilemedi: ROS bağlı değil');
-      return;
-    }
-    try {
-      final response = await AgvService.cancelMission();
-      if (!RosServiceResponse.missionAccepted(response)) {
-        throw StateError(RosServiceResponse.failureMessage(
-          response,
-          fallback: 'Görev iptal isteği reddedildi',
-        ));
-      }
-      _onMissionEvent(response['message']?.toString() ?? 'İptal yanıtı alındı');
-    } catch (error) {
-      _onMissionEvent('İptal hatası: $error');
-    }
-  }
-
-  Future<void> _resetSafety() async {
-    if (!AgvService.ros.state.value.isConnected) {
-      _onMissionEvent('Safety reset yapılamadı: ROS bağlı değil');
-      return;
-    }
-    try {
-      final response = await AgvService.resetMissionSafety();
-      if (!RosServiceResponse.missionAccepted(response)) {
-        throw StateError(RosServiceResponse.failureMessage(
-          response,
-          fallback: 'Safety reset isteği reddedildi',
-        ));
-      }
-      _onMissionEvent(response['message']?.toString() ?? 'Safety reset yanıtı');
-    } catch (error) {
-      _onMissionEvent('Safety reset hatası: $error');
-    }
-  }
+  Future<void> _missionBaslat() =>
+      _runMissionCommand(() => context.read<GcsMissionModel>().start());
+  Future<void> _missionIptal() =>
+      _runMissionCommand(() => context.read<GcsMissionModel>().cancel());
+  Future<void> _resetSafety() =>
+      _runMissionCommand(() => context.read<GcsMissionModel>().resetSafety());
 
   /// UI kademesinden normalize komut ölçeği; istemci SI Twist'e çevirir.
   double get _manualCommandScale =>
@@ -1119,31 +1078,8 @@ class _ControllerPageState extends State<ControllerPage>
   }
 
   Future<void> _navigateToScenarioPage(List<DataPoint> dataPoints) async {
-    // F.3: harita noktaları veya öğretilmiş alma/bırakma düğümleri yeterli.
-    final hasTaughtRoute = context.read<GcsNodeModel>().hasRouteEligibleNodes;
-    if (dataPoints.isEmpty && !hasTaughtRoute) {
-      _onMissionEvent(
-        'Senaryo için harita noktası veya Düğümler’de alma/bırakma gerekli',
-      );
-      return;
-    }
-    final result = await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ScenarioPage(
-          dataPoints: dataPoints,
-          site: _site,
-          rota: _scenarioData,
-        ),
-      ),
-    );
-
-    if (!mounted) return;
-    if (result != null) {
-      setState(() {
-        _scenarioData = result;
-      });
-    }
+    await Navigator.push(context,
+        MaterialPageRoute(builder: (_) => const ProductionMissionPage()));
   }
 
   Future<void> _navigateToDataPage(String site) async {
@@ -1415,10 +1351,17 @@ class _ControllerPageState extends State<ControllerPage>
                                         CrossAxisAlignment.center,
                                     children: [
                                       PowerButton(
-                                        labelOff: 'Görevi\nBaşlat',
+                                        labelOff: mission.readyToStart
+                                            ? 'Görevi\nBaşlat'
+                                            : 'Görev\nHazır Değil',
                                         labelOn: 'Başlatılıyor',
-                                        onPressed: _missionBaslat,
-                                        onLongPress: _missionIptal,
+                                        onPressed: mission.readyToStart
+                                            ? _missionBaslat
+                                            : null,
+                                        onLongPress: mission.statusFresh &&
+                                                !mission.commandPending
+                                            ? _missionIptal
+                                            : null,
                                       ),
                                       SizedBox(width: 2.w),
                                       Expanded(
@@ -1432,7 +1375,7 @@ class _ControllerPageState extends State<ControllerPage>
                                       SizedBox(width: 1.5.w),
                                       Expanded(
                                           child: NormalButton(
-                                        text: "Senaryo",
+                                        text: "Görev / İzleme",
                                         assignedKey: LogicalKeyboardKey.keyN,
                                         onPressed: () async {
                                           await _navigateToScenarioPage(
@@ -1729,8 +1672,8 @@ class _ControllerPageState extends State<ControllerPage>
                                 padding: EdgeInsets.only(top: 0.8.h),
                                 child: Text(
                                   oto
-                                      ? 'Otonom: fiziksel mod anahtarı, WASD kapalı'
-                                      : 'Manuel: fiziksel mod doğrulandı, WASD açık',
+                                      ? 'ROS manuel izni kapalı · Fiziksel anahtar: donanım bekleniyor'
+                                      : 'ROS manuel izni açık · Fiziksel anahtar: donanım bekleniyor',
                                   style: TextStyle(
                                     color: muted,
                                     fontSize: 2.2.sp,
@@ -1780,7 +1723,7 @@ class _ControllerPageState extends State<ControllerPage>
                                     size: 4.5.sp),
                                 SizedBox(width: 1.5.w),
                                 Text(
-                                  'GÜVENLİ DURDUR',
+                                  'YAZILIMSAL ACİL DURDURMA',
                                   style: TextStyle(
                                     color: const Color(0xFFEF5350),
                                     fontSize: 3.5.sp,
@@ -2296,7 +2239,11 @@ class _ControllerPageState extends State<ControllerPage>
               _SRow('ID', safe(mission.gorevId)),
               _SRow('KAYNAK', safe(mission.gorevKaynagi)),
               _SRow('ROTA', rota, truncate: true),
-              _SRow('DURUM', mission.asama.etiket,
+              _SRow(
+                  'DURUM',
+                  mission.statusFresh
+                      ? mission.asama.etiket
+                      : 'ESKİ VERİ / durum bekleniyor',
                   valueColor: mission.asama.hataVeyaStop
                       ? danger
                       : mission.asama == GorevAsama.tamamlandi
@@ -2824,7 +2771,7 @@ class _ControllerPageState extends State<ControllerPage>
               SizedBox(width: 1.w),
               Expanded(
                 child: Text(
-                  demoStatusText,
+                  'Test / Demo · $demoStatusText',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: statusColor, fontSize: 2.5.sp),
@@ -2968,7 +2915,16 @@ class _ControllerPageState extends State<ControllerPage>
       // ── Kamera (HTTP MJPEG; rosbridge kullanılmaz) ─────────────────────
       case 1:
         // Sekmeden çıkınca widget dispose olur → stream serbest bırakılır.
-        return const MjpegCameraView();
+        try {
+          return MjpegCameraView(
+              streamUri: CameraStreamConfig.forRobot(AgvService.ros.url.isEmpty
+                  ? _ipController.text
+                  : AgvService.ros.url));
+        } catch (error) {
+          return Center(
+              child: Text('Kamera adresi geçersiz: $error',
+                  style: const TextStyle(color: Colors.orange)));
+        }
 
       // ── LiDAR ──────────────────────────────────────────────────────────
       case 2:

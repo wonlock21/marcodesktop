@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 import 'data_model.dart';
 import 'models/gcs_field_graph_model.dart';
 import 'models/gcs_node_model.dart';
-import 'services/agv_service.dart';
+import 'production_mission_page.dart';
 import 'services/ros_gcs_contract.dart';
 import 'services/ros_mapping_contract.dart';
 
@@ -64,9 +64,6 @@ class _ScenarioPageState extends State<ScenarioPage> {
   List<String> get _allPlaces => _nodeByLabel.keys.toList(growable: false);
   String arota = "";
   bool senaryoIsDone = false;
-  bool _submitting = false;
-  bool _submitted = false;
-  String? _taskId;
   String? _hoveredCode; // hover efekti için
 
   final Map<String, String> _qrMap = const {
@@ -201,8 +198,6 @@ class _ScenarioPageState extends State<ScenarioPage> {
         _selected.clear();
         arota = "";
         senaryoIsDone = false;
-        _submitted = false;
-        _taskId = null;
       });
 
   void _returnData() => Navigator.pop(context, arota);
@@ -228,65 +223,13 @@ class _ScenarioPageState extends State<ScenarioPage> {
   }
 
   Future<void> _buildScenarioAndSend() async {
-    if (_selected.isEmpty || _submitting || _submitted) return;
-    if (_selected.length.isOdd ||
-        _selected.asMap().entries.any((entry) => entry.key.isEven
-            ? !_isAlma(entry.value)
-            : !_isBirak(entry.value))) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text(
-          'Durakları alma → bırakma çiftleri halinde seçin.',
-        ),
-      ));
-      return;
-    }
-    final routeNodes = _selected.map((p) => _nodeByLabel[p]!).toList();
-
-    setState(() {
-      senaryoIsDone = true;
-      arota = routeNodes.join(' → ');
-    });
-    if (!AgvService.ros.state.value.isConnected) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text(
-            'Senaryo yerel olarak hazırlandı; ROS bağlı olmadığı için gönderilmedi.'),
-      ));
-      return;
-    }
-    setState(() => _submitting = true);
-    try {
-      _taskId ??= 'gui_${DateTime.now().microsecondsSinceEpoch}';
-      final response = await AgvService.submitMission(
-        taskId: _taskId!,
-        routeNodes: routeNodes,
-        returnHome: true,
-      );
-      if (response['accepted'] != true) {
-        throw StateError(response['message']?.toString() ?? 'Görev reddedildi');
-      }
-      if (mounted) {
-        setState(() => _submitted = true);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(response['message']?.toString() ??
-              'Görev kabul edildi; başlatma bekleniyor.'),
-        ));
-      }
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Görev gönderilemedi: $error')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _submitting = false);
-    }
+    await Navigator.push(context,
+        MaterialPageRoute(builder: (_) => const ProductionMissionPage()));
   }
-
-  // ── UI ───────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
-    final canSave = _selected.isNotEmpty && !_submitting && !_submitted;
+    final canSave = _selected.isNotEmpty;
 
     return Scaffold(
       backgroundColor: _bg,

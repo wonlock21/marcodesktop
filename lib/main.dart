@@ -1,4 +1,7 @@
 import 'connection_page.dart';
+import 'station_config_page.dart';
+import 'production_mission_page.dart';
+import 'widgets/mjpeg_camera_view.dart';
 import 'controller_page.dart';
 import 'data_model.dart';
 import 'data_page.dart';
@@ -58,6 +61,7 @@ class MyApp extends StatelessWidget {
       minTextAdapt: false,
       builder: (context, child) {
         return MaterialApp(
+          navigatorObservers: [cameraRouteObserver],
           theme: ThemeData().copyWith(
             colorScheme: kColorScheme,
             appBarTheme: const AppBarTheme().copyWith(
@@ -101,6 +105,8 @@ class MyApp extends StatelessWidget {
             'connection-page': (context) => const ConnectionPage(),
             '3d-page': (context) => const Vehicle3DPage(),
             'map-page': (context) => const MapPage(),
+            'station-config-page': (_) => const StationConfigPage(),
+            'production-mission-page': (_) => const ProductionMissionPage(),
             'saved-fields-page': (context) => const SavedFieldsPage(),
             'node-teach-page': (context) => const NodeTeachPage(),
             'route-edit-page': (context) => const RouteEditPage(),

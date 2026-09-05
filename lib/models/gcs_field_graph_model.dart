@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../services/field_graph_repository.dart';
 import 'field_graph_models.dart';
+import 'robot_status.dart';
 
 class GcsFieldGraphModel extends ChangeNotifier {
   GcsFieldGraphModel(
@@ -15,6 +16,9 @@ class GcsFieldGraphModel extends ChangeNotifier {
   List<FieldInfo> fields = const [];
   List<FieldNode> nodes = const [];
   List<FieldEdge> edges = const [];
+  List<StationApproachConfig> stationConfigs = const [];
+  String? stationConfigsError;
+  bool _graphLoaded = false;
   FieldPackageStatus? packageStatus;
   ActiveField? activeField;
 
@@ -31,6 +35,7 @@ class GcsFieldGraphModel extends ChangeNotifier {
   bool packageStatusFresh = false;
   bool robotStatusFresh = false;
   bool mappingActive = false;
+  bool mappingStatusFresh = false;
   bool missionActive = false;
   bool vehicleMoving = false;
 
@@ -67,9 +72,14 @@ class GcsFieldGraphModel extends ChangeNotifier {
   }
 
   bool get graphFresh =>
-      connected && hasSelectedField && !graphLoading && graphError == null;
+      connected &&
+      _graphLoaded &&
+      hasSelectedField &&
+      !graphLoading &&
+      graphError == null;
 
-  bool get canEdit => graphFresh && !selectedFieldIsActive && !busy;
+  bool get canEdit =>
+      graphFresh && activeFresh && !selectedFieldIsActive && !busy;
 
   bool get validationCurrent =>
       _validatedHash?.isNotEmpty == true &&
@@ -82,6 +92,7 @@ class GcsFieldGraphModel extends ChangeNotifier {
       activeFresh &&
       robotStatusFresh &&
       validationCurrent &&
+      mappingStatusFresh &&
       !mappingActive &&
       !missionActive &&
       !vehicleMoving;
@@ -108,8 +119,11 @@ class GcsFieldGraphModel extends ChangeNotifier {
 
   void markDisconnected() {
     _syncGeneration++;
+    _graphLoaded = false;
+    stationConfigs = const [];
     connected = false;
     activeFresh = false;
+    mappingStatusFresh = false;
     packageStatusFresh = false;
     robotStatusFresh = false;
     robotActiveFieldReady = false;
@@ -118,18 +132,17 @@ class GcsFieldGraphModel extends ChangeNotifier {
     robotActiveFieldHash = '';
     fieldsLoading = false;
     graphLoading = false;
-    operation = null;
     _invalidateValidation();
   }
 
-  void applyMappingActive(bool value) {
-    if (mappingActive == value) return;
-    mappingActive = value;
+  void applyMappingActive(bool? value) {
+    mappingStatusFresh = value != null;
+    if (value != null) mappingActive = value;
     notifyListeners();
   }
 
   void applyRobotStatus(Map<String, dynamic> status) {
-    if (status.isEmpty) {
+    if (status.isEmpty || !RobotStatus.fromRosJson(status).valid) {
       robotStatusFresh = false;
       missionActive = false;
       vehicleMoving = false;
@@ -142,10 +155,9 @@ class GcsFieldGraphModel extends ChangeNotifier {
     }
     robotStatusFresh = true;
     final missionState = status['mission_state'];
-    missionActive =
-        missionState is int && missionState >= 1 && missionState <= 5;
+    missionActive = missionState != 0 && missionState != 6;
     final speed = status['linear_speed'];
-    vehicleMoving = speed is num && speed.toDouble().abs() > 0.01;
+    vehicleMoving = speed is num && speed.toDouble().abs() > 0.02;
     robotActiveFieldReady = status['active_field_ready'] == true;
     robotActiveFieldName = status['active_field_name'] is String
         ? status['active_field_name'] as String
@@ -178,7 +190,13 @@ class GcsFieldGraphModel extends ChangeNotifier {
       return;
     }
     packageStatusFresh = true;
-    if (value.fieldName == selectedFieldName) packageStatus = value;
+    if (value.fieldName == selectedFieldName) {
+      if (value.packageHash != packageStatus?.packageHash) {
+        _invalidateValidation();
+        _graphLoaded = false;
+      }
+      packageStatus = value;
+    }
     lastMessage = value.message;
     notifyListeners();
   }
@@ -187,12 +205,15 @@ class GcsFieldGraphModel extends ChangeNotifier {
     if (!connected) return;
     final generation = ++_syncGeneration;
     _invalidateValidation();
+    _graphLoaded = false;
     fieldsLoading = true;
     fieldsError = null;
     notifyListeners();
 
     try {
-      fields = await _repository.listFields();
+      final updatedFields = await _repository.listFields();
+      if (!connected) return;
+      fields = updatedFields;
       fieldsError = null;
     } catch (error) {
       fieldsError = _userError(error, listUnavailable: true);
@@ -243,7 +264,9 @@ class GcsFieldGraphModel extends ChangeNotifier {
     fieldsError = null;
     notifyListeners();
     try {
-      fields = await _repository.listFields();
+      final updatedFields = await _repository.listFields();
+      if (!connected) return;
+      fields = updatedFields;
     } catch (error) {
       fieldsError = _userError(error, listUnavailable: true);
     } finally {
@@ -254,11 +277,13 @@ class GcsFieldGraphModel extends ChangeNotifier {
 
   Future<void> selectField(String fieldName) async {
     final normalized = fieldName.trim();
-    if (normalized.isEmpty || !connected) return;
+    if (normalized.isEmpty || !connected || busy || graphLoading) return;
     if (selectedFieldName != normalized) {
       selectedFieldName = normalized;
       nodes = const [];
       edges = const [];
+      stationConfigs = const [];
+      _graphLoaded = false;
       packageStatus = null;
       _graphRevision++;
       _invalidateValidation();
@@ -276,13 +301,29 @@ class GcsFieldGraphModel extends ChangeNotifier {
     try {
       final graph = await _repository.getGraph(fieldName);
       if (!connected || expectedGeneration != _syncGeneration) return;
+      if (graph.status.fieldName != fieldName) {
+        throw StateError('ROS farklı sahaya ait graph döndürdü');
+      }
       selectedFieldName = fieldName;
       nodes = graph.nodes;
       edges = graph.edges;
+      if (packageStatus?.packageHash != graph.status.packageHash) {
+        _invalidateValidation();
+      }
       packageStatus = graph.status;
+      _graphLoaded = true;
       packageStatusFresh = true;
       lastMessage = graph.message;
       graphError = null;
+      try {
+        final configs = await _repository.getStationConfigs(fieldName);
+        if (!connected || expectedGeneration != _syncGeneration) return;
+        stationConfigs = configs;
+        stationConfigsError = null;
+      } catch (error) {
+        stationConfigs = const [];
+        stationConfigsError = _userError(error);
+      }
     } catch (error) {
       if (expectedGeneration == _syncGeneration) graphError = _userError(error);
     } finally {
@@ -350,6 +391,17 @@ class GcsFieldGraphModel extends ChangeNotifier {
     });
   }
 
+  Future<void> saveStationConfig(StationApproachConfig config) async {
+    _ensureEditable();
+    await _runOperation('station_config_save', () async {
+      final hash =
+          await _repository.saveStationConfig(selectedFieldName!, config);
+      await _afterMutation(hash);
+      if (stationConfigsError != null) throw StateError(stationConfigsError!);
+      lastMessage = 'İstasyon ayarı ROS üzerinden kaydedildi ve yeniden okundu';
+    });
+  }
+
   Future<FieldMutationResult> deleteNode(
     int nodeId, {
     required bool deleteConnectedEdges,
@@ -395,7 +447,12 @@ class GcsFieldGraphModel extends ChangeNotifier {
   Future<FieldValidationResult> validateSelected() async {
     _ensureEditable();
     return _runOperation('validate', () async {
+      final generation = _syncGeneration;
       final result = await _repository.validate(selectedFieldName!);
+      _ensureSameSession(generation);
+      if (result.status.fieldName != selectedFieldName) {
+        throw StateError('ROS farklı sahaya ait durum döndürdü');
+      }
       packageStatus = result.status;
       packageStatusFresh = true;
       lastMessage = result.message;
@@ -416,10 +473,15 @@ class GcsFieldGraphModel extends ChangeNotifier {
     }
     final expectedHash = _validatedHash!;
     return _runOperation('activate', () async {
+      final generation = _syncGeneration;
       final result = await _repository.activate(
         fieldName: selectedFieldName!,
         expectedHash: expectedHash,
       );
+      _ensureSameSession(generation);
+      if (result.status.fieldName != selectedFieldName) {
+        throw StateError('ROS farklı sahaya ait durum döndürdü');
+      }
       packageStatus = result.status;
       packageStatusFresh = true;
       lastMessage = result.message;
@@ -445,6 +507,8 @@ class GcsFieldGraphModel extends ChangeNotifier {
       selectedFieldName = null;
       nodes = const [];
       edges = const [];
+      stationConfigs = const [];
+      _graphLoaded = false;
       packageStatus = null;
       _graphRevision++;
       _invalidateValidation();
@@ -454,6 +518,10 @@ class GcsFieldGraphModel extends ChangeNotifier {
   }
 
   Future<void> _afterMutation(String packageHash) async {
+    if (!connected) {
+      throw StateError(
+          'Bağlantı koptu; değişikliğin sonucu ROS üzerinden tekrar okunmalı');
+    }
     _graphRevision++;
     _invalidateValidation();
     lastMessage = packageHash;
@@ -476,9 +544,17 @@ class GcsFieldGraphModel extends ChangeNotifier {
     }
   }
 
+  void _ensureSameSession(int generation) {
+    if (!connected || generation != _syncGeneration) {
+      throw StateError(
+          'Bağlantı değişti; ROS saha durumunu yeniden sorgulayın');
+    }
+  }
+
   void _ensureEditable() {
     if (!connected) throw StateError('ROS bağlı değil');
     if (!hasSelectedField) throw StateError('Önce bir saha seçin');
+    if (!activeFresh) throw StateError('Aktif saha durumu güncel değil');
     if (selectedFieldIsActive) throw StateError('Aktif saha salt okunurdur');
     if (!graphFresh) throw StateError('Saha grafiği güncel değil');
     if (busy) throw StateError('Başka bir saha işlemi devam ediyor');

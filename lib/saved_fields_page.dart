@@ -8,6 +8,7 @@ import 'models/field_graph_models.dart';
 import 'models/gcs_field_graph_model.dart';
 import 'models/gcs_mapping_model.dart';
 import 'services/agv_service.dart';
+import 'services/angles.dart';
 import 'services/ros_mapping_contract.dart';
 
 const _bg = Color(0xFF121212);
@@ -57,7 +58,8 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
     final mapping = context.read<GcsMappingModel>();
     if (!field.localizationReady ||
         mapping.localizationInFlight ||
-        mapping.mappingActive) {
+        mapping.mappingActive ||
+        mapping.localizationActive) {
       return;
     }
     if (!AgvService.ros.state.value.isConnected) {
@@ -110,6 +112,76 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
       if (!mounted) return;
       mapping.endLocalizationFlight();
       _toast('Lokalizasyon durdur: ${_userError(error)}');
+    }
+  }
+
+  Future<void> _correctInitialPose() async {
+    final x = TextEditingController();
+    final y = TextEditingController();
+    final yaw = TextEditingController();
+    final form = GlobalKey<FormState>();
+    final pose = await showDialog<FieldPose2D>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+              title: const Text('AMCL başlangıç pozunu düzelt'),
+              content: Form(
+                  key: form,
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    const Text(
+                        'Manager kayıtlı pozu otomatik yükler. Gerektiğinde map koordinatlarında düzeltme gönderin.'),
+                    for (final entry in {
+                      x: 'X (m)',
+                      y: 'Y (m)',
+                      yaw: 'Yaw (derece)'
+                    }.entries)
+                      TextFormField(
+                          controller: entry.key,
+                          decoration: InputDecoration(labelText: entry.value),
+                          validator: (v) =>
+                              double.tryParse(v?.trim() ?? '')?.isFinite == true
+                                  ? null
+                                  : 'Sonlu sayı girin'),
+                  ])),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('Vazgeç')),
+                FilledButton(
+                    onPressed: () {
+                      if (form.currentState!.validate()) {
+                        Navigator.pop(
+                            ctx,
+                            FieldPose2D(
+                                x: double.parse(x.text.trim()),
+                                y: double.parse(y.text.trim()),
+                                theta: degreesToRadians(
+                                    double.parse(yaw.text.trim()))));
+                      }
+                    },
+                    child: const Text('Pozu gönder'))
+              ],
+            ));
+    // Dispose after dialog route animation has released its text fields.
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    x.dispose();
+    y.dispose();
+    yaw.dispose();
+    if (pose == null || !mounted) return;
+    final mapping = context.read<GcsMappingModel>();
+    if (!mapping.isConnected ||
+        mapping.localizationStatusStale ||
+        !mapping.localizationActive ||
+        context.read<GcsFieldGraphModel>().missionActive ||
+        context.read<GcsFieldGraphModel>().vehicleMoving) {
+      _toast(
+          'Poz gönderilemedi: lokalizasyon/duruş durumu güncel ve uygun olmalı');
+      return;
+    }
+    try {
+      AgvService.ros.publishInitialPose(pose);
+      _toast('Poz komutu gönderildi; AMCL / ROS durumunu doğrulayın');
+    } catch (e) {
+      _toast(e.toString());
     }
   }
 
@@ -181,6 +253,16 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
           ),
         ),
         actions: [
+          TextButton(
+              onPressed: mapping.isConnected &&
+                      !mapping.localizationStatusStale &&
+                      mapping.localizationActive &&
+                      graph.robotStatusFresh &&
+                      !graph.missionActive &&
+                      !graph.vehicleMoving
+                  ? _correctInitialPose
+                  : null,
+              child: const Text('Başlangıç pozu')),
           if (localized != null)
             TextButton(
               onPressed: mapping.localizationInFlight
@@ -227,8 +309,8 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
           if (localized != null)
             _InfoBar(
               text:
-                  'Aktif lokalizasyon: $localized · ${mapping.localizationStatus?.etiket ?? 'durum bekleniyor'}',
-              color: _success,
+                  '${mapping.localizationStatusStale ? 'ESKİ VERİ · ' : ''}Aktif lokalizasyon: $localized · ${mapping.localizationStatus?.etiket ?? 'durum bekleniyor'}',
+              color: mapping.localizationStatusStale ? _warning : _success,
             ),
           Expanded(child: _buildBody(graph, mapping)),
         ],

@@ -123,6 +123,27 @@ class FieldGraphRepository {
     }
   }
 
+  Future<List<StationApproachConfig>> getStationConfigs(
+      String fieldName) async {
+    final response = await AgvService.ros.getStationApproachConfigs(fieldName);
+    _requireSuccess(response);
+    _requiredString(response, 'package_hash');
+    final raw = response['configs'];
+    if (raw is! List) {
+      throw const RosContractException('configs JSON array olmalıdır');
+    }
+    return List.unmodifiable(raw.map(StationApproachConfig.fromRosJson));
+  }
+
+  Future<String> saveStationConfig(
+      String fieldName, StationApproachConfig config) async {
+    final response =
+        await AgvService.ros.saveStationApproachConfig(fieldName, config);
+    _requireSuccess(response);
+    StationApproachConfig.fromRosJson(response['saved_config']);
+    return _requiredString(response, 'package_hash');
+  }
+
   Future<List<FieldInfo>> listFields() async {
     final response = await AgvService.listFields();
     _requireSuccess(response);

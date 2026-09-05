@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -84,6 +85,7 @@ class RosBridgeClient {
   Timer? _manualHeartbeat;
   Timer? _robotStatusStaleTimer;
   final Map<String, Completer<Map<String, dynamic>>> _serviceCalls = {};
+  final Set<String> _pendingServices = {};
   int _requestId = 0;
   int _generation = 0;
   int _reconnectAttempt = 0;
@@ -325,6 +327,15 @@ class RosBridgeClient {
     }
     if (decoded is! Map) return;
     final message = Map<String, dynamic>.from(decoded);
+    if (message['op'] == 'status' && message['level'] == 'error') {
+      final id = message['id']?.toString();
+      final pending = _serviceCalls.remove(id);
+      if (pending != null && !pending.isCompleted) {
+        pending.completeError(StateError(
+            message['msg']?.toString() ?? 'ROS servisi kullanılamıyor'));
+      }
+      return;
+    }
     if (message['op'] == 'service_response') {
       final id = message['id']?.toString();
       if (id != null) {
@@ -345,6 +356,9 @@ class RosBridgeClient {
                       ? outerMessage
                       : 'ROS servis çağrısı başarısız: ${message['service'] ?? id}',
             ));
+          } else if (values is! Map) {
+            completer.completeError(
+                const FormatException('ROS servis cevabı JSON object değil'));
           } else {
             completer.complete(response);
           }
@@ -481,6 +495,9 @@ class RosBridgeClient {
     bool exactRequestId = false,
   ]) async {
     if (!state.value.isConnected) throw StateError('ROS bagli degil');
+    if (!_pendingServices.add(service)) {
+      throw StateError('ROS servis çağrısı zaten sürüyor: $service');
+    }
     final id = exactRequestId && requestIdPrefix != null
         ? requestIdPrefix
         : '${requestIdPrefix ?? 'gui'}_${++_requestId}';
@@ -500,6 +517,7 @@ class RosBridgeClient {
       return await completer.future.timeout(timeout ?? serviceTimeout);
     } finally {
       _serviceCalls.remove(id);
+      _pendingServices.remove(service);
     }
   }
 
@@ -670,15 +688,15 @@ class RosBridgeClient {
       throw ArgumentError('Piksel ve yön değerleri sonlu olmalıdır');
     }
     return callService(
-        RosMappingTopics.fieldsPixelToMap,
-        RosMappingTypes.pixelToMapSrv,
-        {
-          'field_name': fieldName.trim(),
-          'pixel_x': pixelX,
-          'pixel_y': pixelY,
-          'screen_yaw': screenYaw,
-        },
-      );
+      RosMappingTopics.fieldsPixelToMap,
+      RosMappingTypes.pixelToMapSrv,
+      {
+        'field_name': fieldName.trim(),
+        'pixel_x': pixelX,
+        'pixel_y': pixelY,
+        'screen_yaw': screenYaw,
+      },
+    );
   }
 
   Future<Map<String, dynamic>> validateField(String fieldName) => callService(
@@ -698,6 +716,7 @@ class RosBridgeClient {
           'field_name': fieldName.trim(),
           'expected_hash': expectedHash,
         },
+        const Duration(seconds: 120),
       );
 
   Future<Map<String, dynamic>> archiveField(String fieldName) => callService(
@@ -705,6 +724,55 @@ class RosBridgeClient {
         RosMappingTypes.archiveFieldSrv,
         {'field_name': fieldName.trim()},
       );
+
+  Future<Map<String, dynamic>> getStationApproachConfigs(String fieldName) =>
+      callService(
+          RosMappingTopics.fieldsGetStationConfigs,
+          'marco_msgs/srv/GetStationApproachConfigs',
+          {'field_name': fieldName.trim()});
+
+  Future<Map<String, dynamic>> saveStationApproachConfig(
+          String fieldName, StationApproachConfig config) =>
+      callService(
+          RosMappingTopics.fieldsSaveStationConfig,
+          'marco_msgs/srv/SaveStationApproachConfig',
+          {'field_name': fieldName.trim(), 'config': config.toRosJson()});
+
+  /// Pose correction is a command; only LocalizationStatus confirms convergence.
+  void publishInitialPose(FieldPose2D pose) {
+    if (!state.value.isConnected) throw StateError('ROS bağlı değil');
+    pose.toRosJson();
+    _send({
+      'op': 'advertise',
+      'topic': '/initialpose',
+      'type': 'geometry_msgs/msg/PoseWithCovarianceStamped'
+    });
+    final covariance = List<double>.filled(36, 0);
+    covariance[0] = covariance[7] = 0.25;
+    covariance[35] = 0.06853891945200942;
+    _send({
+      'op': 'publish',
+      'topic': '/initialpose',
+      'msg': {
+        'header': {
+          'frame_id': 'map',
+          'stamp': {'sec': 0, 'nanosec': 0}
+        },
+        'pose': {
+          'pose': {
+            'position': {'x': pose.x, 'y': pose.y, 'z': 0.0},
+            'orientation': {
+              'x': 0.0,
+              'y': 0.0,
+              'z': math.sin(pose.theta / 2),
+              'w': math.cos(pose.theta / 2)
+            }
+          },
+          'covariance': covariance
+        }
+      }
+    });
+  }
 
   Future<Map<String, dynamic>> getActiveField() => callService(
         RosMappingTopics.fieldsGetActive,

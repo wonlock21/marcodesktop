@@ -25,7 +25,7 @@ class GcsEventEntry {
 /// Üst özet şeridi ve sağ paneldeki anlık durumdan bağımsız olarak
 /// zaman damgalı geçmiş olayları tutar.
 class GcsEventLogModel extends ChangeNotifier {
-  static const int _maxKayit = 50;
+  static const int capacity = 200;
   static const String _storageKey = 'gcsEventLog';
 
   final List<GcsEventEntry> _kayitlar = [];
@@ -42,11 +42,32 @@ class GcsEventLogModel extends ChangeNotifier {
       0,
       GcsEventEntry(zaman: zaman ?? DateTime.now(), mesaj: mesaj),
     );
-    if (_kayitlar.length > _maxKayit) {
-      _kayitlar.removeRange(_maxKayit, _kayitlar.length);
+    _kayitlar.sort((a, b) => b.zaman.compareTo(a.zaman));
+    if (_kayitlar.length > capacity) {
+      _kayitlar.removeRange(capacity, _kayitlar.length);
     }
     notifyListeners();
     unawaited(_kayitlariKaydet());
+  }
+
+  /// Preserve all fields and unknown event names. ROS stamp is seconds.
+  void ekleRosEvent(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        final stamp = decoded['stamp'];
+        final time = stamp is num && stamp.isFinite
+            ? DateTime.fromMicrosecondsSinceEpoch((stamp * 1000000).round())
+            : DateTime.now();
+        final name = decoded['event']?.toString() ?? 'ROS event';
+        final details = Map<String, dynamic>.from(decoded)..remove('event');
+        ekle('$name · ${jsonEncode(details)}', zaman: time);
+        return;
+      }
+    } catch (_) {
+      /* Raw fallback also preserves malformed/forward-compatible events. */
+    }
+    ekle(raw);
   }
 
   /// Test / admin modu için örnek olay geçmişi.
@@ -105,8 +126,8 @@ class GcsEventLogModel extends ChangeNotifier {
       _kayitlar.addAll(saved.where(
           (e) => existing.add('${e.zaman.toIso8601String()}|${e.mesaj}')));
       _kayitlar.sort((a, b) => b.zaman.compareTo(a.zaman));
-      if (_kayitlar.length > _maxKayit) {
-        _kayitlar.removeRange(_maxKayit, _kayitlar.length);
+      if (_kayitlar.length > capacity) {
+        _kayitlar.removeRange(capacity, _kayitlar.length);
       }
       notifyListeners();
     } catch (_) {

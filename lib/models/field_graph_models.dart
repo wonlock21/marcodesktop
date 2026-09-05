@@ -177,6 +177,7 @@ enum FieldNodeRole {
   dropoffApproach('DROPOFF_APPROACH'),
   dropoffDock('DROPOFF_DOCK'),
   gateQ5('GATE_Q5'),
+  gateQ6('GATE_Q6'),
   qrTrigger('QR_TRIGGER'),
   transit('TRANSIT');
 
@@ -425,10 +426,15 @@ class FieldEdge {
       errors.add('Yüklü kenarın hareket yönü REVERSE olmalı');
     }
     final byId = {for (final node in nodes) node.nodeId: node};
-    final touchesQ5 = byId[startNodeId]?.role == FieldNodeRole.gateQ5 ||
-        byId[endNodeId]?.role == FieldNodeRole.gateQ5;
-    if (touchesQ5 && gateEvent.trim().isEmpty) {
-      errors.add('Q5 kenarında kapı olayı boş olamaz');
+    final expected =
+        gateEventForRoles(byId[startNodeId]?.role, byId[endNodeId]?.role);
+    if (expected != null && (bidirectional || gateEvent != expected)) {
+      errors
+          .add('Gate crossing yönlü olmalı ve gate_event=$expected kullanmalı');
+    } else if (expected == null &&
+        (gateEvent == 'q5_outbound' || gateEvent == 'q6_return')) {
+      errors.add(
+          'Gate event yalnız iki gate rolü arasındaki crossing için kullanılabilir');
     }
     try {
       _RosJson.metadataObject(metadataJson, 'edge.metadata_json');
@@ -700,4 +706,70 @@ class PixelToMapResult {
         mapHeight:
             _RosJson.integer(map['map_height'], 'map_height', max: 0xffffffff),
       );
+}
+
+/// Only semantic roles determine crossing metadata; IDs/coordinates are field data.
+String? gateEventForRoles(FieldNodeRole? start, FieldNodeRole? end) {
+  if (start == FieldNodeRole.gateQ5 && end == FieldNodeRole.gateQ6) {
+    return 'q5_outbound';
+  }
+  if (start == FieldNodeRole.gateQ6 && end == FieldNodeRole.gateQ5) {
+    return 'q6_return';
+  }
+  return null;
+}
+
+class StationApproachConfig {
+  final String stationId;
+  final int stationNodeId;
+  final String approachQrId;
+  final double dockHeadingYaw;
+  final String turnDirection;
+  final double lineFollowDurationS;
+
+  const StationApproachConfig(
+      {required this.stationId,
+      required this.stationNodeId,
+      required this.approachQrId,
+      required this.dockHeadingYaw,
+      required this.turnDirection,
+      required this.lineFollowDurationS});
+
+  factory StationApproachConfig.fromRosJson(dynamic raw) {
+    final m = _RosJson.object(raw, 'config');
+    return StationApproachConfig(
+      stationId: _RosJson.string(m['station_id'], 'station_id'),
+      stationNodeId:
+          FieldGraphId.requireSafe(m['station_node_id'], 'station_node_id'),
+      approachQrId: _RosJson.string(m['approach_qr_id'], 'approach_qr_id'),
+      dockHeadingYaw:
+          _RosJson.number(m['dock_heading_yaw'], 'dock_heading_yaw'),
+      turnDirection: _RosJson.string(m['turn_direction'], 'turn_direction'),
+      lineFollowDurationS: _RosJson.number(
+          m['line_follow_duration_s'], 'line_follow_duration_s'),
+    );
+  }
+
+  Map<String, dynamic> toRosJson() {
+    FieldGraphId.requireSafe(stationNodeId, 'station_node_id');
+    if (stationId.trim().isEmpty ||
+        approachQrId.trim().isEmpty ||
+        approachQrId.trim().length > 64 ||
+        !dockHeadingYaw.isFinite ||
+        !lineFollowDurationS.isFinite ||
+        lineFollowDurationS < 0.1 ||
+        lineFollowDurationS > 120 ||
+        !const ['left', 'right'].contains(turnDirection)) {
+      throw const RosContractException(
+          'İstasyon: QR 1–64 karakter, yön left/right, süre 0.1–120 s ve sonlu yaw gerekli');
+    }
+    return {
+      'station_id': stationId,
+      'station_node_id': stationNodeId,
+      'approach_qr_id': approachQrId.trim(),
+      'dock_heading_yaw': dockHeadingYaw,
+      'turn_direction': turnDirection,
+      'line_follow_duration_s': lineFollowDurationS
+    };
+  }
 }

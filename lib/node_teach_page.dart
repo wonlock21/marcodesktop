@@ -1,17 +1,16 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math' as math;
+import 'services/angles.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 
-import 'data_model.dart';
 import 'models/field_graph_models.dart';
 import 'models/gcs_field_graph_model.dart';
 import 'models/gcs_mapping_model.dart';
 import 'models/gcs_node_model.dart';
-import 'scenerio_page.dart';
+import 'production_mission_page.dart';
 import 'services/agv_service.dart';
 import 'services/ros_mapping_contract.dart';
 import 'widgets/map_preview_stage.dart';
@@ -77,9 +76,15 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
 
   Future<void> _createAtPixel(double pixelX, double pixelY) async {
     final graph = context.read<GcsFieldGraphModel>();
-    if (!graph.canEdit) return;
+    if (!graph.canEdit || !_specTeachContext(context.read<GcsMappingModel>())) {
+      return;
+    }
     final value = await _openNodeEditor(screenYaw: true);
-    if (value == null || !mounted) return;
+    if (value == null ||
+        !mounted ||
+        !_specTeachContext(context.read<GcsMappingModel>())) {
+      return;
+    }
     try {
       final result = await graph.saveNodeAtPixel(
         node: value.toNode(pose: FieldPose2D.zero),
@@ -103,8 +108,8 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
     if (value == null || !mounted) return;
     try {
       final pose = FieldPose2D(
-        x: existing.pose.x,
-        y: existing.pose.y,
+        x: value.x ?? existing.pose.x,
+        y: value.y ?? existing.pose.y,
         theta: value.yawRadians,
       );
       final result = await graph.saveNode(
@@ -123,7 +128,11 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
     final graph = context.read<GcsFieldGraphModel>();
     final id = int.tryParse(projected.id);
     final existing = id == null ? null : graph.nodeById(id);
-    if (existing == null || !graph.canEdit) return;
+    if (existing == null ||
+        !graph.canEdit ||
+        !_specTeachContext(context.read<GcsMappingModel>())) {
+      return;
+    }
     try {
       final result = await graph.saveNode(existing, currentPose: true);
       if (mounted) _toast(context, result.message);
@@ -328,21 +337,24 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
   /// F.5: haritalama sırasında veya lokalizasyon açıkken öğretme bağlamı.
   bool _specTeachContext(GcsMappingModel mapping) {
     if (!mapping.isConnected || !mapping.hasPreviewPng) return false;
-    if (mapping.activeLocalizedField != null) return true;
+    if (mapping.localizationReady &&
+        mapping.activeLocalizedField ==
+            context.read<GcsFieldGraphModel>().selectedFieldName &&
+        !mapping.awaitingFreshPreview) {
+      return true;
+    }
     final status = mapping.liveMappingStatus;
-    return status == MappingStatus.mapping;
+    return status == MappingStatus.mapping &&
+        mapping.fieldName ==
+            context.read<GcsFieldGraphModel>().selectedFieldName &&
+        !mapping.awaitingFreshPreview;
   }
 
   Future<void> _openScenario(BuildContext context) async {
-    final dataPoints = context.read<DataModel>().dataPoints;
     await Navigator.push<String>(
       context,
       MaterialPageRoute(
-        builder: (_) => ScenarioPage(
-          dataPoints: dataPoints,
-          site: '',
-          rota: '',
-        ),
+        builder: (_) => const ProductionMissionPage(),
       ),
     );
   }
@@ -477,7 +489,8 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
                         child: _NodeListPanel(
                           nodes: nodes.nodes,
                           canEdit: graph.canEdit,
-                          canMoveToRobot: insideMap && graph.canEdit,
+                          canMoveToRobot:
+                              insideMap && graph.canEdit && specContext,
                           onEdit: (node) => unawaited(_editNode(node)),
                           onDelete: (node) => unawaited(_deleteNode(node)),
                           onMoveToRobot: (node) =>
@@ -1004,6 +1017,8 @@ class _NodeEditorValue {
   final FieldLoadRule loadRule;
   final FieldApproachMode approachMode;
   final double yawRadians;
+  final double? x;
+  final double? y;
   final String metadataJson;
 
   const _NodeEditorValue({
@@ -1013,6 +1028,8 @@ class _NodeEditorValue {
     required this.loadRule,
     required this.approachMode,
     required this.yawRadians,
+    this.x,
+    this.y,
     required this.metadataJson,
   });
 
@@ -1043,6 +1060,8 @@ class _NodeEditorDialogState extends State<_NodeEditorDialog> {
   late final TextEditingController _name;
   late final TextEditingController _stationId;
   late final TextEditingController _yawDegrees;
+  late final TextEditingController _x;
+  late final TextEditingController _y;
   late final TextEditingController _metadata;
   late FieldNodeRole _role;
   late FieldLoadRule _loadRule;
@@ -1052,10 +1071,12 @@ class _NodeEditorDialogState extends State<_NodeEditorDialog> {
   void initState() {
     super.initState();
     final node = widget.existing;
+    _x = TextEditingController(text: node?.pose.x.toString() ?? '');
+    _y = TextEditingController(text: node?.pose.y.toString() ?? '');
     _name = TextEditingController(text: node?.name ?? '');
     _stationId = TextEditingController(text: node?.stationId ?? '');
     _yawDegrees = TextEditingController(
-      text: ((node?.pose.theta ?? 0) * 180 / math.pi).toStringAsFixed(1),
+      text: radiansToDegrees(node?.pose.theta ?? 0).toStringAsFixed(1),
     );
     _metadata = TextEditingController(text: node?.metadataJson ?? '{}');
     _role = node?.role ?? FieldNodeRole.transit;
@@ -1065,6 +1086,8 @@ class _NodeEditorDialogState extends State<_NodeEditorDialog> {
 
   @override
   void dispose() {
+    _x.dispose();
+    _y.dispose();
     _name.dispose();
     _stationId.dispose();
     _yawDegrees.dispose();
@@ -1094,7 +1117,7 @@ class _NodeEditorDialogState extends State<_NodeEditorDialog> {
           _loadRule = FieldLoadRule.loaded;
           _approachMode = FieldApproachMode.dock;
           break;
-        case FieldNodeRole.gateQ5:
+        case FieldNodeRole.gateQ5 || FieldNodeRole.gateQ6:
           _loadRule = FieldLoadRule.any;
           _approachMode = FieldApproachMode.trigger;
           break;
@@ -1124,7 +1147,9 @@ class _NodeEditorDialogState extends State<_NodeEditorDialog> {
         stationId: _stationId.text.trim(),
         loadRule: _loadRule,
         approachMode: _approachMode,
-        yawRadians: degrees * math.pi / 180,
+        yawRadians: degreesToRadians(degrees),
+        x: double.tryParse(_x.text.trim()),
+        y: double.tryParse(_y.text.trim()),
         metadataJson: _metadata.text.trim(),
       ),
     );
@@ -1145,8 +1170,20 @@ class _NodeEditorDialogState extends State<_NodeEditorDialog> {
                   TextFormField(
                     controller: _name,
                     decoration: const InputDecoration(labelText: 'Düğüm adı'),
-                    validator: NodeNameRules.validate,
+                    validator: (value) => value?.trim().isNotEmpty == true
+                        ? null
+                        : 'Düğüm adı boş olamaz',
                   ),
+                  if (widget.existing != null)
+                    for (final entry
+                        in {_x: 'Map X (m)', _y: 'Map Y (m)'}.entries)
+                      TextFormField(
+                          controller: entry.key,
+                          decoration: InputDecoration(labelText: entry.value),
+                          validator: (v) =>
+                              double.tryParse(v?.trim() ?? '')?.isFinite == true
+                                  ? null
+                                  : 'Sonlu sayı girin'),
                   DropdownButtonFormField<FieldNodeRole>(
                     initialValue: _role,
                     decoration: const InputDecoration(labelText: 'Rol'),
