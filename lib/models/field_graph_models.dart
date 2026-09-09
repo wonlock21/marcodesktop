@@ -426,15 +426,20 @@ class FieldEdge {
       errors.add('Yüklü kenarın hareket yönü REVERSE olmalı');
     }
     final byId = {for (final node in nodes) node.nodeId: node};
-    final expected =
-        gateEventForRoles(byId[startNodeId]?.role, byId[endNodeId]?.role);
-    if (expected != null && (bidirectional || gateEvent != expected)) {
-      errors
-          .add('Gate crossing yönlü olmalı ve gate_event=$expected kullanmalı');
-    } else if (expected == null &&
-        (gateEvent == 'q5_outbound' || gateEvent == 'q6_return')) {
-      errors.add(
-          'Gate event yalnız iki gate rolü arasındaki crossing için kullanılabilir');
+    final startNode = byId[startNodeId];
+    final endNode = byId[endNodeId];
+    if (startNode != null && endNode != null) {
+      final expected = gateEventForRoles(startNode.role, endNode.role);
+      if (expected != null && (bidirectional || gateEvent != expected)) {
+        errors.add(
+          'Gate crossing yönlü olmalı ve gate_event=$expected kullanmalı',
+        );
+      } else if (expected == null &&
+          (gateEvent == 'q5_outbound' || gateEvent == 'q6_return')) {
+        errors.add(
+          'Gate event yalnız iki gate rolü arasındaki crossing için kullanılabilir',
+        );
+      }
     }
     try {
       _RosJson.metadataObject(metadataJson, 'edge.metadata_json');
@@ -744,10 +749,19 @@ class StationApproachConfig {
       approachQrId: _RosJson.string(m['approach_qr_id'], 'approach_qr_id'),
       dockHeadingYaw:
           _RosJson.number(m['dock_heading_yaw'], 'dock_heading_yaw'),
-      turnDirection: _RosJson.string(m['turn_direction'], 'turn_direction'),
+      // Wire compatibility only. Runtime always chooses the turn from the
+      // local costmap; an old left/right value must not become a GUI setting.
+      turnDirection: _automaticTurnDirection(m),
       lineFollowDurationS: _RosJson.number(
           m['line_follow_duration_s'], 'line_follow_duration_s'),
     );
+  }
+
+  static String _automaticTurnDirection(Map<String, dynamic> json) {
+    // Keep strict response parsing while deliberately discarding legacy
+    // left/right values as user configuration.
+    _RosJson.string(json['turn_direction'], 'turn_direction');
+    return 'auto';
   }
 
   Map<String, dynamic> toRosJson() {
@@ -758,17 +772,16 @@ class StationApproachConfig {
         !dockHeadingYaw.isFinite ||
         !lineFollowDurationS.isFinite ||
         lineFollowDurationS < 0.1 ||
-        lineFollowDurationS > 120 ||
-        !const ['left', 'right'].contains(turnDirection)) {
+        lineFollowDurationS > 120) {
       throw const RosContractException(
-          'İstasyon: QR 1–64 karakter, yön left/right, süre 0.1–120 s ve sonlu yaw gerekli');
+          'İstasyon: QR 1–64 karakter ve süre 0.1–120 s olmalıdır');
     }
     return {
       'station_id': stationId,
       'station_node_id': stationNodeId,
       'approach_qr_id': approachQrId.trim(),
       'dock_heading_yaw': dockHeadingYaw,
-      'turn_direction': turnDirection,
+      'turn_direction': 'auto',
       'line_follow_duration_s': lineFollowDurationS
     };
   }

@@ -116,6 +116,12 @@ class AgvService {
   }) =>
       ros.activateField(fieldName: fieldName, expectedHash: expectedHash);
 
+  static Future<Map<String, dynamic>> deactivateField({
+    required String fieldName,
+    required String expectedHash,
+  }) =>
+      ros.deactivateField(fieldName: fieldName, expectedHash: expectedHash);
+
   static Future<Map<String, dynamic>> archiveField(String fieldName) =>
       ros.archiveField(fieldName);
 

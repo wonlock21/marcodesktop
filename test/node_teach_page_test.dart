@@ -321,7 +321,7 @@ void main() {
       expect(find.text('dropoff_dock_1'), findsOneWidget);
       expect(find.textContaining('Demo A/B'), findsNothing);
       expect(find.textContaining('A Noktasını'), findsNothing);
-      expect(find.textContaining('aktif durumda'), findsOneWidget);
+      expect(find.textContaining('aktif ve salt okunur'), findsOneWidget);
       expect(find.byKey(const Key('nodes-tab')), findsOneWidget);
       expect(find.byKey(const Key('edges-tab')), findsOneWidget);
       expect(find.byKey(const Key('selected-tab')), findsOneWidget);

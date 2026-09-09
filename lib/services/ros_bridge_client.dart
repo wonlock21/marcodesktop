@@ -72,6 +72,7 @@ class RosBridgeClient {
   void Function(MapPreviewRobotPixel? robotPixel)? onMapPreviewRobotPixel;
   void Function(ActiveField? activeField)? onActiveField;
   void Function(FieldPackageStatus? status)? onFieldPackageStatus;
+  void Function(bool? ready)? onRouteLoadConstraintsReady;
 
   /// Mapping/preview abonelikleri (yeniden) gönderildikten sonra.
   /// UI last-good tutar; ilk taze preview gelene kadar "güncelleniyor" gösterebilir.
@@ -295,6 +296,12 @@ class RosBridgeClient {
       'queue_length': 1,
     });
     _send({
+      'op': 'subscribe',
+      'topic': RosMappingTopics.routeLoadConstraintsReady,
+      'type': RosMappingTypes.boolMsg,
+      'queue_length': 1,
+    });
+    _send({
       'op': 'advertise',
       'topic': manualVelocityTopic,
       'type': RosMappingTypes.twistMsg,
@@ -415,6 +422,14 @@ class RosBridgeClient {
         debugPrint('Geçersiz /fields/package_status mesajı');
       } else {
         onFieldPackageStatus?.call(parsed);
+      }
+    } else if (topic == RosMappingTopics.routeLoadConstraintsReady &&
+        raw is Map) {
+      final value = raw['data'];
+      if (value is bool) {
+        onRouteLoadConstraintsReady?.call(value);
+      } else {
+        debugPrint('Geçersiz /route/load_constraints_ready mesajı');
       }
     }
   }
@@ -712,6 +727,20 @@ class RosBridgeClient {
       callService(
         RosMappingTopics.fieldsActivate,
         RosMappingTypes.activateFieldSrv,
+        {
+          'field_name': fieldName.trim(),
+          'expected_hash': expectedHash,
+        },
+        const Duration(seconds: 120),
+      );
+
+  Future<Map<String, dynamic>> deactivateField({
+    required String fieldName,
+    required String expectedHash,
+  }) =>
+      callService(
+        RosMappingTopics.fieldsDeactivate,
+        RosMappingTypes.deactivateFieldSrv,
         {
           'field_name': fieldName.trim(),
           'expected_hash': expectedHash,
@@ -1082,6 +1111,7 @@ class RosBridgeClient {
     onMapPreviewRobotPixel?.call(null);
     onActiveField?.call(null);
     onFieldPackageStatus?.call(null);
+    onRouteLoadConstraintsReady?.call(null);
   }
 
   void _failPendingServiceCalls(String reason) {

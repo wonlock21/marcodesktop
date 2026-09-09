@@ -197,6 +197,7 @@ void main() {
     );
     await client.validateField('saha_01');
     await client.activateField(fieldName: 'saha_01', expectedHash: 'hash-1');
+    await client.deactivateField(fieldName: 'saha_01', expectedHash: 'hash-1');
     await client.archiveField('saha_01');
     await client.getActiveField();
 
@@ -214,6 +215,10 @@ void main() {
       (RosMappingTopics.fieldsPixelToMap, RosMappingTypes.pixelToMapSrv),
       (RosMappingTopics.fieldsValidate, RosMappingTypes.validateFieldSrv),
       (RosMappingTopics.fieldsActivate, RosMappingTypes.activateFieldSrv),
+      (
+        RosMappingTopics.fieldsDeactivate,
+        RosMappingTypes.deactivateFieldSrv,
+      ),
       (RosMappingTopics.fieldsArchive, RosMappingTypes.archiveFieldSrv),
       (RosMappingTopics.fieldsGetActive, RosMappingTypes.getActiveFieldSrv),
     ];
@@ -236,6 +241,10 @@ void main() {
       'screen_yaw': 1.2,
     });
     expect(received[9]['args']['expected_hash'], 'hash-1');
+    expect(received[10]['args'], {
+      'field_name': 'saha_01',
+      'expected_hash': 'hash-1',
+    });
 
     includeResult = false;
     await expectLater(client.listFields(), throwsA(isA<StateError>()));

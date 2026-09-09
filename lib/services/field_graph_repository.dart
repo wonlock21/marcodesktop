@@ -65,6 +65,18 @@ class FieldActivationResult {
   });
 }
 
+class StationConfigSaveResult {
+  final String message;
+  final String packageHash;
+  final StationApproachConfig savedConfig;
+
+  const StationConfigSaveResult({
+    required this.message,
+    required this.packageHash,
+    required this.savedConfig,
+  });
+}
+
 class ActiveFieldResult {
   final String message;
   final ActiveField activeField;
@@ -135,13 +147,16 @@ class FieldGraphRepository {
     return List.unmodifiable(raw.map(StationApproachConfig.fromRosJson));
   }
 
-  Future<String> saveStationConfig(
+  Future<StationConfigSaveResult> saveStationConfig(
       String fieldName, StationApproachConfig config) async {
     final response =
         await AgvService.ros.saveStationApproachConfig(fieldName, config);
     _requireSuccess(response);
-    StationApproachConfig.fromRosJson(response['saved_config']);
-    return _requiredString(response, 'package_hash');
+    return StationConfigSaveResult(
+      message: _message(response),
+      packageHash: _requiredString(response, 'package_hash'),
+      savedConfig: StationApproachConfig.fromRosJson(response['saved_config']),
+    );
   }
 
   Future<List<FieldInfo>> listFields() async {
@@ -265,6 +280,22 @@ class FieldGraphRepository {
     required String expectedHash,
   }) async {
     final response = await AgvService.activateField(
+      fieldName: fieldName,
+      expectedHash: expectedHash,
+    );
+    return FieldActivationResult(
+      success: _requiredBool(response, 'success'),
+      message: _message(response),
+      activeField: ActiveField.fromRosJson(response['active_field']),
+      status: FieldPackageStatus.fromRosJson(response['status']),
+    );
+  }
+
+  Future<FieldActivationResult> deactivate({
+    required String fieldName,
+    required String expectedHash,
+  }) async {
+    final response = await AgvService.deactivateField(
       fieldName: fieldName,
       expectedHash: expectedHash,
     );

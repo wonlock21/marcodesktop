@@ -371,6 +371,14 @@ void main() {
           message['queue_length'] == 1),
       isTrue,
     );
+    expect(
+      received.any((message) =>
+          message['op'] == 'subscribe' &&
+          message['topic'] == '/route/load_constraints_ready' &&
+          message['type'] == 'std_msgs/msg/Bool' &&
+          message['queue_length'] == 1),
+      isTrue,
+    );
     // Manuel komut yalnız fiziksel `/robot_status.manual_mode_enabled` ile açılır.
     expect(client.publishManualDirection(2), isTrue);
     client.stopManual();

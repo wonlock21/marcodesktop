@@ -83,4 +83,42 @@ class RobotStatus {
   String get activeFieldName => _string('active_field_name');
   String get activeFieldVersion => _string('active_field_version');
   String get activeFieldHash => _string('active_field_hash');
+
+  /// Operator-facing labels derived only from `/robot_status` wire values.
+  String get missionStateLabel => switch (missionState) {
+        0 => 'Göreve Hazır',
+        1 => 'Görev Alındı / İşleniyor',
+        2 => 'Yüksüz Hareket',
+        3 => 'Yüklü Hareket',
+        4 => 'Fabrika Otomasyon Sistemi İzni Bekleniyor',
+        5 => 'Başlangıç Noktasına Dönüyor',
+        6 => 'Hata',
+        7 => 'Acil Stop',
+        _ => 'Bilinmeyen Durum',
+      };
+
+  String get taskSourceLabel => switch (taskSource) {
+        'plc' => 'PLC',
+        'mock_plc' => 'Test PLC',
+        'gui' => 'GUI',
+        '' => '',
+        _ => taskSource,
+      };
+
+  bool get gateActive =>
+      missionState == 4 ||
+      gatePermissionGranted ||
+      gateEntryNode.isNotEmpty ||
+      gateDirection.isNotEmpty;
+
+  String get gateDirectionLabel => switch (gateDirection) {
+        'outbound' => 'Gidiş',
+        'return' => 'Dönüş',
+        _ => '-',
+      };
+
+  String get gatePermissionLabel {
+    if (!gateActive) return 'Aktif Değil';
+    return gatePermissionGranted ? 'Verildi' : 'Bekleniyor';
+  }
 }

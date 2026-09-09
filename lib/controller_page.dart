@@ -75,6 +75,10 @@ class _ControllerPageState extends State<ControllerPage>
   bool? _pendingBuzzerTarget;
   bool _buzzerServiceAccepted = false;
   bool? _pendingBuzzerObservedState;
+  ActiveField? _pendingActiveFieldResync;
+  Timer? _activeFieldResyncTimer;
+  bool _activeFieldResyncRunning = false;
+  String? _lastActiveFieldTopicKey;
 
   @override
   void initState() {
@@ -89,7 +93,7 @@ class _ControllerPageState extends State<ControllerPage>
     _ipController.text = 'ws://localhost:9090';
     unawaited(_loadLastRosAddress());
     AgvService.ros.onRobotStatus = _applyRobotStatus;
-    AgvService.ros.onMissionEvent = _onMissionEvent;
+    AgvService.ros.onMissionEvent = _onRosMissionEvent;
     AgvService.ros.onMapMetadata = _onMapMetadata;
     AgvService.ros.onMapFrame = _onMapFrame;
     AgvService.ros.onMappingStatus = _onMappingStatus;
@@ -102,6 +106,7 @@ class _ControllerPageState extends State<ControllerPage>
     AgvService.ros.onMapPreviewRobotPixel = _onMapPreviewRobotPixel;
     AgvService.ros.onActiveField = _onActiveField;
     AgvService.ros.onFieldPackageStatus = _onFieldPackageStatus;
+    AgvService.ros.onRouteLoadConstraintsReady = _onRouteLoadConstraintsReady;
     AgvService.ros.onMappingSubscriptionsReady = _onMappingSubscriptionsReady;
     AgvService.ros.state.addListener(_onRosConnectionState);
     // Build bitmeden notifyListeners yasak — ilk durumu sonraki frame'de bas.
@@ -236,10 +241,15 @@ class _ControllerPageState extends State<ControllerPage>
     });
   }
 
-  void _onMissionEvent(String event) {
+  void _onRosMissionEvent(String event) {
     if (!mounted) return;
     context.read<GcsMissionModel>().applyEvent(event);
     Provider.of<GcsEventLogModel>(context, listen: false).ekleRosEvent(event);
+  }
+
+  void _onMissionEvent(String message) {
+    if (!mounted) return;
+    Provider.of<GcsEventLogModel>(context, listen: false).ekle(message);
   }
 
   /// I.1 — Türkçe hata: olay günlüğü + SnackBar.
@@ -537,10 +547,47 @@ class _ControllerPageState extends State<ControllerPage>
   void _onActiveField(ActiveField? activeField) {
     if (!mounted) return;
     _fieldGraphModel.applyActiveTopic(activeField);
-    if (activeField != null && AgvService.ros.state.value.isConnected) {
-      unawaited(_fieldGraphModel.refreshFields());
-      final selected = _fieldGraphModel.selectedFieldName;
-      if (selected != null) unawaited(_fieldGraphModel.loadGraph(selected));
+    if (activeField == null || !AgvService.ros.state.value.isConnected) return;
+
+    final topicKey = '${activeField.active}|${activeField.fieldName}|'
+        '${activeField.packageVersion}|${activeField.packageHash}';
+    if (_lastActiveFieldTopicKey == topicKey) return;
+    _lastActiveFieldTopicKey = topicKey;
+    _pendingActiveFieldResync = activeField;
+    _scheduleActiveFieldResync();
+  }
+
+  void _scheduleActiveFieldResync() {
+    _activeFieldResyncTimer?.cancel();
+    _activeFieldResyncTimer = Timer(
+      const Duration(milliseconds: 150),
+      () => unawaited(_drainActiveFieldResync()),
+    );
+  }
+
+  Future<void> _drainActiveFieldResync() async {
+    if (!mounted || !AgvService.ros.state.value.isConnected) return;
+    if (_activeFieldResyncRunning) return;
+    if (_pendingActiveFieldResync == null) return;
+    if (_fieldGraphModel.busy ||
+        _fieldGraphModel.fieldsLoading ||
+        _fieldGraphModel.activeLoading ||
+        _fieldGraphModel.graphLoading) {
+      _scheduleActiveFieldResync();
+      return;
+    }
+
+    final activeEvent = _pendingActiveFieldResync!;
+    _pendingActiveFieldResync = null;
+    _activeFieldResyncRunning = true;
+    try {
+      final preferred = _fieldGraphModel.selectedFieldName?.isNotEmpty == true
+          ? _fieldGraphModel.selectedFieldName
+          : activeEvent.fieldName;
+      await _fieldGraphModel.synchronize(preferredField: preferred);
+    } finally {
+      _activeFieldResyncRunning = false;
+      if (_pendingActiveFieldResync != null) _scheduleActiveFieldResync();
     }
   }
 
@@ -555,6 +602,11 @@ class _ControllerPageState extends State<ControllerPage>
         !_fieldGraphModel.graphFresh) {
       unawaited(_fieldGraphModel.loadGraph(selected));
     }
+  }
+
+  void _onRouteLoadConstraintsReady(bool? ready) {
+    if (!mounted) return;
+    _fieldGraphModel.applyRouteLoadConstraintsReady(ready);
   }
 
   void _syncCanonicalNodeProjection() {
@@ -746,6 +798,10 @@ class _ControllerPageState extends State<ControllerPage>
     setState(() {
       isConnected = rosState.isConnected;
       if (!rosState.isConnected) {
+        _activeFieldResyncTimer?.cancel();
+        _activeFieldResyncTimer = null;
+        _pendingActiveFieldResync = null;
+        _lastActiveFieldTopicKey = null;
         _buzzerEnabled = null;
         _buzzerCommandInFlight = false;
         _pendingBuzzerTarget = null;
@@ -910,6 +966,7 @@ class _ControllerPageState extends State<ControllerPage>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _activeFieldResyncTimer?.cancel();
     AgvService.ros.state.removeListener(_onRosConnectionState);
     AgvService.ros.onRobotStatus = null;
     AgvService.ros.onMissionEvent = null;
@@ -925,6 +982,7 @@ class _ControllerPageState extends State<ControllerPage>
     AgvService.ros.onMapPreviewRobotPixel = null;
     AgvService.ros.onActiveField = null;
     AgvService.ros.onFieldPackageStatus = null;
+    AgvService.ros.onRouteLoadConstraintsReady = null;
     AgvService.ros.onMappingSubscriptionsReady = null;
     _fieldGraphModel.removeListener(_syncCanonicalNodeProjection);
     _occupancyImageGeneration++;
@@ -1060,6 +1118,10 @@ class _ControllerPageState extends State<ControllerPage>
           _NavBtn(
               label: "ARAÇ 3D",
               onTap: () => Navigator.pushNamed(context, '3d-page')),
+          _NavBtn(
+              label: "GÖREV İZLEME",
+              onTap: () =>
+                  Navigator.pushNamed(context, 'production-mission-page')),
           _NavBtn(
               label: "KAYITLI HARİTALAR",
               onTap: () => Navigator.pushNamed(context, 'saved-fields-page')),
@@ -1278,7 +1340,7 @@ class _ControllerPageState extends State<ControllerPage>
                                     conn.plcBaglanti.aktif ? success : muted),
                                 SizedBox(width: 1.w),
                                 Text(
-                                  'PLC ${conn.plcBaglanti.etiket}',
+                                  'PLC Bağlantısı: ${conn.plcBaglanti.etiket}',
                                   style: TextStyle(
                                     color: muted,
                                     fontSize: 2.4.sp,
@@ -1508,7 +1570,6 @@ class _ControllerPageState extends State<ControllerPage>
                         // ── Güvenli Durdur ────────────────────────────
                         GestureDetector(
                           onTap: _guvenliDurdur,
-                          onLongPress: _resetSafety,
                           child: Container(
                             width: double.infinity,
                             padding: EdgeInsets.symmetric(vertical: 1.4.h),
@@ -2019,6 +2080,10 @@ class _ControllerPageState extends State<ControllerPage>
     final plcEtiket = !robotBagli
         ? 'Bağlı Değil'
         : (conn.plcBaglanti.aktif ? 'Bağlı' : conn.plcBaglanti.etiket);
+    final status = mission.robotStatus;
+    final gateActive =
+        robotBagli && mission.statusFresh && (status?.gateActive ?? false);
+    final missionDetail = status?.statusDetail.trim() ?? '';
 
     return Container(
       decoration: BoxDecoration(
@@ -2040,12 +2105,13 @@ class _ControllerPageState extends State<ControllerPage>
             bright: bright,
             rows: [
               _SRow('ID', safe(mission.gorevId)),
-              _SRow('KAYNAK', safe(mission.gorevKaynagi)),
+              _SRow('GÖREV KAYNAĞI', safe(status?.taskSourceLabel ?? '')),
               _SRow('ROTA', rota, truncate: true),
               _SRow(
                   'DURUM',
                   mission.statusFresh
-                      ? mission.asama.etiket
+                      ? '${status?.missionStateLabel ?? mission.asama.etiket}'
+                          '${missionDetail.isEmpty ? '' : ' · $missionDetail'}'
                       : 'ESKİ VERİ / durum bekleniyor',
                   valueColor: mission.asama.hataVeyaStop
                       ? danger
@@ -2082,28 +2148,37 @@ class _ControllerPageState extends State<ControllerPage>
             muted: muted,
             bright: bright,
             rows: [
-              _SRow('PLC', plcEtiket,
+              _SRow('PLC BAĞLANTISI', plcEtiket,
                   valueColor:
                       robotBagli && conn.plcBaglanti.aktif ? success : danger),
               _SRow(
-                  'KAPI İZNİ',
+                  'KAPI',
                   !robotBagli
                       ? '--'
-                      : (mission.kapiIzni ? 'Serbest' : 'Kapalı'),
+                      : gateActive
+                          ? safe(status?.gateEntryNode ?? '')
+                          : 'Aktif Değil',
+                  truncate: true),
+              _SRow(
+                  'YÖN',
+                  !robotBagli
+                      ? '--'
+                      : gateActive
+                          ? status?.gateDirectionLabel ?? '-'
+                          : '-',
+                  truncate: true),
+              _SRow(
+                  'İZİN',
+                  !robotBagli
+                      ? '--'
+                      : status?.gatePermissionLabel ?? 'Aktif Değil',
                   valueColor: !robotBagli
                       ? muted
-                      : (mission.kapiIzni ? success : muted)),
-              _SRow(
-                  'GELEN',
-                  !robotBagli
-                      ? '--'
-                      : safe(mission.sonOtomasyonMesaj.isNotEmpty
-                          ? mission.sonOtomasyonMesaj
-                          : agv.plcSonMesaj),
-                  truncate: true),
-              _SRow('GÖNDERİLEN',
-                  !robotBagli ? '--' : safe(mission.sonGonderilenMesaj),
-                  truncate: true),
+                      : status?.gatePermissionGranted == true
+                          ? success
+                          : gateActive
+                              ? const Color(0xFFFF9800)
+                              : muted),
             ],
           )),
           SizedBox(width: 1.5.w),
@@ -2608,17 +2683,25 @@ class _ControllerPageState extends State<ControllerPage>
               Expanded(
                 child: OutlinedButton(
                   key: const Key('main-mission-cancel'),
-                  onPressed: mission.canCancel
-                      ? () => unawaited(_missionIptal())
-                      : null,
+                  onPressed: mission.canResetError
+                      ? () => unawaited(_resetSafety())
+                      : mission.canCancel
+                          ? () => unawaited(_missionIptal())
+                          : null,
                   style: OutlinedButton.styleFrom(
                     foregroundColor: danger,
                     disabledForegroundColor: muted,
                     side: BorderSide(
-                      color: mission.canCancel ? danger : borderC,
+                      color: mission.canCancel || mission.canResetError
+                          ? danger
+                          : borderC,
                     ),
                   ),
-                  child: const Text('Görevi İptal Et'),
+                  child: Text(
+                    mission.canResetError
+                        ? 'Hatayı Sıfırla'
+                        : 'Görevi İptal Et',
+                  ),
                 ),
               ),
             ],

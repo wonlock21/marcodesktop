@@ -9,7 +9,6 @@ import 'data_model.dart';
 import 'models/gcs_field_graph_model.dart';
 import 'models/field_graph_models.dart';
 import 'models/gcs_mission_model.dart';
-import 'production_mission_page.dart';
 import 'services/ros_mapping_contract.dart';
 
 // ─── Renk sabitleri (ana GCS ekranıyla birebir) ────────────────────────────
@@ -428,13 +427,6 @@ class _ScenarioPageState extends State<ScenarioPage> {
           ),
         ),
         actions: [
-          IconButton(
-              tooltip: 'Görev İzleme',
-              icon: const Icon(Icons.monitor_heart_outlined),
-              onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => const ProductionMissionPage()))),
           // Sıfırla
           _appBarBtn(
             icon: Icons.restart_alt,

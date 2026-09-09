@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'models/field_graph_models.dart';
 import 'models/gcs_field_graph_model.dart';
 import 'models/gcs_mapping_model.dart';
+import 'node_teach_page.dart';
 import 'services/agv_service.dart';
 import 'services/angles.dart';
 import 'services/ros_mapping_contract.dart';
@@ -185,7 +186,10 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
     }
   }
 
-  Future<void> _openGraph(FieldInfo field, String routeName) async {
+  Future<void> _openGraph(
+    FieldInfo field, {
+    NodeTeachInitialSection initialSection = NodeTeachInitialSection.nodes,
+  }) async {
     final graph = context.read<GcsFieldGraphModel>();
     await graph.selectField(field.fieldName);
     if (!mounted) return;
@@ -193,7 +197,12 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
       _toast(graph.graphError!);
       return;
     }
-    await Navigator.pushNamed(context, routeName);
+    await Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => NodeTeachPage(initialSection: initialSection),
+      ),
+    );
   }
 
   Future<void> _archive(FieldInfo field) async {
@@ -378,8 +387,11 @@ class _SavedFieldsPageState extends State<SavedFieldsPage> {
                     mapping.mappingActive
                 ? null
                 : () => unawaited(_loadField(field)),
-            onNodes: () => unawaited(_openGraph(field, 'node-teach-page')),
-            onRoute: () => unawaited(_openGraph(field, 'route-edit-page')),
+            onNodes: () => unawaited(_openGraph(field)),
+            onRoute: () => unawaited(_openGraph(
+              field,
+              initialSection: NodeTeachInitialSection.edges,
+            )),
             onArchive: field.active ? null : () => unawaited(_archive(field)),
           );
         },
@@ -482,7 +494,10 @@ class _SavedFieldCard extends StatelessWidget {
                 onPressed: onLocalization,
               ),
               _CardAction(label: 'Düğümler', onPressed: busy ? null : onNodes),
-              _CardAction(label: 'Rota', onPressed: busy ? null : onRoute),
+              _CardAction(
+                label: 'Bağlantılar',
+                onPressed: busy ? null : onRoute,
+              ),
               if (!field.active)
                 _CardAction(
                   label: 'Arşivle',

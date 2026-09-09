@@ -17,6 +17,7 @@ import 'package:liftant_v2_bitirme/models/gcs_event_log_model.dart';
 import 'package:liftant_v2_bitirme/models/robot_status.dart';
 import 'package:liftant_v2_bitirme/production_mission_page.dart';
 import 'package:liftant_v2_bitirme/scenerio_page.dart';
+import 'package:liftant_v2_bitirme/station_config_page.dart';
 import 'package:liftant_v2_bitirme/data_model.dart';
 import 'package:liftant_v2_bitirme/services/angles.dart';
 import 'package:liftant_v2_bitirme/services/field_graph_repository.dart';
@@ -98,6 +99,67 @@ class Repo extends FieldGraphRepository {
       [config];
 }
 
+class StationDraftRepo extends FieldGraphRepository {
+  StationApproachConfig? saved;
+
+  static const draftStatus = FieldPackageStatus(
+      header: RosHeader.empty,
+      state: FieldPackageState.draft,
+      fieldName: 'custom_field',
+      packageHash: 'draft-hash',
+      nodeCount: 2,
+      edgeCount: 0,
+      errors: [],
+      warnings: [],
+      message: 'draft');
+
+  @override
+  Future<List<FieldInfo>> listFields() async => const [
+        FieldInfo(
+            fieldName: 'custom_field',
+            fieldDirectory: '/robot/custom_field',
+            mapYaml: '/robot/custom_field/map.yaml',
+            previewPng: '/robot/custom_field/preview.png',
+            createdAt: '',
+            mapReady: true,
+            initialPoseReady: true,
+            localizationReady: true,
+            routeReady: true,
+            validationPassed: false,
+            routeHash: '',
+            active: false,
+            packageVersion: '',
+            packageHash: 'draft-hash',
+            message: 'draft')
+      ];
+
+  @override
+  Future<ActiveFieldResult> getActive() =>
+      throw StateError('active field not set');
+
+  @override
+  Future<FieldGraphData> getGraph(String name) async => const FieldGraphData(
+      message: 'loaded', nodes: [dockA, dockB], edges: [], status: draftStatus);
+
+  @override
+  Future<List<StationApproachConfig>> getStationConfigs(String name) async =>
+      saved == null ? [config] : [saved!];
+
+  @override
+  Future<StationConfigSaveResult> saveStationConfig(
+      String fieldName, StationApproachConfig requested) async {
+    saved = StationApproachConfig(
+        stationId: requested.stationId,
+        stationNodeId: requested.stationNodeId,
+        approachQrId: requested.approachQrId,
+        dockHeadingYaw: 1.25,
+        turnDirection: 'auto',
+        lineFollowDurationS: requested.lineFollowDurationS);
+    return StationConfigSaveResult(
+        message: 'saved', packageHash: 'next-hash', savedConfig: saved!);
+  }
+}
+
 class Client extends RosBridgeClient {
   final List<String> calls = [];
   Map<String, dynamic>? submitted;
@@ -128,12 +190,33 @@ class Client extends RosBridgeClient {
 Future<GcsFieldGraphModel> graphModel() async {
   final model = GcsFieldGraphModel(repository: Repo())..applyConnection(true);
   await model.synchronize();
+  model.applyRouteLoadConstraintsReady(true);
   return model;
 }
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  test('fresh RobotStatus restores route readiness after GUI restart',
+      () async {
+    final graph = GcsFieldGraphModel(repository: Repo())..applyConnection(true);
+    await graph.synchronize();
+
+    expect(graph.routeLoadConstraintsFresh, false);
+    graph.applyRobotStatus(status());
+    expect(graph.routeRuntimeReadinessKnown, true);
+    expect(graph.routeRuntimeReady, true);
+
+    // A fresh explicit route topic remains the primary source.
+    graph.applyRouteLoadConstraintsReady(false);
+    expect(graph.routeRuntimeReady, false);
+
+    graph.markDisconnected();
+    expect(graph.routeRuntimeReadinessKnown, false);
+    expect(graph.routeRuntimeReady, false);
+    graph.dispose();
+  });
 
   test('RobotStatus all source fields and optional defaults are safe', () {
     final fixture =
@@ -144,6 +227,9 @@ void main() {
     expect(robot.raw.length, 56);
     expect(robot.selectedRouteEdges, [812, 999]);
     expect(robot.gateEntryNode, 'custom_gate_return');
+    expect(robot.taskSourceLabel, 'GUI');
+    expect(robot.gateDirectionLabel, '-');
+    expect(robot.gatePermissionLabel, 'Bekleniyor');
     expect(robot.dockingRemainingS, 3.5);
     expect(robot.lastQrAgeS, 0.2);
     expect(robot.activeFieldHash, 'hash');
@@ -158,6 +244,22 @@ void main() {
     expect(empty.qrTriggerArmed, false);
     expect(empty.pose, isEmpty);
     expect(empty.selectedRouteEdges, [1]);
+
+    final plcGate = RobotStatus.fromRosJson({
+      'mission_state': 4,
+      'task_source': 'plc',
+      'gate_entry_node': 'custom_gate_outbound',
+      'gate_direction': 'outbound',
+      'gate_permission_granted': true,
+    });
+    expect(
+        plcGate.missionStateLabel, 'Fabrika Otomasyon Sistemi İzni Bekleniyor');
+    expect(plcGate.taskSourceLabel, 'PLC');
+    expect(plcGate.gateDirectionLabel, 'Gidiş');
+    expect(plcGate.gatePermissionLabel, 'Verildi');
+
+    final inactiveGate = RobotStatus.fromRosJson(const {});
+    expect(inactiveGate.gatePermissionLabel, 'Aktif Değil');
   });
   test('field name matches ROS manager initial-character and length rules', () {
     expect(RosFieldNameRules.isValid('_field'), false);
@@ -165,13 +267,13 @@ void main() {
     expect(RosFieldNameRules.isValid('field-1_ok'), true);
     expect(RosFieldNameRules.isValid('a' * 65), false);
   });
-  test('station exact serialization and degree/radian round trip', () {
+  test('station save serialization forces automatic turn compatibility', () {
     expect(config.toRosJson(), {
       'station_id': 'WAREHOUSE',
       'station_node_id': 761,
       'approach_qr_id': 'QR_CUSTOM_88',
       'dock_heading_yaw': math.pi,
-      'turn_direction': 'left',
+      'turn_direction': 'auto',
       'line_follow_duration_s': 12.5
     });
     expect(StationApproachConfig.fromRosJson(config.toRosJson()).approachQrId,
@@ -179,9 +281,10 @@ void main() {
     expect(degreesToRadians(180), closeTo(math.pi, 1e-12));
     expect(radiansToDegrees(-math.pi / 2), closeTo(-90, 1e-12));
     expect(radiansToDegrees(degreesToRadians(37.4)), closeTo(37.4, 1e-12));
-    final auto = StationApproachConfig.fromRosJson(
-        config.toRosJson()..['turn_direction'] = 'auto');
-    expect(auto.toRosJson, throwsFormatException);
+    final legacy = StationApproachConfig.fromRosJson(
+        config.toRosJson()..['turn_direction'] = 'left');
+    expect(legacy.turnDirection, 'auto');
+    expect(legacy.toRosJson()['turn_direction'], 'auto');
   });
   test('gate roles use arbitrary IDs, neighbours need no crossing event', () {
     final outbound = dockA.copyWith(role: FieldNodeRole.gateQ5);
@@ -266,13 +369,98 @@ void main() {
     events.ekleRosEvent(
         '{"stamp": 10, "event": "future_unknown", "payload": "kept"}');
     events.ekleRosEvent('{"stamp": 5, "event": "older"}');
-    expect(events.kayitlar.first.mesaj, contains('future_unknown'));
-    expect(events.kayitlar.first.mesaj, contains('kept'));
+    expect(events.kayitlar, isEmpty);
+    expect(events.hamRosKayitlari.first.raw, contains('kept'));
     for (var i = 0; i < GcsEventLogModel.capacity + 5; i++) {
       events.ekleRosEvent('{"stamp": ${i + 20}, "event": "future_$i"}');
     }
-    expect(events.kayitlar.length, GcsEventLogModel.capacity);
+    expect(events.hamRosKayitlari.length, GcsEventLogModel.capacity);
+    expect(events.kayitlar, isEmpty);
     await Future<void>.delayed(Duration.zero);
+    events.dispose();
+  });
+  test('operator log translates and merges one mission failure chain',
+      () async {
+    final events = GcsEventLogModel();
+    await Future<void>.delayed(Duration.zero);
+    events.ekleRosEvent('{"event":"timed_reverse_docking_failed","stamp":10,'
+        '"station":"A3","task_id":"gui_1"}');
+    events.ekleRosEvent('{"event":"mission_failed","stamp":11,'
+        '"reason":"timed_docking:A3 status=6","task_id":"gui_1"}');
+    events.ekleRosEvent('{"event":"mission_complete","stamp":12,'
+        '"success":false,"reason":"timed_docking:A3 status=6",'
+        '"task_id":"gui_1"}');
+
+    expect(events.hamRosKayitlari, hasLength(3));
+    expect(events.kayitlar, hasLength(1));
+    expect(events.kayitlar.single.mesaj,
+        'Görev başarısız: A3 istasyonuna yanaşılamadı.');
+    expect(events.kayitlar.single.mesaj, isNot(contains('task_id')));
+    expect(events.kayitlar.single.mesaj, isNot(contains('stamp')));
+    events.dispose();
+  });
+  testWidgets('station form exposes only QR and line-follow settings',
+      (tester) async {
+    final repository = StationDraftRepo();
+    final graph = GcsFieldGraphModel(repository: repository)
+      ..applyConnection(true);
+    await graph.synchronize(preferredField: 'custom_field');
+    addTearDown(graph.dispose);
+
+    await tester.pumpWidget(ChangeNotifierProvider.value(
+        value: graph, child: const MaterialApp(home: StationConfigPage())));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('İstasyon ayarını düzenle').first);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('station-approach-qr-field')), findsOneWidget);
+    expect(find.byKey(const Key('station-line-follow-duration-field')),
+        findsOneWidget);
+    expect(find.text('Dock heading (derece)'), findsNothing);
+    expect(find.text('Dönüş yönü'), findsNothing);
+
+    await tester.enterText(
+        find.byKey(const Key('station-approach-qr-field')), 'QR_NEW');
+    await tester.enterText(
+        find.byKey(const Key('station-line-follow-duration-field')), '8.5');
+    await tester.tap(find.byKey(const Key('station-config-save-button')));
+    await tester.pumpAndSettle();
+
+    expect(repository.saved?.approachQrId, 'QR_NEW');
+    expect(repository.saved?.lineFollowDurationS, 8.5);
+    expect(repository.saved?.turnDirection, 'auto');
+    expect(repository.saved?.dockHeadingYaw, 1.25);
+  });
+  test('station turn events drive runtime direction and readable log',
+      () async {
+    final mission = GcsMissionModel();
+    final events = GcsEventLogModel();
+    await Future<void>.delayed(Duration.zero);
+    const selected = '{"event":"station_turn_direction_selected","stamp":10,'
+        '"station":"A3","selected_direction":"right",'
+        '"left":{"safe":false,"minimum_clearance_m":0.1,'
+        '"maximum_cost":254,"reason":"engel"},'
+        '"right":{"safe":true,"minimum_clearance_m":0.42,'
+        '"maximum_cost":20,"reason":""}}';
+    mission.applyEvent(selected);
+    events.ekleRosEvent(selected);
+    expect(mission.stationTurnStatus?.station, 'A3');
+    expect(mission.stationTurnStatus?.selectedDirection, 'right');
+    expect(mission.stationTurnStatus?.right.minimumClearanceM, 0.42);
+    expect(events.kayitlar.first.mesaj, contains('A3 dönüş yönü: Sağ'));
+    expect(events.kayitlar.first.mesaj, contains('Sol yay: Engelli'));
+
+    const unavailable =
+        '{"event":"station_turn_direction_unavailable","stamp":11,'
+        '"station":"B1","left":{"safe":false,"reason":"unknown"},'
+        '"right":{"safe":false,"reason":"costmap dışı"}}';
+    mission.applyEvent(unavailable);
+    events.ekleRosEvent(unavailable);
+    expect(mission.stationTurnStatus?.unavailable, true);
+    expect(events.kayitlar.first.mesaj, contains('B1 dönüş yönü seçilemedi'));
+    expect(events.kayitlar.first.mesaj, contains('unknown'));
+    expect(events.kayitlar.first.mesaj, contains('costmap dışı'));
+    mission.dispose();
     events.dispose();
   });
   test(
@@ -492,7 +680,11 @@ void main() {
     expect(find.byType(DropdownButtonFormField<int>), findsNothing);
     expect(find.byKey(const Key('mission-submit')), findsNothing);
     expect(find.byKey(const Key('mission-start')), findsNothing);
-    expect(find.textContaining('yalnız çalışan görevi izler'), findsOneWidget);
+    expect(find.textContaining('yalnız çalışan görevi izler'), findsNothing);
+    expect(find.byKey(const Key('raw-ros-logs-button')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('raw-ros-logs-button')));
+    await tester.pumpAndSettle();
+    expect(find.text('Ham ROS Mesajları'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     graph.dispose();
     mission.dispose();
@@ -520,7 +712,7 @@ void main() {
     expect(client.calls, isEmpty);
     expect(find.byKey(const Key('mission-submit')), findsNothing);
     expect(find.byKey(const Key('mission-start')), findsNothing);
-    expect(find.textContaining('Ana Ekrandan'), findsOneWidget);
+    expect(find.textContaining('Ana Ekrandan'), findsNothing);
     await tester.pumpWidget(const SizedBox());
     mission.dispose();
     graph.dispose();

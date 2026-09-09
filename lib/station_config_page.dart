@@ -41,7 +41,8 @@ class StationConfigPage extends StatelessWidget {
               title: Text('${dock.stationId} · ${dock.name}'),
               subtitle: Text(config == null
                   ? 'Yaklaşım ayarı kaydedilmemiş'
-                  : 'QR: ${config.approachQrId}\nYön: ${config.turnDirection} · ${radiansToDegrees(config.dockHeadingYaw).toStringAsFixed(1)}° · ${config.lineFollowDurationS} s'),
+                  : 'QR: ${config.approachQrId} · Şerit takip: ${config.lineFollowDurationS} s\n'
+                      'Docking yönü: ${radiansToDegrees(config.dockHeadingYaw).toStringAsFixed(1)}° (rota geometrisi) · Dönüş: Otomatik'),
               trailing: IconButton(
                   icon: const Icon(Icons.edit),
                   tooltip: 'İstasyon ayarını düzenle',
@@ -71,30 +72,20 @@ class _StationDialog extends StatefulWidget {
 class _StationDialogState extends State<_StationDialog> {
   final form = GlobalKey<FormState>();
   late final TextEditingController qr;
-  late final TextEditingController degrees;
   late final TextEditingController duration;
-  String? direction;
   bool pending = false;
   String? error;
   @override
   void initState() {
     super.initState();
     qr = TextEditingController(text: widget.config?.approachQrId ?? '');
-    degrees = TextEditingController(
-        text: widget.config == null
-            ? ''
-            : radiansToDegrees(widget.config!.dockHeadingYaw).toString());
     duration = TextEditingController(
         text: widget.config?.lineFollowDurationS.toString() ?? '');
-    direction = const ['left', 'right'].contains(widget.config?.turnDirection)
-        ? widget.config!.turnDirection
-        : null;
   }
 
   @override
   void dispose() {
     qr.dispose();
-    degrees.dispose();
     duration.dispose();
     super.dispose();
   }
@@ -110,8 +101,8 @@ class _StationDialogState extends State<_StationDialog> {
           stationId: widget.dock.stationId,
           stationNodeId: widget.dock.nodeId,
           approachQrId: qr.text.trim(),
-          dockHeadingYaw: degreesToRadians(double.parse(degrees.text.trim())),
-          turnDirection: direction!,
+          dockHeadingYaw: widget.config?.dockHeadingYaw ?? 0.0,
+          turnDirection: 'auto',
           lineFollowDurationS: double.parse(duration.text.trim())));
       if (mounted) Navigator.pop(context);
     } catch (e) {
@@ -131,6 +122,7 @@ class _StationDialogState extends State<_StationDialog> {
                 child: SingleChildScrollView(
                     child: Column(mainAxisSize: MainAxisSize.min, children: [
                   TextFormField(
+                      key: const Key('station-approach-qr-field'),
                       controller: qr,
                       enabled: !pending,
                       decoration: const InputDecoration(
@@ -140,29 +132,7 @@ class _StationDialogState extends State<_StationDialog> {
                               ? '1–64 karakter gerekli'
                               : null),
                   TextFormField(
-                      controller: degrees,
-                      enabled: !pending,
-                      decoration: const InputDecoration(
-                          labelText: 'Dock heading (derece)'),
-                      validator: (v) =>
-                          double.tryParse(v?.trim() ?? '')?.isFinite != true
-                              ? 'Sonlu sayı gerekli'
-                              : null),
-                  DropdownButtonFormField<String>(
-                      initialValue: direction,
-                      decoration:
-                          const InputDecoration(labelText: 'Dönüş yönü'),
-                      items: const [
-                        DropdownMenuItem(
-                            value: 'left', child: Text('Sol / left')),
-                        DropdownMenuItem(
-                            value: 'right', child: Text('Sağ / right'))
-                      ],
-                      onChanged:
-                          pending ? null : (v) => setState(() => direction = v),
-                      validator: (v) =>
-                          v == null ? 'Sol veya sağ seçin' : null),
-                  TextFormField(
+                      key: const Key('station-line-follow-duration-field'),
                       controller: duration,
                       enabled: !pending,
                       decoration: const InputDecoration(
@@ -173,6 +143,26 @@ class _StationDialogState extends State<_StationDialog> {
                             ? '0.1–120.0 s gerekli'
                             : null;
                       }),
+                  const SizedBox(height: 12),
+                  ExpansionTile(
+                    tilePadding: EdgeInsets.zero,
+                    title: const Text('Gelişmiş / Debug'),
+                    children: [
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Hesaplanan docking yönü'),
+                        subtitle: Text(widget.config == null
+                            ? 'Henüz ROS tarafından hesaplanmadı'
+                            : '${radiansToDegrees(widget.config!.dockHeadingYaw).toStringAsFixed(1)}° '
+                                '(${widget.config!.dockHeadingYaw.toStringAsFixed(3)} rad)'),
+                      ),
+                      const ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text('Dönüş seçimi'),
+                        subtitle: Text('Otomatik'),
+                      ),
+                    ],
+                  ),
                   if (error != null)
                     Text(error!, style: const TextStyle(color: Colors.red)),
                 ])))),
@@ -181,6 +171,7 @@ class _StationDialogState extends State<_StationDialog> {
               onPressed: pending ? null : () => Navigator.pop(context),
               child: const Text('Vazgeç')),
           FilledButton(
+              key: const Key('station-config-save-button'),
               onPressed: pending ? null : save,
               child: Text(pending ? 'Kaydediliyor…' : 'ROS’a Kaydet'))
         ],

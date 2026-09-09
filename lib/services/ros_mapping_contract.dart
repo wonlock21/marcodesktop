@@ -238,8 +238,10 @@ abstract final class RosMappingTopics {
   static const fieldsPixelToMap = '/fields/pixel_to_map';
   static const fieldsValidate = '/fields/validate';
   static const fieldsActivate = '/fields/activate';
+  static const fieldsDeactivate = '/fields/deactivate';
   static const fieldsArchive = '/fields/archive';
   static const fieldsGetActive = '/fields/get_active';
+  static const routeLoadConstraintsReady = '/route/load_constraints_ready';
 
   static const localizationStart = '/localization/start';
   static const localizationStop = '/localization/stop';
@@ -285,6 +287,7 @@ abstract final class RosMappingTypes {
   static const pixelToMapSrv = 'marco_msgs/srv/PixelToMap';
   static const validateFieldSrv = 'marco_msgs/srv/ValidateField';
   static const activateFieldSrv = 'marco_msgs/srv/ActivateField';
+  static const deactivateFieldSrv = 'marco_msgs/srv/DeactivateField';
   static const archiveFieldSrv = 'marco_msgs/srv/ArchiveField';
   static const getActiveFieldSrv = 'marco_msgs/srv/GetActiveField';
   static const startLocalizationSrv = 'marco_msgs/srv/StartLocalization';

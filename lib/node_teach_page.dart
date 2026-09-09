@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -24,6 +25,8 @@ const _danger = Color(0xFFE53935);
 
 enum _PanelSection { nodes, edges, selected }
 
+enum NodeTeachInitialSection { nodes, edges }
+
 extension on FieldNodeRole {
   String get operatorLabel => switch (this) {
         FieldNodeRole.wait => 'Bekleme Noktası',
@@ -39,7 +42,12 @@ extension on FieldNodeRole {
 }
 
 class NodeTeachPage extends StatefulWidget {
-  const NodeTeachPage({super.key});
+  const NodeTeachPage({
+    super.key,
+    this.initialSection = NodeTeachInitialSection.nodes,
+  });
+
+  final NodeTeachInitialSection initialSection;
 
   @override
   State<NodeTeachPage> createState() => _NodeTeachPageState();
@@ -47,7 +55,7 @@ class NodeTeachPage extends StatefulWidget {
 
 class _NodeTeachPageState extends State<NodeTeachPage> {
   final TextEditingController _searchController = TextEditingController();
-  _PanelSection _section = _PanelSection.nodes;
+  late _PanelSection _section;
   FieldNodeRole? _roleFilter;
   String? _stationFilter;
   int? _selectedNodeId;
@@ -58,6 +66,9 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
   @override
   void initState() {
     super.initState();
+    _section = widget.initialSection == NodeTeachInitialSection.edges
+        ? _PanelSection.edges
+        : _PanelSection.nodes;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final graph = context.read<GcsFieldGraphModel>();
@@ -448,6 +459,267 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
     }
   }
 
+  Future<void> _validateGraph() async {
+    final graph = context.read<GcsFieldGraphModel>();
+    if (!graph.canEdit || graph.busy) return;
+    try {
+      final result = await graph.validateSelected();
+      if (!mounted) return;
+      _toast(
+        result.success && result.status.state == FieldPackageState.valid
+            ? 'Saha doğrulandı.'
+            : '${result.status.errors.length} hata, '
+                '${result.status.warnings.length} uyarı bulundu.',
+      );
+    } catch (error) {
+      _toast('Doğrulama başarısız: ${_errorText(error)}');
+    }
+  }
+
+  Future<void> _showValidationMessages() async {
+    final status = context.read<GcsFieldGraphModel>().packageStatus;
+    if (status == null) return;
+    final errors = status.errors;
+    final warnings = status.warnings;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(
+              errors.isNotEmpty ? Icons.error_outline : Icons.warning_amber,
+              color: errors.isNotEmpty ? _danger : _warning,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Doğrulama Sonuçları · ${errors.length} hata, '
+                '${warnings.length} uyarı',
+              ),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: 700,
+          child: errors.isEmpty && warnings.isEmpty
+              ? const Text('Doğrulama hatası veya uyarısı bulunmuyor.')
+              : ListView(
+                  shrinkWrap: true,
+                  children: [
+                    for (var index = 0; index < errors.length; index++)
+                      ListTile(
+                        dense: true,
+                        leading:
+                            const Icon(Icons.error_outline, color: _danger),
+                        title: SelectableText(
+                          '${index + 1}. ${_validationMessageTr(errors[index])}',
+                        ),
+                      ),
+                    for (var index = 0; index < warnings.length; index++)
+                      ListTile(
+                        dense: true,
+                        leading:
+                            const Icon(Icons.warning_amber, color: _warning),
+                        title: SelectableText(
+                          '${index + 1}. ${_validationMessageTr(warnings[index])}',
+                        ),
+                      ),
+                  ],
+                ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Kapat'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _autoConnectCompetitionGraph() async {
+    final graph = context.read<GcsFieldGraphModel>();
+    if (!graph.canEdit || graph.busy) return;
+
+    final plan = _CompetitionEdgePlan.build(
+      nodes: graph.nodes,
+      existingEdges: graph.edges,
+    );
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.auto_fix_high_outlined, color: _accent),
+                SizedBox(width: 10),
+                Text('Yarışma bağlantılarını oluştur'),
+              ],
+            ),
+            content: SizedBox(
+              width: 680,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Aşağıdaki bağlantılar Station ID ve düğüm rollerine '
+                      'göre oluşturulacak. Mevcut bağlantılar korunur.',
+                    ),
+                    const SizedBox(height: 12),
+                    if (plan.issues.isNotEmpty) ...[
+                      for (final issue in plan.issues)
+                        ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(
+                            Icons.error_outline,
+                            color: _danger,
+                          ),
+                          title: Text(issue),
+                        ),
+                    ] else ...[
+                      Text(
+                        '${plan.edges.length} yeni bağlantı oluşturulacak, '
+                        '${plan.existingCount} bağlantı zaten mevcut.',
+                      ),
+                      const SizedBox(height: 8),
+                      for (final item in plan.edges)
+                        ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(
+                            item.edge.bidirectional
+                                ? Icons.swap_horiz
+                                : Icons.arrow_forward,
+                            color: item.edge.gateEvent.isEmpty
+                                ? _accent
+                                : _warning,
+                          ),
+                          title: Text(item.label),
+                          subtitle: item.edge.gateEvent.isEmpty
+                              ? null
+                              : Text(item.edge.gateEvent),
+                        ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Vazgeç'),
+              ),
+              FilledButton(
+                onPressed: plan.issues.isEmpty && plan.edges.isNotEmpty
+                    ? () => Navigator.pop(dialogContext, true)
+                    : null,
+                child: const Text('Bağlantıları Oluştur'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed || !mounted) return;
+
+    var savedCount = 0;
+    try {
+      for (final item in plan.edges) {
+        if (!mounted || !graph.canEdit) {
+          throw StateError('Saha düzenleme durumu işlem sırasında değişti');
+        }
+        await graph.saveEdge(item.edge);
+        savedCount++;
+      }
+    } catch (error) {
+      if (mounted) {
+        _toast(
+          'Otomatik bağlantı tamamlanamadı '
+          '($savedCount/${plan.edges.length} kaydedildi): ${_errorText(error)}',
+        );
+      }
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _selectedNodeId = null;
+      _selectedEdgeId = null;
+      _section = _PanelSection.edges;
+    });
+    try {
+      final validation = await graph.validateSelected();
+      if (!mounted) return;
+      final status = validation.status;
+      if (validation.success && status.state == FieldPackageState.valid) {
+        _toast('$savedCount bağlantı oluşturuldu; saha doğrulandı.');
+      } else {
+        _toast(
+          '$savedCount bağlantı oluşturuldu; '
+          '${status.errors.length} hata, ${status.warnings.length} uyarı kaldı.',
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        _toast(
+          '$savedCount bağlantı oluşturuldu; doğrulama çağrısı başarısız: '
+          '${_errorText(error)}',
+        );
+      }
+    }
+  }
+
+  Future<void> _activateGraph() async {
+    final graph = context.read<GcsFieldGraphModel>();
+    if (!graph.canActivate || graph.busy) return;
+    try {
+      final result = await graph.activateSelected();
+      if (mounted) _toast(result.message);
+    } catch (error) {
+      _toast('Saha aktifleştirilemedi: ${_errorText(error)}');
+    }
+  }
+
+  Future<void> _deactivateGraph() async {
+    final graph = context.read<GcsFieldGraphModel>();
+    if (!graph.canDeactivate || graph.busy) {
+      _toast('Saha şu anda düzenlemeye açılamıyor.');
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Sahayı düzenlemeye aç'),
+            content: const Text(
+              'Aktif rota çalışma sistemi durdurulacak ve saha salt okunur '
+              'durumdan çıkarılacak. Harita, düğüm ve bağlantılar silinmez. '
+              'Değişikliklerden sonra saha yeniden doğrulanıp '
+              'aktifleştirilmelidir.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Vazgeç'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Düzenlemeye Aç'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed || !mounted) return;
+    try {
+      final result = await graph.deactivateSelected();
+      if (mounted) _toast(result.message);
+    } catch (error) {
+      if (mounted) {
+        _toast('Saha düzenlemeye açılamadı: ${_errorText(error)}');
+      }
+    }
+  }
+
   void _selectNode(FieldNode node) {
     setState(() {
       _selectedNodeId = node.nodeId;
@@ -475,6 +747,39 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
     final selectedEdge = _edgeById(graph.edges, _selectedEdgeId);
     final robotPoseReady = _robotPoseContext(mapping, graph);
     final mapPickReady = _mapPickContext(mapping, graph);
+    final compactToolbar = MediaQuery.sizeOf(context).width < 1800;
+
+    Widget toolbarAction({
+      Key? key,
+      required String label,
+      required IconData icon,
+      required VoidCallback? onPressed,
+      Color? foregroundColor,
+      Color? disabledForegroundColor,
+    }) {
+      if (compactToolbar) {
+        return IconButton(
+          key: key,
+          tooltip: label,
+          onPressed: onPressed,
+          style: IconButton.styleFrom(
+            foregroundColor: foregroundColor,
+            disabledForegroundColor: disabledForegroundColor,
+          ),
+          icon: Icon(icon),
+        );
+      }
+      return TextButton.icon(
+        key: key,
+        onPressed: onPressed,
+        style: TextButton.styleFrom(
+          foregroundColor: foregroundColor,
+          disabledForegroundColor: disabledForegroundColor,
+        ),
+        icon: Icon(icon),
+        label: Text(label),
+      );
+    }
 
     final markers = <MapPreviewNodeMarker>[];
     if (metadata != null) {
@@ -522,6 +827,86 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
         surfaceTintColor: Colors.transparent,
         title: const Text('Düğümler'),
         actions: [
+          toolbarAction(
+            label: 'İstasyon / QR',
+            icon: Icons.qr_code_2,
+            onPressed: graph.graphFresh
+                ? () => Navigator.pushNamed(context, 'station-config-page')
+                : null,
+          ),
+          toolbarAction(
+            label: 'Doğrula',
+            icon: Icons.fact_check_outlined,
+            onPressed: graph.canEdit && !graph.busy
+                ? () => unawaited(_validateGraph())
+                : null,
+          ),
+          Builder(
+            builder: (context) {
+              final status = graph.packageStatus;
+              final errorCount = status?.errors.length ?? 0;
+              final warningCount = status?.warnings.length ?? 0;
+              final hasMessages = errorCount + warningCount > 0;
+              final color = status == null
+                  ? null
+                  : errorCount > 0
+                      ? _danger
+                      : warningCount > 0
+                          ? _warning
+                          : _success;
+              return toolbarAction(
+                key: const Key('validation-errors-button'),
+                label: hasMessages ? 'Hatalar ($errorCount)' : 'Hatalar',
+                icon: errorCount > 0
+                    ? Icons.error_outline
+                    : warningCount > 0
+                        ? Icons.warning_amber
+                        : Icons.check_circle_outline,
+                onPressed: status == null
+                    ? null
+                    : () => unawaited(_showValidationMessages()),
+                foregroundColor: color,
+              );
+            },
+          ),
+          toolbarAction(
+            key: const Key('competition-auto-connect-button'),
+            label: 'Otomatik Bağla',
+            icon: Icons.auto_fix_high_outlined,
+            onPressed: graph.canEdit && !graph.busy
+                ? () => unawaited(_autoConnectCompetitionGraph())
+                : null,
+          ),
+          if (graph.selectedFieldIsActive)
+            toolbarAction(
+              key: const Key('deactivate-field-button'),
+              label: 'Sahayı Düzenlemeye Aç',
+              icon: Icons.edit_outlined,
+              foregroundColor: graph.canDeactivate ? _warning : _muted,
+              disabledForegroundColor: _muted,
+              onPressed: graph.canDeactivate && !graph.busy
+                  ? () => unawaited(_deactivateGraph())
+                  : null,
+            ),
+          toolbarAction(
+            key: const Key('activate-field-button'),
+            label: 'Aktifleştir',
+            icon: Icons.check_circle_outline,
+            foregroundColor: graph.canActivate ? _success : _muted,
+            disabledForegroundColor: _muted,
+            onPressed: graph.busy
+                ? null
+                : () {
+                    if (graph.canActivate) {
+                      unawaited(_activateGraph());
+                    } else {
+                      _toast(
+                        'Saha aktifleştirilemiyor: '
+                        '${_activationBlockReason(graph)}',
+                      );
+                    }
+                  },
+          ),
           if (graph.fields.isNotEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
@@ -544,7 +929,12 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
                     for (final field in graph.fields)
                       DropdownMenuItem(
                         value: field.fieldName,
-                        child: Text('Saha: ${field.fieldName}'),
+                        child: Text(
+                          compactToolbar
+                              ? field.fieldName
+                              : 'Saha: ${field.fieldName}',
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                   ],
                   onChanged: graph.connected && !graph.busy
@@ -646,6 +1036,43 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
       ),
     );
   }
+}
+
+String _validationMessageTr(String message) {
+  final trimmed = message.trim();
+  final requiredStation = RegExp(
+    r"^required station '([^']+)' is missing$",
+    caseSensitive: false,
+  ).firstMatch(trimmed);
+  if (requiredStation != null) {
+    return "Zorunlu '${requiredStation.group(1)}' istasyonu eksik.";
+  }
+  final noEdges = RegExp(
+    r"^node '([^']+)' has no edges$",
+    caseSensitive: false,
+  ).firstMatch(trimmed);
+  if (noEdges != null) {
+    return "'${noEdges.group(1)}' düğümünün hiçbir bağlantısı yok.";
+  }
+  final noStation = RegExp(
+    r"^node '([^']+)' has no station$",
+    caseSensitive: false,
+  ).firstMatch(trimmed);
+  if (noStation != null) {
+    return "'${noStation.group(1)}' düğümünün Station ID alanı boş.";
+  }
+  const known = <String, String>{
+    'route graph has no edges': 'Rota grafiğinde henüz bağlantı yok.',
+    'exactly one outbound q5 gate node is required':
+        'Tam olarak bir gidiş Q5 kapı düğümü gerekli.',
+    'exactly one return q6 gate node is required':
+        'Tam olarak bir dönüş Q6 kapı düğümü gerekli.',
+    'directed q5->q6 crossing with gate_event=q5_outbound is required':
+        'Q5 → Q6 yönünde q5_outbound kapı olaylı bağlantı gerekli.',
+    'directed q6->q5 crossing with gate_event=q6_return is required':
+        'Q6 → Q5 yönünde q6_return kapı olaylı bağlantı gerekli.',
+  };
+  return known[trimmed.toLowerCase()] ?? trimmed;
 }
 
 enum _AddMethod { robot, map }
@@ -1373,7 +1800,7 @@ class _GraphStateBanner extends StatelessWidget {
       color = _danger;
     } else if (graph.selectedFieldIsActive) {
       text =
-          'Bu saha aktif durumda. Düzenlemek için yeni bir draft/saha sürümü oluşturulmalıdır.';
+          'Bu saha aktif ve salt okunur. Düzenlemek için üstteki "Sahayı Düzenlemeye Aç" düğmesini kullanın.';
       color = _warning;
     } else if (!graph.selectedFieldActivityKnown) {
       text = 'Aktif saha durumu güncel değil; düzenleme kilitli.';
@@ -1538,6 +1965,220 @@ Widget _detail(String label, String value) => Padding(
       ),
     );
 
+class _CompetitionEdgePlanItem {
+  const _CompetitionEdgePlanItem({required this.label, required this.edge});
+
+  final String label;
+  final FieldEdge edge;
+}
+
+class _CompetitionEdgePlan {
+  const _CompetitionEdgePlan({
+    required this.edges,
+    required this.existingCount,
+    required this.issues,
+  });
+
+  final List<_CompetitionEdgePlanItem> edges;
+  final int existingCount;
+  final List<String> issues;
+
+  static _CompetitionEdgePlan build({
+    required List<FieldNode> nodes,
+    required List<FieldEdge> existingEdges,
+  }) {
+    final issues = <String>[];
+    final resolved = <String, FieldNode>{};
+
+    void resolveStation(
+      String stationId,
+      FieldNodeRole role, {
+      String? key,
+    }) {
+      final matches = nodes
+          .where(
+            (node) =>
+                node.stationId.trim().toUpperCase() == stationId &&
+                node.role == role,
+          )
+          .toList(growable: false);
+      final targetKey = key ?? stationId;
+      if (matches.length == 1) {
+        resolved[targetKey] = matches.single;
+      } else if (matches.isEmpty) {
+        issues.add(
+          '$stationId için ${role.operatorLabel} rolünde düğüm bulunamadı.',
+        );
+      } else {
+        issues.add(
+          '$stationId için ${role.operatorLabel} rolünde birden fazla düğüm var.',
+        );
+      }
+    }
+
+    void resolveRole(String key, FieldNodeRole role) {
+      final matches =
+          nodes.where((node) => node.role == role).toList(growable: false);
+      if (matches.length == 1) {
+        resolved[key] = matches.single;
+      } else if (matches.isEmpty) {
+        issues.add('${role.operatorLabel} rolünde düğüm bulunamadı.');
+      } else {
+        issues.add('${role.operatorLabel} rolünde birden fazla düğüm var.');
+      }
+    }
+
+    resolveStation('WAIT', FieldNodeRole.wait);
+    for (var index = 1; index <= 6; index++) {
+      resolveStation('D$index', FieldNodeRole.transit);
+    }
+    resolveRole('Q5', FieldNodeRole.gateQ5);
+    resolveRole('Q6', FieldNodeRole.gateQ6);
+    for (var index = 1; index <= 3; index++) {
+      final station = 'A$index';
+      resolveStation(
+        station,
+        FieldNodeRole.pickupApproach,
+        key: '${station}_APPROACH',
+      );
+      resolveStation(station, FieldNodeRole.pickupDock);
+    }
+    for (var index = 1; index <= 3; index++) {
+      final station = 'B$index';
+      resolveStation(
+        station,
+        FieldNodeRole.dropoffApproach,
+        key: '${station}_APPROACH',
+      );
+      resolveStation(station, FieldNodeRole.dropoffDock);
+    }
+
+    if (issues.isNotEmpty) {
+      return _CompetitionEdgePlan(
+        edges: const [],
+        existingCount: 0,
+        issues: issues,
+      );
+    }
+
+    const bidirectionalLinks = <(String, String)>[
+      ('WAIT', 'D1'),
+      ('D1', 'D2'),
+      ('D2', 'D3'),
+      ('D3', 'Q5'),
+      ('Q6', 'D4'),
+      ('D4', 'D5'),
+      ('D4', 'D6'),
+      ('D1', 'A1_APPROACH'),
+      ('A1_APPROACH', 'A1'),
+      ('D2', 'A2_APPROACH'),
+      ('A2_APPROACH', 'A2'),
+      ('D3', 'A3_APPROACH'),
+      ('A3_APPROACH', 'A3'),
+      ('D5', 'B1_APPROACH'),
+      ('B1_APPROACH', 'B1'),
+      ('D4', 'B2_APPROACH'),
+      ('B2_APPROACH', 'B2'),
+      ('D6', 'B3_APPROACH'),
+      ('B3_APPROACH', 'B3'),
+    ];
+    const directedGateLinks = <(String, String, String)>[
+      ('Q5', 'Q6', 'q5_outbound'),
+      ('Q6', 'Q5', 'q6_return'),
+    ];
+
+    final planned = <_CompetitionEdgePlanItem>[];
+    var existingCount = 0;
+
+    void addLink(
+      String startKey,
+      String endKey, {
+      required bool bidirectional,
+      String gateEvent = '',
+    }) {
+      final start = resolved[startKey]!;
+      final end = resolved[endKey]!;
+      final dx = start.pose.x - end.pose.x;
+      final dy = start.pose.y - end.pose.y;
+      final distance = math.sqrt(dx * dx + dy * dy);
+      final label = '$startKey ${bidirectional ? '↔' : '→'} $endKey';
+      if (distance <= 0 || !distance.isFinite) {
+        issues.add('$label oluşturulamadı: düğümlerin konumları aynı.');
+        return;
+      }
+
+      final betweenEndpoints = existingEdges.where((edge) {
+        final sameDirection =
+            edge.startNodeId == start.nodeId && edge.endNodeId == end.nodeId;
+        final reverseDirection =
+            edge.startNodeId == end.nodeId && edge.endNodeId == start.nodeId;
+        return sameDirection || reverseDirection;
+      }).toList(growable: false);
+      final alreadyExists = betweenEndpoints.any((edge) {
+        if (bidirectional) return edge.bidirectional;
+        return !edge.bidirectional &&
+            edge.startNodeId == start.nodeId &&
+            edge.endNodeId == end.nodeId &&
+            edge.gateEvent == gateEvent;
+      });
+      if (alreadyExists) {
+        existingCount++;
+        return;
+      }
+      final hasConflict = bidirectional
+          ? betweenEndpoints.isNotEmpty
+          : betweenEndpoints.any(
+              (edge) =>
+                  edge.bidirectional ||
+                  (edge.startNodeId == start.nodeId &&
+                      edge.endNodeId == end.nodeId),
+            );
+      if (hasConflict) {
+        issues.add(
+          '$label arasında farklı ayarlı bir bağlantı zaten var; '
+          'önce elle kontrol edin.',
+        );
+        return;
+      }
+
+      planned.add(
+        _CompetitionEdgePlanItem(
+          label: label,
+          edge: FieldEdge(
+            edgeId: FieldGraphId.next(),
+            startNodeId: start.nodeId,
+            endNodeId: end.nodeId,
+            bidirectional: bidirectional,
+            cost: distance,
+            maxSpeed: 0.20,
+            loadRule: FieldLoadRule.any,
+            movementDirection: FieldMovementDirection.forward,
+            gateEvent: gateEvent,
+          ),
+        ),
+      );
+    }
+
+    for (final link in bidirectionalLinks) {
+      addLink(link.$1, link.$2, bidirectional: true);
+    }
+    for (final link in directedGateLinks) {
+      addLink(
+        link.$1,
+        link.$2,
+        bidirectional: false,
+        gateEvent: link.$3,
+      );
+    }
+
+    return _CompetitionEdgePlan(
+      edges: List.unmodifiable(planned),
+      existingCount: existingCount,
+      issues: List.unmodifiable(issues),
+    );
+  }
+}
+
 FieldNode? _nodeById(List<FieldNode> nodes, int? id) {
   if (id == null) return null;
   for (final node in nodes) {
@@ -1563,10 +2204,29 @@ String _editBlockReason(GcsFieldGraphModel graph) {
     return 'Aktif saha durumu güncel değil.';
   }
   if (graph.selectedFieldIsActive) {
-    return 'Bu saha aktif ve salt okunur. Yeni bir draft/saha sürümü oluşturun.';
+    return 'Bu saha aktif ve salt okunur. Önce Sahayı Düzenlemeye Aç düğmesini kullanın.';
   }
   if (graph.busy) return 'Başka bir saha işlemi devam ediyor.';
   return 'Saha şu anda düzenlenemiyor.';
+}
+
+String _activationBlockReason(GcsFieldGraphModel graph) {
+  if (!graph.connected) return 'Robot bağlantısı yok.';
+  if (!graph.hasSelectedField) return 'Önce bir saha seçin.';
+  if (!graph.graphFresh) return 'Saha grafiği güncel değil.';
+  if (graph.selectedFieldIsActive) return 'Bu saha zaten aktif.';
+  if (!graph.validationCurrent) {
+    if (graph.packageStatus?.state != FieldPackageState.valid) {
+      return 'Saha doğrulaması başarılı değil.';
+    }
+    return 'ROS doğrulama durumu veya paket hash’i güncel değil.';
+  }
+  if (!graph.robotStatusFresh) return 'Robot telemetrisi güncel değil.';
+  if (!graph.mappingStatusFresh) return 'Haritalama durumu henüz güncel değil.';
+  if (graph.mappingActive) return 'Haritalama devam ediyor.';
+  if (graph.missionActive) return 'Çalışan bir görev var.';
+  if (graph.vehicleMoving) return 'Araç hareket ediyor.';
+  return 'Aktivasyon koşulları henüz hazır değil.';
 }
 
 Color _nodeColor(FieldNodeRole role) => switch (role) {
@@ -1663,15 +2323,6 @@ class _FieldNodeEditorDialogState extends State<_FieldNodeEditorDialog> {
     _metadata.dispose();
     super.dispose();
   }
-
-  bool get _stationRole => switch (_role) {
-        FieldNodeRole.pickupApproach ||
-        FieldNodeRole.pickupDock ||
-        FieldNodeRole.dropoffApproach ||
-        FieldNodeRole.dropoffDock =>
-          true,
-        _ => false,
-      };
 
   String get _roleHelp => switch (_role) {
         FieldNodeRole.gateQ5 => 'Gidiş yönündeki kapı izin noktası',
@@ -1819,18 +2470,16 @@ class _FieldNodeEditorDialogState extends State<_FieldNodeEditorDialog> {
                       ),
                     ),
                   ),
-                  if (_stationRole)
-                    TextFormField(
-                      controller: _stationId,
-                      decoration: const InputDecoration(
-                        labelText: 'Station ID',
-                        helperText:
-                            'Serbest station kimliği; sabit liste kullanılmaz',
-                      ),
-                      validator: (value) => value?.trim().isNotEmpty == true
-                          ? null
-                          : 'Bu rol için station_id gerekli',
+                  TextFormField(
+                    controller: _stationId,
+                    decoration: const InputDecoration(
+                      labelText: 'Station ID / Nokta Kimliği',
+                      helperText: 'Örnek: WAIT, A1, B2, D1, Q5 veya QR1',
                     ),
+                    validator: (value) => value?.trim().isNotEmpty == true
+                        ? null
+                        : 'ROS doğrulaması için Station ID gerekli',
+                  ),
                   if (widget.currentPose)
                     const ListTile(
                       contentPadding: EdgeInsets.zero,

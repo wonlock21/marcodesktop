@@ -7,6 +7,50 @@ import 'gcs_field_graph_model.dart';
 import 'field_graph_models.dart';
 import 'robot_status.dart';
 
+class StationTurnArcStatus {
+  final bool safe;
+  final double? minimumClearanceM;
+  final int? maximumCost;
+  final String reason;
+
+  const StationTurnArcStatus({
+    required this.safe,
+    this.minimumClearanceM,
+    this.maximumCost,
+    required this.reason,
+  });
+
+  factory StationTurnArcStatus.fromEvent(dynamic raw) {
+    final map =
+        raw is Map ? Map<String, dynamic>.from(raw) : const <String, dynamic>{};
+    final clearance = map['minimum_clearance_m'];
+    final maximumCost = map['maximum_cost'];
+    return StationTurnArcStatus(
+      safe: map['safe'] == true,
+      minimumClearanceM:
+          clearance is num && clearance.isFinite ? clearance.toDouble() : null,
+      maximumCost: maximumCost is int ? maximumCost : null,
+      reason: map['reason']?.toString() ?? '',
+    );
+  }
+}
+
+class StationTurnRuntimeStatus {
+  final String station;
+  final String? selectedDirection;
+  final StationTurnArcStatus left;
+  final StationTurnArcStatus right;
+  final bool unavailable;
+
+  const StationTurnRuntimeStatus({
+    required this.station,
+    required this.selectedDirection,
+    required this.left,
+    required this.right,
+    required this.unavailable,
+  });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Görev aşaması
 // ─────────────────────────────────────────────────────────────────────────────
@@ -66,13 +110,14 @@ enum GorevAsama {
 
 extension GorevAsamaExt on GorevAsama {
   String get etiket => switch (this) {
-        GorevAsama.baslangicaDonuyor => 'Başlangıca Dönüyor',
-        GorevAsama.bosta => 'Beklemede',
-        GorevAsama.gorevAlindi => 'Görev Alındı',
+        GorevAsama.baslangicaDonuyor => 'Başlangıç Noktasına Dönüyor',
+        GorevAsama.bosta => 'Göreve Hazır',
+        GorevAsama.gorevAlindi => 'Görev Alındı / İşleniyor',
         GorevAsama.yuksuzHareket => 'Yüksüz Hareket',
         GorevAsama.yukAlma => 'Yük Alma',
         GorevAsama.yukluHareket => 'Yüklü Hareket',
-        GorevAsama.kapiIzniBekleniyor => 'Kapı İzni Bekleniyor',
+        GorevAsama.kapiIzniBekleniyor =>
+          'Fabrika Otomasyon Sistemi İzni Bekleniyor',
         GorevAsama.yukBirakma => 'Yük Bırakma',
         GorevAsama.tamamlandi => 'Görev Tamamlandı',
         GorevAsama.hata => 'Hata',
@@ -156,6 +201,7 @@ class GcsMissionModel extends ChangeNotifier {
   String? _submittedTaskId;
   String? _startedTaskId;
   int _connectionEpoch = 0;
+  StationTurnRuntimeStatus? stationTurnStatus;
 
   bool get commandPending => pendingCommand != null;
   bool get canSubmit =>
@@ -189,6 +235,13 @@ class GcsMissionModel extends ChangeNotifier {
         state <= 5;
   }
 
+  bool get canResetError =>
+      connected &&
+      statusFresh &&
+      !commandPending &&
+      robotStatus?.missionState == 6 &&
+      robotStatus?.estopActive == false;
+
   /// Explain command locks; local scenario editing does not use these gates.
   String? submitBlockReason(GcsFieldGraphModel graph) {
     if (!connected) {
@@ -216,6 +269,12 @@ class GcsMissionModel extends ChangeNotifier {
     }
     if (robotStatus?.activeFieldReady != true) {
       return 'Robot aktif saha paketini henüz hazır olarak bildirmedi.';
+    }
+    if (!graph.routeRuntimeReadinessKnown) {
+      return 'Rota yük/yön kısıtları durumu bekleniyor.';
+    }
+    if (!graph.routeRuntimeReady) {
+      return 'Rota yük/yön kısıtları çalışma sistemi hazır değil.';
     }
     return null;
   }
@@ -245,6 +304,7 @@ class GcsMissionModel extends ChangeNotifier {
       _preparedTaskId = null;
       _submittedTaskId = null;
       _startedTaskId = null;
+      stationTurnStatus = null;
     }
     notifyListeners();
   }
@@ -285,10 +345,24 @@ class GcsMissionModel extends ChangeNotifier {
       if (event['event'] == 'mission_started') {
         _startedTaskId = event['task_id']?.toString();
         _preparedTaskId = null;
+        stationTurnStatus = null;
       }
       if (event['event'] == 'mission_complete' && event['task_id'] == gorevId) {
         asama =
             event['success'] == true ? GorevAsama.tamamlandi : GorevAsama.hata;
+      }
+      final eventName = event['event']?.toString();
+      if (eventName == 'station_turn_direction_selected' ||
+          eventName == 'station_turn_direction_unavailable') {
+        final selected = event['selected_direction']?.toString();
+        stationTurnStatus = StationTurnRuntimeStatus(
+          station: event['station']?.toString() ?? '',
+          selectedDirection:
+              selected == 'left' || selected == 'right' ? selected : null,
+          left: StationTurnArcStatus.fromEvent(event['left']),
+          right: StationTurnArcStatus.fromEvent(event['right']),
+          unavailable: eventName == 'station_turn_direction_unavailable',
+        );
       }
       notifyListeners();
     } catch (_) {/* Generic event log preserves non-JSON and future events. */}
