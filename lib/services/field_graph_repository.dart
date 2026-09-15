@@ -65,18 +65,6 @@ class FieldActivationResult {
   });
 }
 
-class StationConfigSaveResult {
-  final String message;
-  final String packageHash;
-  final StationApproachConfig savedConfig;
-
-  const StationConfigSaveResult({
-    required this.message,
-    required this.packageHash,
-    required this.savedConfig,
-  });
-}
-
 class ActiveFieldResult {
   final String message;
   final ActiveField activeField;
@@ -133,30 +121,6 @@ class FieldGraphRepository {
             : 'ROS saha işlemi reddedildi',
       );
     }
-  }
-
-  Future<List<StationApproachConfig>> getStationConfigs(
-      String fieldName) async {
-    final response = await AgvService.ros.getStationApproachConfigs(fieldName);
-    _requireSuccess(response);
-    _requiredString(response, 'package_hash');
-    final raw = response['configs'];
-    if (raw is! List) {
-      throw const RosContractException('configs JSON array olmalıdır');
-    }
-    return List.unmodifiable(raw.map(StationApproachConfig.fromRosJson));
-  }
-
-  Future<StationConfigSaveResult> saveStationConfig(
-      String fieldName, StationApproachConfig config) async {
-    final response =
-        await AgvService.ros.saveStationApproachConfig(fieldName, config);
-    _requireSuccess(response);
-    return StationConfigSaveResult(
-      message: _message(response),
-      packageHash: _requiredString(response, 'package_hash'),
-      savedConfig: StationApproachConfig.fromRosJson(response['saved_config']),
-    );
   }
 
   Future<List<FieldInfo>> listFields() async {

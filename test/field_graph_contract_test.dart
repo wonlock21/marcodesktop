@@ -364,7 +364,6 @@ void main() {
       expect(repository.listCalls, 2);
       expect(repository.activeCalls, 2);
       expect(repository.graphCalls, 2);
-      expect(repository.stationCalls, 2);
     });
 
     test('backend errors ve warnings dizilerinin tamamı korunur', () async {
@@ -385,14 +384,6 @@ void main() {
 }
 
 class _FakeRepository extends FieldGraphRepository {
-  int stationCalls = 0;
-  @override
-  Future<List<StationApproachConfig>> getStationConfigs(
-      String fieldName) async {
-    stationCalls++;
-    return [];
-  }
-
   int listCalls = 0;
   int activeCalls = 0;
   int graphCalls = 0;

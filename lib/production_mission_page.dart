@@ -136,14 +136,12 @@ class ProductionMissionPage extends StatelessWidget {
               },
               mission.statusFresh),
           _monitor(
-              'QR / Docking',
+              'İstasyon / Docking',
               {
                 'İstasyon fazı': status.stationPhase,
-                'Hedef': status.qrTargetStation,
-                'Beklenen QR': status.expectedQrId,
-                'QR armed': status.qrTriggerArmed,
-                'Son QR': status.lastQrData,
-                'QR reddi': status.lastQrRejectReason,
+                'QR': status.lastQrDetected && status.lastQrData.isNotEmpty
+                    ? status.lastQrData
+                    : '—',
                 'Dock hedefi': status.dockingTargetStation,
                 'Ayarlanan süre (s)': status.dockingConfiguredDurationS,
                 'Geçen (s)': status.dockingElapsedS,

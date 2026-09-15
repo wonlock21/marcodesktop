@@ -107,6 +107,9 @@ class _MjpegCameraViewState extends State<MjpegCameraView>
 
   String get _endpoint => '${widget.streamUri.host}:${widget.streamUri.port}';
 
+  String get _topic =>
+      widget.streamUri.queryParameters['topic'] ?? CameraStreamConfig.topic;
+
   @override
   void dispose() {
     _disposed = true;
@@ -311,6 +314,7 @@ class _MjpegCameraViewState extends State<MjpegCameraView>
           _StatusBar(
             status: _status,
             endpoint: _endpoint,
+            topic: _topic,
           ),
           Expanded(child: _buildBody()),
         ],
@@ -377,10 +381,12 @@ class _StatusBar extends StatelessWidget {
   const _StatusBar({
     required this.status,
     required this.endpoint,
+    required this.topic,
   });
 
   final MjpegCameraStatus status;
   final String endpoint;
+  final String topic;
 
   @override
   Widget build(BuildContext context) {
@@ -422,7 +428,7 @@ class _StatusBar extends StatelessWidget {
           SizedBox(width: 1.5.w),
           Expanded(
             child: Text(
-              'KAMERA · $endpoint · ${CameraStreamConfig.topic}',
+              'KAMERA · $endpoint · $topic',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(

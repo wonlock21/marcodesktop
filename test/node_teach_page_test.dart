@@ -90,12 +90,6 @@ class _NodePageRepository extends FieldGraphRepository {
         edges: [],
         status: _status,
       );
-
-  @override
-  Future<List<StationApproachConfig>> getStationConfigs(
-    String fieldName,
-  ) async =>
-      const [];
 }
 
 class _DraftWithoutActiveRepository extends FieldGraphRepository {
@@ -161,12 +155,6 @@ class _DraftWithoutActiveRepository extends FieldGraphRepository {
       savedNode: node,
     );
   }
-
-  @override
-  Future<List<StationApproachConfig>> getStationConfigs(
-    String fieldName,
-  ) async =>
-      const [];
 }
 
 void main() {
@@ -215,7 +203,7 @@ void main() {
     expect(find.text('Yük Bırakma Noktası'), findsOneWidget);
     expect(find.text('Gidiş Kapı İzin Noktası (Q5)'), findsOneWidget);
     expect(find.text('Dönüş Kapı İzin Noktası (Q6)'), findsOneWidget);
-    expect(find.text('QR Okuma / Tetikleme Noktası'), findsOneWidget);
+    expect(find.text('QR Okuma / Tetikleme Noktası'), findsNothing);
 
     expect(_nodeA.toRosJson()['role'], 'PICKUP_DOCK');
   });

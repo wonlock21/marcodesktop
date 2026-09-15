@@ -179,12 +179,6 @@ class _RouteEditPageState extends State<RouteEditPage> {
           ),
         ),
         actions: [
-          TextButton.icon(
-              onPressed: graph.graphFresh
-                  ? () => Navigator.pushNamed(context, 'station-config-page')
-                  : null,
-              icon: const Icon(Icons.qr_code),
-              label: const Text('İstasyon / QR')),
           if (graph.selectedFieldName case final field?)
             Center(
               child: Padding(

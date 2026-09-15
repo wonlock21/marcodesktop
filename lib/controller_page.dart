@@ -63,7 +63,7 @@ class _ControllerPageState extends State<ControllerPage>
   List<MapRoute> _cachedMapRoutes = const [];
   int? _cachedMapStaticKey;
 
-  // Orta alan sekme indeksi: 0=Harita 1=Kamera 2=LiDAR 3=3D
+  // Orta alan sekme indeksi: 0=Harita 1=Kamera 2=Şerit Kamera 3=LiDAR 4=3D
   int _selectedWorkTab = 0;
 
   // Bağlantı paneli durumu ve IP giriş kontrolcüsü
@@ -160,6 +160,7 @@ class _ControllerPageState extends State<ControllerPage>
     final obstacle = status['obstacle_detected'] == true;
     final plcConnected = status['plc_connected'] == true;
     final qr = status['last_qr_data']?.toString() ?? '';
+    final qrDetected = status['last_qr_detected'] == true;
 
     _agvModel
       ..updateRobotDurum(switch (missionState) {
@@ -184,6 +185,7 @@ class _ControllerPageState extends State<ControllerPage>
         crossTrackError: _number(status['cross_track_error'], double.nan),
         obstacleDetected: obstacle,
         lastQrData: qr,
+        lastQrDetected: qrDetected,
         plcConnected: plcConnected,
         estopActive: estop,
       )
@@ -1128,9 +1130,6 @@ class _ControllerPageState extends State<ControllerPage>
           _NavBtn(
               label: "DÜĞÜMLER",
               onTap: () => Navigator.pushNamed(context, 'node-teach-page')),
-          _NavBtn(
-              label: "QR LİSTESİ",
-              onTap: () => Navigator.pushNamed(context, 'QR-page')),
           _NavBtn(label: "VERİLER", onTap: () => _navigateToDataPage(_site)),
           _NavBtn(
               label: "PARAMETRELER",
@@ -2456,7 +2455,7 @@ class _ControllerPageState extends State<ControllerPage>
 
   /// Sekme çubuğu — düz GCS stili.
   Widget _buildWorkTabBar(Color panelBg, Color borderC) {
-    const tabs = ['HARİTA', 'KAMERA', 'LiDAR', '3D'];
+    const tabs = ['HARİTA', 'KAMERA', 'ŞERİT KAMERA', 'LiDAR', '3D'];
     return Container(
       padding: EdgeInsets.symmetric(horizontal: 1.w),
       decoration: BoxDecoration(
@@ -2564,13 +2563,23 @@ class _ControllerPageState extends State<ControllerPage>
     final routes = <MapRoute>[];
     final edge = aktifRotaEdge.split('->');
     if (edge.length == 2) {
-      final from = RosGcsContract.graphNodes[edge[0]];
-      final to = RosGcsContract.graphNodes[edge[1]];
-      if (from != null && to != null) {
+      FieldNode? nodeNamed(String name) {
+        for (final node in _fieldGraphModel.nodes) {
+          if (node.name == name.trim()) return node;
+        }
+        return null;
+      }
+
+      final fromNode = nodeNamed(edge[0]);
+      final toNode = nodeNamed(edge[1]);
+      if (fromNode != null && toNode != null) {
         routes.add(MapRoute(
           id: aktifRotaEdge,
           label: aktifRotaEdge,
-          waypoints: [from, to],
+          waypoints: [
+            Offset(fromNode.pose.x, fromNode.pose.y),
+            Offset(toNode.pose.x, toNode.pose.y),
+          ],
         ));
       }
     }
@@ -2801,8 +2810,28 @@ class _ControllerPageState extends State<ControllerPage>
                   style: const TextStyle(color: Colors.orange)));
         }
 
-      // ── LiDAR ──────────────────────────────────────────────────────────
+      // ── Şerit takip kamerası (HTTP MJPEG) ──────────────────────────────
       case 2:
+        try {
+          return MjpegCameraView(
+            streamUri: CameraStreamConfig.forRobot(
+              AgvService.ros.url.isEmpty
+                  ? _ipController.text
+                  : AgvService.ros.url,
+              topic: CameraStreamConfig.laneTrackingTopic,
+            ),
+          );
+        } catch (error) {
+          return Center(
+            child: Text(
+              'Şerit kamera adresi geçersiz: $error',
+              style: const TextStyle(color: Colors.orange),
+            ),
+          );
+        }
+
+      // ── LiDAR ──────────────────────────────────────────────────────────
+      case 3:
         return _workAreaPlaceholder(
           'LiDAR',
           Icons.radar,
@@ -2814,7 +2843,7 @@ class _ControllerPageState extends State<ControllerPage>
         );
 
       // ── 3D ─────────────────────────────────────────────────────────────
-      case 3:
+      case 4:
         return _workAreaPlaceholder(
           '3D',
           Icons.view_in_ar_rounded,

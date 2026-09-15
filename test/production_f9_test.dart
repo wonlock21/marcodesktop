@@ -11,15 +11,14 @@ import 'package:liftant_v2_bitirme/models/gcs_mapping_model.dart';
 import 'package:liftant_v2_bitirme/services/ros_mapping_contract.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:liftant_v2_bitirme/models/field_graph_models.dart';
+import 'package:liftant_v2_bitirme/models/agv_sensor_model.dart';
 import 'package:liftant_v2_bitirme/models/gcs_field_graph_model.dart';
 import 'package:liftant_v2_bitirme/models/gcs_mission_model.dart';
 import 'package:liftant_v2_bitirme/models/gcs_event_log_model.dart';
 import 'package:liftant_v2_bitirme/models/robot_status.dart';
 import 'package:liftant_v2_bitirme/production_mission_page.dart';
 import 'package:liftant_v2_bitirme/scenerio_page.dart';
-import 'package:liftant_v2_bitirme/station_config_page.dart';
 import 'package:liftant_v2_bitirme/data_model.dart';
-import 'package:liftant_v2_bitirme/services/angles.dart';
 import 'package:liftant_v2_bitirme/services/field_graph_repository.dart';
 import 'package:liftant_v2_bitirme/services/ros_bridge_client.dart';
 
@@ -39,13 +38,6 @@ const dockB = FieldNode(
     pose: FieldPose2D.zero,
     loadRule: FieldLoadRule.loaded,
     approachMode: FieldApproachMode.dock);
-const config = StationApproachConfig(
-    stationId: 'WAREHOUSE',
-    stationNodeId: 761,
-    approachQrId: 'QR_CUSTOM_88',
-    dockHeadingYaw: math.pi,
-    turnDirection: 'left',
-    lineFollowDurationS: 12.5);
 Map<String, dynamic> status({int state = 0, String task = ''}) => {
       'mission_state': state,
       'linear_speed': 0.0,
@@ -94,70 +86,6 @@ class Repo extends FieldGraphRepository {
   @override
   Future<FieldGraphData> getGraph(String name) async => FieldGraphData(
       message: 'ROS', nodes: [dockA, dockB], edges: [], status: package());
-  @override
-  Future<List<StationApproachConfig>> getStationConfigs(String name) async =>
-      [config];
-}
-
-class StationDraftRepo extends FieldGraphRepository {
-  StationApproachConfig? saved;
-
-  static const draftStatus = FieldPackageStatus(
-      header: RosHeader.empty,
-      state: FieldPackageState.draft,
-      fieldName: 'custom_field',
-      packageHash: 'draft-hash',
-      nodeCount: 2,
-      edgeCount: 0,
-      errors: [],
-      warnings: [],
-      message: 'draft');
-
-  @override
-  Future<List<FieldInfo>> listFields() async => const [
-        FieldInfo(
-            fieldName: 'custom_field',
-            fieldDirectory: '/robot/custom_field',
-            mapYaml: '/robot/custom_field/map.yaml',
-            previewPng: '/robot/custom_field/preview.png',
-            createdAt: '',
-            mapReady: true,
-            initialPoseReady: true,
-            localizationReady: true,
-            routeReady: true,
-            validationPassed: false,
-            routeHash: '',
-            active: false,
-            packageVersion: '',
-            packageHash: 'draft-hash',
-            message: 'draft')
-      ];
-
-  @override
-  Future<ActiveFieldResult> getActive() =>
-      throw StateError('active field not set');
-
-  @override
-  Future<FieldGraphData> getGraph(String name) async => const FieldGraphData(
-      message: 'loaded', nodes: [dockA, dockB], edges: [], status: draftStatus);
-
-  @override
-  Future<List<StationApproachConfig>> getStationConfigs(String name) async =>
-      saved == null ? [config] : [saved!];
-
-  @override
-  Future<StationConfigSaveResult> saveStationConfig(
-      String fieldName, StationApproachConfig requested) async {
-    saved = StationApproachConfig(
-        stationId: requested.stationId,
-        stationNodeId: requested.stationNodeId,
-        approachQrId: requested.approachQrId,
-        dockHeadingYaw: 1.25,
-        turnDirection: 'auto',
-        lineFollowDurationS: requested.lineFollowDurationS);
-    return StationConfigSaveResult(
-        message: 'saved', packageHash: 'next-hash', savedConfig: saved!);
-  }
 }
 
 class Client extends RosBridgeClient {
@@ -241,7 +169,6 @@ void main() {
     });
     expect(empty.valid, false);
     expect(empty.dockingRemainingS.isNaN, true);
-    expect(empty.qrTriggerArmed, false);
     expect(empty.pose, isEmpty);
     expect(empty.selectedRouteEdges, [1]);
 
@@ -261,30 +188,38 @@ void main() {
     final inactiveGate = RobotStatus.fromRosJson(const {});
     expect(inactiveGate.gatePermissionLabel, 'Aktif Değil');
   });
+  test('QR telemetry is shown only while ROS reports a detection', () {
+    final telemetry = AgvSensorModel();
+
+    void apply({required String data, required bool detected}) {
+      telemetry.updateRobotStatus(
+        x: 0,
+        y: 0,
+        yaw: 0,
+        localizationValid: true,
+        positionCovariance: 0,
+        currentRouteEdge: '',
+        nextNode: '',
+        crossTrackError: 0,
+        obstacleDetected: false,
+        lastQrData: data,
+        lastQrDetected: detected,
+        plcConnected: false,
+        estopActive: false,
+      );
+    }
+
+    apply(data: 'Q2', detected: true);
+    expect(telemetry.sonQR, 'Q2');
+    apply(data: 'Q2', detected: false);
+    expect(telemetry.sonQR, isEmpty);
+    telemetry.dispose();
+  });
   test('field name matches ROS manager initial-character and length rules', () {
     expect(RosFieldNameRules.isValid('_field'), false);
     expect(RosFieldNameRules.isValid('-field'), false);
     expect(RosFieldNameRules.isValid('field-1_ok'), true);
     expect(RosFieldNameRules.isValid('a' * 65), false);
-  });
-  test('station save serialization forces automatic turn compatibility', () {
-    expect(config.toRosJson(), {
-      'station_id': 'WAREHOUSE',
-      'station_node_id': 761,
-      'approach_qr_id': 'QR_CUSTOM_88',
-      'dock_heading_yaw': math.pi,
-      'turn_direction': 'auto',
-      'line_follow_duration_s': 12.5
-    });
-    expect(StationApproachConfig.fromRosJson(config.toRosJson()).approachQrId,
-        config.approachQrId);
-    expect(degreesToRadians(180), closeTo(math.pi, 1e-12));
-    expect(radiansToDegrees(-math.pi / 2), closeTo(-90, 1e-12));
-    expect(radiansToDegrees(degreesToRadians(37.4)), closeTo(37.4, 1e-12));
-    final legacy = StationApproachConfig.fromRosJson(
-        config.toRosJson()..['turn_direction'] = 'left');
-    expect(legacy.turnDirection, 'auto');
-    expect(legacy.toRosJson()['turn_direction'], 'auto');
   });
   test('gate roles use arbitrary IDs, neighbours need no crossing event', () {
     final outbound = dockA.copyWith(role: FieldNodeRole.gateQ5);
@@ -353,13 +288,11 @@ void main() {
     final graph = await graphModel();
     expect(graph.selectedFieldIsActive, true);
     expect(graph.canEdit, false);
-    await expectLater(graph.saveStationConfig(config), throwsStateError);
     graph.applyConnection(false);
     graph.applyConnection(true);
     expect(graph.graphFresh, false);
     await graph.synchronize();
     expect(graph.graphFresh, true);
-    expect(graph.stationConfigs.single.approachQrId, 'QR_CUSTOM_88');
     graph.dispose();
   });
   test('unknown events retained, sorted by ROS timestamp, buffer bounded',
@@ -398,38 +331,6 @@ void main() {
     expect(events.kayitlar.single.mesaj, isNot(contains('task_id')));
     expect(events.kayitlar.single.mesaj, isNot(contains('stamp')));
     events.dispose();
-  });
-  testWidgets('station form exposes only QR and line-follow settings',
-      (tester) async {
-    final repository = StationDraftRepo();
-    final graph = GcsFieldGraphModel(repository: repository)
-      ..applyConnection(true);
-    await graph.synchronize(preferredField: 'custom_field');
-    addTearDown(graph.dispose);
-
-    await tester.pumpWidget(ChangeNotifierProvider.value(
-        value: graph, child: const MaterialApp(home: StationConfigPage())));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('İstasyon ayarını düzenle').first);
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const Key('station-approach-qr-field')), findsOneWidget);
-    expect(find.byKey(const Key('station-line-follow-duration-field')),
-        findsOneWidget);
-    expect(find.text('Dock heading (derece)'), findsNothing);
-    expect(find.text('Dönüş yönü'), findsNothing);
-
-    await tester.enterText(
-        find.byKey(const Key('station-approach-qr-field')), 'QR_NEW');
-    await tester.enterText(
-        find.byKey(const Key('station-line-follow-duration-field')), '8.5');
-    await tester.tap(find.byKey(const Key('station-config-save-button')));
-    await tester.pumpAndSettle();
-
-    expect(repository.saved?.approachQrId, 'QR_NEW');
-    expect(repository.saved?.lineFollowDurationS, 8.5);
-    expect(repository.saved?.turnDirection, 'auto');
-    expect(repository.saved?.dockHeadingYaw, 1.25);
   });
   test('station turn events drive runtime direction and readable log',
       () async {
@@ -498,8 +399,7 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     graph.dispose();
   });
-  test(
-      'station services and pose publish use exact ROS wire contract; status error is visible',
+  test('pose publish uses exact ROS wire contract; status error is visible',
       () async {
     final requests = <Map<String, dynamic>>[];
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -530,21 +430,10 @@ void main() {
     });
     final client = RosBridgeClient();
     await client.connect('ws://127.0.0.1:${server.port}');
-    await client.getStationApproachConfigs('custom_field');
-    await client.saveStationApproachConfig('custom_field', config);
     client.publishInitialPose(const FieldPose2D(x: 3, y: 4, theta: math.pi));
     await expectLater(
         client.callService('/unavailable', 'std_srvs/srv/Trigger'),
         throwsA(predicate((e) => e.toString().contains('does not exist'))));
-    final get = requests.firstWhere(
-        (r) => r['service'] == '/fields/get_station_approach_configs');
-    expect(get['type'], 'marco_msgs/srv/GetStationApproachConfigs');
-    expect(get['args'], {'field_name': 'custom_field'});
-    final save = requests.firstWhere(
-        (r) => r['service'] == '/fields/save_station_approach_config');
-    expect(save['type'], 'marco_msgs/srv/SaveStationApproachConfig');
-    expect(save['args'],
-        {'field_name': 'custom_field', 'config': config.toRosJson()});
     final pose = requests.firstWhere(
             (r) => r['topic'] == '/initialpose' && r['op'] == 'publish')['msg']
         as Map;
@@ -635,12 +524,19 @@ void main() {
             builder: (_, __) => const MaterialApp(
                 home: ScenarioPage(dataPoints: [], site: '', rota: '')))));
     await tester.pumpAndSettle();
-    for (final name in [
-      'custom_pickup',
-      'custom_dropoff',
-      'custom_pickup',
-      'custom_dropoff'
-    ]) {
+    expect(find.byKey(const ValueKey('scenario-station-custom_pickup')),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey('scenario-station-custom_dropoff')),
+        findsNothing);
+    for (final name in ['custom_pickup', 'custom_dropoff']) {
+      await tester.tap(find.byKey(ValueKey('scenario-station-$name')));
+      await tester.pump();
+    }
+    expect(find.byKey(const ValueKey('scenario-station-custom_pickup')),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey('scenario-station-custom_dropoff')),
+        findsNothing);
+    for (final name in ['custom_pickup', 'custom_dropoff']) {
       await tester.tap(find.byKey(ValueKey('scenario-station-$name')));
       await tester.pump();
     }

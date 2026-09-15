@@ -828,13 +828,6 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
         title: const Text('Düğümler'),
         actions: [
           toolbarAction(
-            label: 'İstasyon / QR',
-            icon: Icons.qr_code_2,
-            onPressed: graph.graphFresh
-                ? () => Navigator.pushNamed(context, 'station-config-page')
-                : null,
-          ),
-          toolbarAction(
             label: 'Doğrula',
             icon: Icons.fact_check_outlined,
             onPressed: graph.canEdit && !graph.busy
@@ -1378,7 +1371,9 @@ class _NodeSectionState extends State<_NodeSection> {
                       items: [
                         const DropdownMenuItem(
                             value: null, child: Text('Tümü')),
-                        for (final role in FieldNodeRole.values)
+                        for (final role in FieldNodeRole.values.where(
+                          (role) => role != FieldNodeRole.qrTrigger,
+                        ))
                           DropdownMenuItem(
                             value: role,
                             child: Text(role.operatorLabel),
@@ -2036,6 +2031,10 @@ class _CompetitionEdgePlan {
     resolveRole('Q6', FieldNodeRole.gateQ6);
     for (var index = 1; index <= 3; index++) {
       final station = 'A$index';
+      final stationExists = nodes.any(
+        (node) => node.stationId.trim().toUpperCase() == station,
+      );
+      if (!stationExists) continue;
       resolveStation(
         station,
         FieldNodeRole.pickupApproach,
@@ -2045,6 +2044,10 @@ class _CompetitionEdgePlan {
     }
     for (var index = 1; index <= 3; index++) {
       final station = 'B$index';
+      final stationExists = nodes.any(
+        (node) => node.stationId.trim().toUpperCase() == station,
+      );
+      if (!stationExists) continue;
       resolveStation(
         station,
         FieldNodeRole.dropoffApproach,
@@ -2160,6 +2163,9 @@ class _CompetitionEdgePlan {
     }
 
     for (final link in bidirectionalLinks) {
+      if (!resolved.containsKey(link.$1) || !resolved.containsKey(link.$2)) {
+        continue;
+      }
       addLink(link.$1, link.$2, bidirectional: true);
     }
     for (final link in directedGateLinks) {
@@ -2450,7 +2456,11 @@ class _FieldNodeEditorDialogState extends State<_FieldNodeEditorDialog> {
                     initialValue: _role,
                     decoration: const InputDecoration(labelText: 'Rol'),
                     items: [
-                      for (final role in FieldNodeRole.values)
+                      for (final role in FieldNodeRole.values.where(
+                        (role) =>
+                            role != FieldNodeRole.qrTrigger ||
+                            widget.existing?.role == FieldNodeRole.qrTrigger,
+                      ))
                         DropdownMenuItem(
                           value: role,
                           child: Text(role.operatorLabel),
@@ -2474,7 +2484,7 @@ class _FieldNodeEditorDialogState extends State<_FieldNodeEditorDialog> {
                     controller: _stationId,
                     decoration: const InputDecoration(
                       labelText: 'Station ID / Nokta Kimliği',
-                      helperText: 'Örnek: WAIT, A1, B2, D1, Q5 veya QR1',
+                      helperText: 'Örnek: WAIT, A1, B2, D1 veya Q5',
                     ),
                     validator: (value) => value?.trim().isNotEmpty == true
                         ? null

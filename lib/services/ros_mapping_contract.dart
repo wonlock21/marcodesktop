@@ -227,8 +227,6 @@ abstract final class RosMappingTopics {
 
   static const fieldsActive = '/fields/active';
   static const fieldsPackageStatus = '/fields/package_status';
-  static const fieldsGetStationConfigs = '/fields/get_station_approach_configs';
-  static const fieldsSaveStationConfig = '/fields/save_station_approach_config';
   static const fieldsGetGraph = '/fields/get_graph';
   static const fieldsSaveNode = '/fields/save_node';
   static const fieldsSaveCurrentPoseNode = '/fields/save_current_pose_node';

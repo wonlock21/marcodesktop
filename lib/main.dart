@@ -1,5 +1,4 @@
 import 'connection_page.dart';
-import 'station_config_page.dart';
 import 'production_mission_page.dart';
 import 'widgets/mjpeg_camera_view.dart';
 import 'controller_page.dart';
@@ -16,7 +15,6 @@ import 'models/gcs_node_model.dart';
 import 'models/gcs_event_log_model.dart';
 import 'models/gcs_alarm_model.dart';
 import 'parameter_model.dart';
-import 'qr_page.dart';
 import 'node_teach_page.dart';
 import 'route_edit_page.dart';
 import 'saved_fields_page.dart';
@@ -105,12 +103,10 @@ class MyApp extends StatelessWidget {
             'connection-page': (context) => const ConnectionPage(),
             '3d-page': (context) => const Vehicle3DPage(),
             'map-page': (context) => const MapPage(),
-            'station-config-page': (_) => const StationConfigPage(),
             'production-mission-page': (_) => const ProductionMissionPage(),
             'saved-fields-page': (context) => const SavedFieldsPage(),
             'node-teach-page': (context) => const NodeTeachPage(),
             'route-edit-page': (context) => const RouteEditPage(),
-            'QR-page': (context) => const QRPage(),
             'data-page': (context) => const DataPage(
                   site: '',
                 ),

@@ -754,19 +754,6 @@ class RosBridgeClient {
         {'field_name': fieldName.trim()},
       );
 
-  Future<Map<String, dynamic>> getStationApproachConfigs(String fieldName) =>
-      callService(
-          RosMappingTopics.fieldsGetStationConfigs,
-          'marco_msgs/srv/GetStationApproachConfigs',
-          {'field_name': fieldName.trim()});
-
-  Future<Map<String, dynamic>> saveStationApproachConfig(
-          String fieldName, StationApproachConfig config) =>
-      callService(
-          RosMappingTopics.fieldsSaveStationConfig,
-          'marco_msgs/srv/SaveStationApproachConfig',
-          {'field_name': fieldName.trim(), 'config': config.toRosJson()});
-
   /// Pose correction is a command; only LocalizationStatus confirms convergence.
   void publishInitialPose(FieldPose2D pose) {
     if (!state.value.isConnected) throw StateError('ROS bağlı değil');

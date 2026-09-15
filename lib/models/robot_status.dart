@@ -66,10 +66,6 @@ class RobotStatus {
   String get gateDirection => _string('gate_direction');
   String get gateCrossingId => _string('gate_crossing_id');
   String get stationPhase => _string('station_phase');
-  bool get qrTriggerArmed => _bool('qr_trigger_armed');
-  String get expectedQrId => _string('expected_qr_id');
-  String get qrTargetStation => _string('qr_target_station');
-  String get lastQrRejectReason => _string('last_qr_reject_reason');
   String get dockingTargetStation => _string('docking_target_station');
   double get dockingConfiguredDurationS =>
       _number('docking_configured_duration_s');

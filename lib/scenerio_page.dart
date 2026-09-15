@@ -64,12 +64,18 @@ class _ScenarioPageState extends State<ScenarioPage> {
   final Map<String, Offset> _stationPositions = {};
   final Map<String, FieldNode> _graphNodes = {};
   final Map<String, Offset> _mapPositions = {};
-  final Map<String, String> _qrByLabel = {};
   bool _returnHome = true;
   bool _savingDraft = false;
   int _draftRevision = 0;
   String? _draftKey;
   List<String> get _allPlaces => _nodeByLabel.keys.toList(growable: false);
+  List<String> get _selectablePlaces {
+    final pickupExpected = _selected.length.isEven;
+    return _nodeByLabel.keys
+        .where((code) => pickupExpected ? _isAlma(code) : _isBirak(code))
+        .toList(growable: false);
+  }
+
   String arota = "";
   bool senaryoIsDone = false;
   String? _hoveredCode; // hover efekti için
@@ -101,7 +107,6 @@ class _ScenarioPageState extends State<ScenarioPage> {
     _taughtLabels.clear();
     _graphNodes.clear();
     _mapPositions.clear();
-    _qrByLabel.clear();
     for (final node in graph.nodes) {
       if (node.role != FieldNodeRole.pickupDock &&
           node.role != FieldNodeRole.dropoffDock) {
@@ -115,11 +120,6 @@ class _ScenarioPageState extends State<ScenarioPage> {
           ? FieldNodeType.alma
           : FieldNodeType.birakma;
       _taughtLabels.add(label);
-      for (final config in graph.stationConfigs) {
-        if (config.stationNodeId == node.nodeId) {
-          _qrByLabel[label] = config.approachQrId;
-        }
-      }
     }
     if (_graphNodes.isEmpty && !graph.hasSelectedField) {
       for (final point in widget.dataPoints) {
@@ -148,6 +148,31 @@ class _ScenarioPageState extends State<ScenarioPage> {
         );
       }
     }
+    if (!_selectionMatchesAvailableStations(_selected)) {
+      _draftRevision++;
+      _selected.clear();
+      arota = '';
+      senaryoIsDone = false;
+      final staleKey = _draftKey;
+      if (staleKey != null) unawaited(_removeDraft(staleKey));
+    }
+  }
+
+  bool _selectionMatchesAvailableStations(Iterable<String> stops) {
+    var index = 0;
+    for (final code in stops) {
+      if (!_nodeByLabel.containsKey(code) ||
+          (index.isEven ? !_isAlma(code) : !_isBirak(code))) {
+        return false;
+      }
+      index++;
+    }
+    return true;
+  }
+
+  Future<void> _removeDraft(String key) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(key);
   }
 
   Future<void> _loadDraft(String key, int revision) async {
@@ -158,8 +183,13 @@ class _ScenarioPageState extends State<ScenarioPage> {
       if (raw == null) return;
       final draft = jsonDecode(raw);
       if (draft is! Map || draft['stops'] is! List) return;
+      final stops = (draft['stops'] as List).whereType<String>().toList();
+      if (!_selectionMatchesAvailableStations(stops)) {
+        await prefs.remove(key);
+        return;
+      }
       setState(() {
-        _selected.addAll((draft['stops'] as List).whereType<String>());
+        _selected.addAll(stops);
         _returnHome = draft['return_home'] != false;
         arota = _selected.join(' → ');
         senaryoIsDone = true;
@@ -752,7 +782,7 @@ class _ScenarioPageState extends State<ScenarioPage> {
   Widget _buildStationGrid() => Wrap(
         spacing: 1.5.w,
         runSpacing: 1.5.h,
-        children: _allPlaces.map((code) {
+        children: _selectablePlaces.map((code) {
           final tip = _tipOf(code);
           final isSelected = _selected.contains(code);
 
@@ -842,7 +872,6 @@ class _ScenarioPageState extends State<ScenarioPage> {
               children: [
                 _infoRow('TİP', _tipOf(last).label),
                 _infoRow('ETİKET', _displayName(last)),
-                _infoRow('QR', _qrByLabel[last] ?? '--'),
                 _infoRow('X KON.',
                     _mapPositions[last]?.dx.toStringAsFixed(1) ?? '--'),
                 _infoRow('Y KON.',

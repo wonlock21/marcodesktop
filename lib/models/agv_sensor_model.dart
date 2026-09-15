@@ -17,7 +17,7 @@ class AgvSensorModel extends ChangeNotifier {
   String voltage = "";
   String amper = "";
   String isCharging = "Çalışıyor";
-  String sonQR = "null";
+  String sonQR = "";
   double currX = 0.0;
   double currY = 0.0;
   double currYaw = 0.0;
@@ -153,6 +153,7 @@ class AgvSensorModel extends ChangeNotifier {
     required double crossTrackError,
     required bool obstacleDetected,
     required String lastQrData,
+    required bool lastQrDetected,
     required bool plcConnected,
     required bool estopActive,
   }) {
@@ -165,7 +166,7 @@ class AgvSensorModel extends ChangeNotifier {
     sonrakiNode = nextNode;
     rotaSapmasi = crossTrackError;
     engelAlgilandi = obstacleDetected;
-    if (lastQrData.isNotEmpty) sonQR = lastQrData;
+    sonQR = lastQrDetected && lastQrData.isNotEmpty ? lastQrData : '';
     plcDurum = plcConnected ? 'bağlı' : 'bağlantı yok';
     estopAktif = estopActive;
     notifyListeners();

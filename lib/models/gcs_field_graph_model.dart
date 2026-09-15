@@ -16,8 +16,6 @@ class GcsFieldGraphModel extends ChangeNotifier {
   List<FieldInfo> fields = const [];
   List<FieldNode> nodes = const [];
   List<FieldEdge> edges = const [];
-  List<StationApproachConfig> stationConfigs = const [];
-  String? stationConfigsError;
   bool _graphLoaded = false;
   FieldPackageStatus? packageStatus;
   ActiveField? activeField;
@@ -168,7 +166,6 @@ class GcsFieldGraphModel extends ChangeNotifier {
   void markDisconnected() {
     _syncGeneration++;
     _graphLoaded = false;
-    stationConfigs = const [];
     connected = false;
     activeFresh = false;
     mappingStatusFresh = false;
@@ -350,7 +347,6 @@ class GcsFieldGraphModel extends ChangeNotifier {
       selectedFieldName = normalized;
       nodes = const [];
       edges = const [];
-      stationConfigs = const [];
       _graphLoaded = false;
       packageStatus = null;
       _invalidateValidation();
@@ -382,15 +378,6 @@ class GcsFieldGraphModel extends ChangeNotifier {
       packageStatusFresh = true;
       lastMessage = graph.message;
       graphError = null;
-      try {
-        final configs = await _repository.getStationConfigs(fieldName);
-        if (!connected || expectedGeneration != _syncGeneration) return;
-        stationConfigs = configs;
-        stationConfigsError = null;
-      } catch (error) {
-        stationConfigs = const [];
-        stationConfigsError = _userError(error);
-      }
     } catch (error) {
       if (expectedGeneration == _syncGeneration) graphError = _userError(error);
     } finally {
@@ -455,24 +442,6 @@ class GcsFieldGraphModel extends ChangeNotifier {
       );
       await _afterMutation(result.packageHash);
       return result;
-    });
-  }
-
-  Future<void> saveStationConfig(StationApproachConfig config) async {
-    _ensureEditable();
-    await _runOperation('station_config_save', () async {
-      final result =
-          await _repository.saveStationConfig(selectedFieldName!, config);
-      stationConfigs = List.unmodifiable([
-        for (final current in stationConfigs)
-          if (current.stationNodeId != result.savedConfig.stationNodeId)
-            current,
-        result.savedConfig,
-      ]);
-      _invalidateValidation();
-      lastMessage = result.message;
-      notifyListeners();
-      await loadGraph(selectedFieldName!);
     });
   }
 
@@ -612,7 +581,6 @@ class GcsFieldGraphModel extends ChangeNotifier {
       selectedFieldName = null;
       nodes = const [];
       edges = const [];
-      stationConfigs = const [];
       _graphLoaded = false;
       packageStatus = null;
       _invalidateValidation();

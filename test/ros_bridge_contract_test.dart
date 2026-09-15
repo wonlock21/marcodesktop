@@ -168,7 +168,7 @@ void main() {
     expect(pixel.y, closeTo(9, 1e-9));
   });
 
-  test('gercek ROS dugum eslemesi yalniz rota grafindan gelir', () {
+  test('eski editor dugum adlarini sabit istasyon sayisiyla sinirlamaz', () {
     expect(
       RosGcsContract.nodeForPoint(
         DataPoint(type: 'pickupPointA2', x: 0, y: 0),
@@ -179,7 +179,7 @@ void main() {
       RosGcsContract.nodeForPoint(
         DataPoint(type: 'dropoffPointB4', x: 0, y: 0),
       ),
-      isNull,
+      'birak_4',
     );
   });
 

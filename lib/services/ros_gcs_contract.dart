@@ -159,28 +159,6 @@ abstract final class RosGcsContract {
   static const int editorColumns = 29;
   static const int editorRows = 17;
 
-  static const Map<String, Offset> graphNodes = {
-    'bekla_A': Offset(-2, -2),
-    'alma_1': Offset(2, -2),
-    'alma_2': Offset(3, -1),
-    'alma_3': Offset(3, 0),
-    'birak_1': Offset(-2, 2),
-    'birak_2': Offset(-3, 1),
-    'birak_3': Offset(-3, 2),
-    'kapi_q5': Offset(2, 2),
-  };
-
-  static const Map<String, String> labelsByNode = {
-    'bekla_A': 'S1',
-    'alma_1': 'A1',
-    'alma_2': 'A2',
-    'alma_3': 'A3',
-    'birak_1': 'B1',
-    'birak_2': 'B2',
-    'birak_3': 'B3',
-    'kapi_q5': 'KAPI',
-  };
-
   /// 29×17 editor grid'indeki bir noktayı canlı OccupancyGrid hücre
   /// merkezine, ardından `info.origin` pozuna dönüştürür.
   static Offset editorGridToMap(
@@ -226,23 +204,19 @@ abstract final class RosGcsContract {
   }
 
   static String? nodeForPoint(DataPoint point) {
-    final explicit = point.rosNodeName;
-    if (explicit != null && graphNodes.containsKey(explicit)) return explicit;
+    final explicit = point.rosNodeName?.trim();
+    if (explicit != null && explicit.isNotEmpty) return explicit;
     if (point.type.startsWith('pickupPoint')) {
       final raw = point.type.substring(11);
       final suffix = raw.startsWith('A') ? raw.substring(1) : raw;
-      final node = 'alma_$suffix';
-      return graphNodes.containsKey(node) ? node : null;
+      return suffix.isEmpty ? null : 'alma_$suffix';
     }
     if (point.type.startsWith('dropoffPoint')) {
       final raw = point.type.substring(12);
       final suffix = raw.startsWith('B') ? raw.substring(1) : raw;
-      final node = 'birak_$suffix';
-      return graphNodes.containsKey(node) ? node : null;
+      return suffix.isEmpty ? null : 'birak_$suffix';
     }
     if (point.type.startsWith('startArea')) return 'bekla_A';
     return null;
   }
-
-  static String labelForNode(String node) => labelsByNode[node] ?? node;
 }
