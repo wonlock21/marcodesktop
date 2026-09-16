@@ -72,7 +72,13 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final graph = context.read<GcsFieldGraphModel>();
-      if (!graph.connected || !graph.hasSelectedField) return;
+      if (!graph.connected ||
+          !graph.hasSelectedField ||
+          graph.graphFresh ||
+          graph.graphLoading ||
+          graph.fieldsLoading) {
+        return;
+      }
       unawaited(
         graph.synchronize(preferredField: graph.selectedFieldName),
       );
@@ -728,9 +734,11 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
     });
   }
 
-  void _selectNodeByName(String name, List<FieldNode> nodes) {
+  void _selectNodeById(String nodeId, List<FieldNode> nodes) {
+    final parsedNodeId = int.tryParse(nodeId);
+    if (parsedNodeId == null) return;
     for (final node in nodes) {
-      if (node.name == name) {
+      if (node.nodeId == parsedNodeId) {
         _selectNode(node);
         return;
       }
@@ -794,6 +802,8 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
             color: node.nodeId == _selectedNodeId
                 ? Colors.yellowAccent
                 : _nodeColor(node.role),
+            kind: MapPreviewNodeMarkerKind.cross,
+            tapValue: node.nodeId.toString(),
           ),
         );
       }
@@ -981,8 +991,8 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
                                   !graph.busy
                               ? _createAtPixel
                               : null,
-                          onNodeMarkerTap: (name) =>
-                              _selectNodeByName(name, graph.nodes),
+                          onNodeMarkerTap: (nodeId) =>
+                              _selectNodeById(nodeId, graph.nodes),
                         )
                       : _MapEmptyState(graph: graph, mapping: mapping),
                 ),

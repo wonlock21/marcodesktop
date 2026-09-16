@@ -160,6 +160,10 @@ void main() {
     expect(robot.gatePermissionLabel, 'Bekleniyor');
     expect(robot.dockingRemainingS, 3.5);
     expect(robot.lastQrAgeS, 0.2);
+    expect(robot.qrTriggerArmed, true);
+    expect(robot.expectedQrId, 'Q2');
+    expect(robot.qrTargetStation, 'A1');
+    expect(robot.lastQrRejectReason, 'unexpected_qr');
     expect(robot.activeFieldHash, 'hash');
     final empty = RobotStatus.fromRosJson({
       'mission_state': 'broken',
@@ -171,6 +175,10 @@ void main() {
     expect(empty.dockingRemainingS.isNaN, true);
     expect(empty.pose, isEmpty);
     expect(empty.selectedRouteEdges, [1]);
+    expect(empty.qrTriggerArmed, false);
+    expect(empty.expectedQrId, isEmpty);
+    expect(empty.qrTargetStation, isEmpty);
+    expect(empty.lastQrRejectReason, isEmpty);
 
     final plcGate = RobotStatus.fromRosJson({
       'mission_state': 4,

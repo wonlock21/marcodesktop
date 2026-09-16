@@ -611,6 +611,8 @@ class RosBridgeClient {
   Future<Map<String, dynamic>> stopMapping() => callService(
         RosMappingTopics.mappingStop,
         RosMappingTypes.stopMappingSrv,
+        const {},
+        const Duration(seconds: 15),
       );
 
   /// `/mapping/save` — ROS sözleşmesi boş args (`{}`).
@@ -627,6 +629,8 @@ class RosBridgeClient {
   Future<Map<String, dynamic>> listFields() => callService(
         RosMappingTopics.fieldsList,
         RosMappingTypes.listFieldsSrv,
+        const {},
+        const Duration(seconds: 15),
       );
 
   Future<Map<String, dynamic>> getFieldGraph(String fieldName) => callService(
@@ -718,6 +722,7 @@ class RosBridgeClient {
         RosMappingTopics.fieldsValidate,
         RosMappingTypes.validateFieldSrv,
         {'field_name': fieldName.trim()},
+        const Duration(seconds: 30),
       );
 
   Future<Map<String, dynamic>> activateField({
@@ -808,6 +813,8 @@ class RosBridgeClient {
   Future<Map<String, dynamic>> stopLocalization() => callService(
         RosMappingTopics.localizationStop,
         RosMappingTypes.stopLocalizationSrv,
+        const {},
+        const Duration(seconds: 15),
       );
 
   Future<Map<String, dynamic>> setBuzzerEnabled(bool enabled) => callService(

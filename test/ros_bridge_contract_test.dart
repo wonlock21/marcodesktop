@@ -674,7 +674,14 @@ void main() {
       );
 
       scenario = {'timeout': true};
-      await expectLater(service.call(), throwsA(isA<TimeoutException>()));
+      const extendedTimeoutServices = {
+        '/mapping/stop',
+        '/fields/list',
+        '/localization/stop',
+      };
+      if (!extendedTimeoutServices.contains(service.name)) {
+        await expectLater(service.call(), throwsA(isA<TimeoutException>()));
+      }
     }
 
     scenario = {'timeout': true};
@@ -683,6 +690,44 @@ void main() {
     await expectLater(client.startMission(), throwsA(isA<StateError>()));
     await expectLater(pendingStart, throwsA(isA<TimeoutException>()));
     expect(received.last['id'], 'mission_start');
+
+    await client.dispose();
+    await server.close(force: true);
+  });
+
+  test('uzun ROS islemleri genel servis timeoutundan etkilenmez', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((request) async {
+      final socket = await WebSocketTransformer.upgrade(request);
+      socket.listen((data) async {
+        if (data is! String) return;
+        final message = Map<String, dynamic>.from(jsonDecode(data));
+        if (message['op'] != 'call_service') return;
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+        socket.add(jsonEncode({
+          'op': 'service_response',
+          'id': message['id'],
+          'service': message['service'],
+          'result': true,
+          'values': {'success': true, 'message': 'tamam'},
+        }));
+      });
+    });
+
+    final client = RosBridgeClient(
+      serviceTimeout: const Duration(milliseconds: 30),
+    );
+    await client.connect('ws://127.0.0.1:${server.port}');
+
+    expect((await client.stopMapping())['success'], isTrue);
+    expect((await client.stopLocalization())['success'], isTrue);
+    expect((await client.listFields())['success'], isTrue);
+    expect((await client.validateField('saha_01'))['success'], isTrue);
+    await expectLater(
+      client.getFieldGraph('saha_01'),
+      throwsA(isA<TimeoutException>()),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 70));
 
     await client.dispose();
     await server.close(force: true);

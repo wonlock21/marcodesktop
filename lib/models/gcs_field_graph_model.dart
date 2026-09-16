@@ -48,6 +48,13 @@ class GcsFieldGraphModel extends ChangeNotifier {
 
   String? _validatedHash;
   int _syncGeneration = 0;
+  int _graphLoadRevision = 0;
+  Future<void>? _synchronizeInFlight;
+  bool _synchronizeQueued = false;
+  String? _queuedPreferredField;
+  Future<void>? _graphFetchInFlight;
+  String? _graphFetchField;
+  int? _graphFetchGeneration;
 
   bool get busy => operation != null;
   String? get validatedHash => _validatedHash;
@@ -165,6 +172,7 @@ class GcsFieldGraphModel extends ChangeNotifier {
 
   void markDisconnected() {
     _syncGeneration++;
+    _graphLoadRevision++;
     _graphLoaded = false;
     connected = false;
     activeFresh = false;
@@ -261,6 +269,41 @@ class GcsFieldGraphModel extends ChangeNotifier {
 
   Future<void> synchronize({String? preferredField}) async {
     if (!connected) return;
+    final normalizedPreferred = preferredField?.trim();
+    final activeSync = _synchronizeInFlight;
+    if (activeSync != null) {
+      _synchronizeQueued = true;
+      _queuedPreferredField = normalizedPreferred;
+      return activeSync;
+    }
+
+    late final Future<void> flight;
+    flight = _runSynchronizeQueue(normalizedPreferred);
+    _synchronizeInFlight = flight;
+    try {
+      await flight;
+    } finally {
+      if (identical(_synchronizeInFlight, flight)) {
+        _synchronizeInFlight = null;
+      }
+    }
+  }
+
+  Future<void> _runSynchronizeQueue(String? preferredField) async {
+    var nextPreferred = preferredField;
+    while (connected) {
+      _synchronizeQueued = false;
+      _queuedPreferredField = null;
+      await _synchronizeOnce(nextPreferred);
+      if (!_synchronizeQueued || !connected) return;
+      nextPreferred = _queuedPreferredField;
+    }
+  }
+
+  Future<void> _synchronizeOnce(String? preferredField) async {
+    if (!connected) return;
+    final reusableField = graphFresh ? selectedFieldName : null;
+    final reusableHash = graphFresh ? packageStatus?.packageHash : null;
     final generation = ++_syncGeneration;
     _invalidateValidation();
     _graphLoaded = false;
@@ -319,7 +362,21 @@ class GcsFieldGraphModel extends ChangeNotifier {
       selectedFieldName = activeField!.fieldName;
     }
     if (selectedFieldName?.isNotEmpty == true) {
-      await loadGraph(selectedFieldName!, generation: generation);
+      final selectedName = selectedFieldName!;
+      final listedHash = selectedField?.packageHash ?? '';
+      final statusHash = packageStatus?.fieldName == selectedName
+          ? packageStatus?.packageHash ?? ''
+          : '';
+      final reusableHashMatches = reusableHash == null ||
+          ((listedHash.isEmpty || listedHash == reusableHash) &&
+              (statusHash.isEmpty || statusHash == reusableHash));
+      if (selectedName == reusableField && reusableHashMatches) {
+        _graphLoaded = true;
+        graphError = null;
+        notifyListeners();
+      } else {
+        await loadGraph(selectedName, generation: generation);
+      }
     }
   }
 
@@ -342,7 +399,7 @@ class GcsFieldGraphModel extends ChangeNotifier {
 
   Future<void> selectField(String fieldName) async {
     final normalized = fieldName.trim();
-    if (normalized.isEmpty || !connected || busy || graphLoading) return;
+    if (normalized.isEmpty || !connected || busy) return;
     if (selectedFieldName != normalized) {
       selectedFieldName = normalized;
       nodes = const [];
@@ -356,14 +413,63 @@ class GcsFieldGraphModel extends ChangeNotifier {
   }
 
   Future<void> loadGraph(String fieldName, {int? generation}) async {
-    if (!connected || graphLoading) return;
+    if (!connected) return;
+    final normalizedField = fieldName.trim();
     final expectedGeneration = generation ?? _syncGeneration;
+    final activeFetch = _graphFetchInFlight;
+    if (activeFetch != null) {
+      if (_graphFetchField == normalizedField &&
+          _graphFetchGeneration == expectedGeneration) {
+        return activeFetch;
+      }
+      final queuedRevision = ++_graphLoadRevision;
+      await activeFetch;
+      if (!connected ||
+          expectedGeneration != _syncGeneration ||
+          queuedRevision != _graphLoadRevision) {
+        return;
+      }
+    }
+    if (normalizedField == selectedFieldName && graphFresh) return;
+
+    final loadRevision = ++_graphLoadRevision;
+    late final Future<void> fetch;
+    fetch = _performGraphFetch(
+      normalizedField,
+      expectedGeneration,
+      loadRevision,
+    );
+    _graphFetchInFlight = fetch;
+    _graphFetchField = normalizedField;
+    _graphFetchGeneration = expectedGeneration;
+    try {
+      await fetch;
+    } finally {
+      if (identical(_graphFetchInFlight, fetch)) {
+        _graphFetchInFlight = null;
+        _graphFetchField = null;
+        _graphFetchGeneration = null;
+        graphLoading = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> _performGraphFetch(
+    String fieldName,
+    int expectedGeneration,
+    int loadRevision,
+  ) async {
     graphLoading = true;
     graphError = null;
     notifyListeners();
     try {
       final graph = await _repository.getGraph(fieldName);
-      if (!connected || expectedGeneration != _syncGeneration) return;
+      if (!connected ||
+          expectedGeneration != _syncGeneration ||
+          loadRevision != _graphLoadRevision) {
+        return;
+      }
       if (graph.status.fieldName != fieldName) {
         throw StateError('ROS farklı sahaya ait graph döndürdü');
       }
@@ -379,11 +485,9 @@ class GcsFieldGraphModel extends ChangeNotifier {
       lastMessage = graph.message;
       graphError = null;
     } catch (error) {
-      if (expectedGeneration == _syncGeneration) graphError = _userError(error);
-    } finally {
-      if (expectedGeneration == _syncGeneration) {
-        graphLoading = false;
-        notifyListeners();
+      if (expectedGeneration == _syncGeneration &&
+          loadRevision == _graphLoadRevision) {
+        graphError = _userError(error);
       }
     }
   }
@@ -595,6 +699,7 @@ class GcsFieldGraphModel extends ChangeNotifier {
           'Bağlantı koptu; değişikliğin sonucu ROS üzerinden tekrar okunmalı');
     }
     _invalidateValidation();
+    _graphLoaded = false;
     lastMessage = packageHash;
     notifyListeners();
     await loadGraph(selectedFieldName!);

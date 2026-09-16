@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -366,6 +367,47 @@ void main() {
       expect(repository.graphCalls, 2);
     });
 
+    test('eş zamanlı synchronize graph isteğini single-flight birleştirir',
+        () async {
+      final repository = _RacingRepository();
+      final model = GcsFieldGraphModel(repository: repository);
+      model.applyConnection(true);
+
+      final first = model.synchronize(preferredField: 'saha_01');
+      await Future<void>.delayed(Duration.zero);
+      expect(repository.graphRequests, hasLength(1));
+      expect(model.graphLoading, isTrue);
+
+      final second = model.synchronize(preferredField: 'saha_01');
+      await Future<void>.delayed(Duration.zero);
+      expect(repository.graphRequests, hasLength(1));
+
+      repository.completeGraph(0, nodeName: 'single-flight');
+      await Future.wait([first, second]);
+      expect(model.graphLoading, isFalse);
+      expect(model.graphFresh, isTrue);
+      expect(model.nodes.first.name, 'single-flight');
+      expect(repository.graphCalls, 1);
+    });
+
+    test('aynı saha için doğrudan loadGraph çağrıları birleştirilir', () async {
+      final repository = _RacingRepository();
+      final model = GcsFieldGraphModel(repository: repository);
+      model.applyConnection(true);
+
+      final first = model.loadGraph('saha_01');
+      await Future<void>.delayed(Duration.zero);
+      final second = model.loadGraph('saha_01');
+      await Future<void>.delayed(Duration.zero);
+      expect(repository.graphRequests, hasLength(1));
+
+      repository.completeGraph(0, nodeName: 'shared');
+      await Future.wait([first, second]);
+      expect(repository.graphCalls, 1);
+      expect(model.graphFresh, isTrue);
+      expect(model.nodes.first.name, 'shared');
+    });
+
     test('backend errors ve warnings dizilerinin tamamı korunur', () async {
       final repository = _FakeRepository()
         ..validationStatus = _status(
@@ -458,4 +500,31 @@ class _FakeRepository extends FieldGraphRepository {
         mapWidth: 200,
         mapHeight: 200,
       );
+}
+
+class _RacingRepository extends _FakeRepository {
+  final List<Completer<FieldGraphData>> graphRequests = [];
+
+  @override
+  Future<FieldGraphData> getGraph(String fieldName) {
+    graphCalls++;
+    final request = Completer<FieldGraphData>();
+    graphRequests.add(request);
+    return request.future;
+  }
+
+  void completeGraph(
+    int index, {
+    required String nodeName,
+    String packageHash = 'hash-1',
+  }) {
+    graphRequests[index].complete(
+      FieldGraphData(
+        message: nodeName,
+        nodes: [_node().copyWith(name: nodeName)],
+        edges: const [],
+        status: _status(hash: packageHash),
+      ),
+    );
+  }
 }

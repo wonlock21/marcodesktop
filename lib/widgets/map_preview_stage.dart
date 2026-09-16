@@ -8,17 +8,23 @@ import '../services/map_preview_layout.dart';
 import '../services/ros_mapping_contract.dart';
 
 /// Harita üstü düğüm işaretçisi (piksel koordinat + etiket).
+enum MapPreviewNodeMarkerKind { standard, cross }
+
 class MapPreviewNodeMarker {
   final String label;
   final double pixelX;
   final double pixelY;
   final Color color;
+  final MapPreviewNodeMarkerKind kind;
+  final String? tapValue;
 
   const MapPreviewNodeMarker({
     required this.label,
     required this.pixelX,
     required this.pixelY,
     required this.color,
+    this.kind = MapPreviewNodeMarkerKind.standard,
+    this.tapValue,
   });
 }
 
@@ -160,7 +166,7 @@ class MapPreviewStage extends StatelessWidget {
                       marker: m,
                       onTap: onNodeMarkerTap == null
                           ? null
-                          : () => onNodeMarkerTap!(m.label),
+                          : () => onNodeMarkerTap!(m.tapValue ?? m.label),
                     ),
                   ),
                 if (mapW != null &&
@@ -348,6 +354,11 @@ class _NodeMarkerOverlay extends StatelessWidget {
     final layout = mapPreviewLayout(view, mapW, mapH);
     final cx = layout.offset.dx + marker.pixelX * layout.scale;
     final cy = layout.offset.dy + marker.pixelY * layout.scale;
+
+    if (marker.kind == MapPreviewNodeMarkerKind.cross) {
+      return _buildCrossMarker(cx, cy);
+    }
+
     const size = 22.0;
 
     return Positioned(
@@ -392,6 +403,91 @@ class _NodeMarkerOverlay extends StatelessWidget {
       ),
     );
   }
+
+  Widget _buildCrossMarker(double cx, double cy) {
+    const hitSize = 30.0;
+    const crossSize = 13.0;
+
+    return Positioned(
+      left: cx - hitSize / 2,
+      top: cy - hitSize / 2,
+      width: hitSize,
+      height: hitSize,
+      child: Tooltip(
+        message: marker.label,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.center,
+            children: [
+              Positioned(
+                bottom: hitSize - 4,
+                left: -45,
+                width: hitSize + 90,
+                child: IgnorePointer(
+                  child: Text(
+                    marker.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: marker.color,
+                      fontSize: 2.2.sp,
+                      fontWeight: FontWeight.w700,
+                      fontFamily: 'monospace',
+                      shadows: const [
+                        Shadow(color: Colors.black, blurRadius: 3),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              CustomPaint(
+                size: const Size.square(crossSize),
+                painter: _CrossMarkerPainter(color: marker.color),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CrossMarkerPainter extends CustomPainter {
+  const _CrossMarkerPainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final half = size.shortestSide / 2;
+    final shadow = Paint()
+      ..color = Colors.black87
+      ..strokeWidth = 4
+      ..strokeCap = StrokeCap.round;
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 2.2
+      ..strokeCap = StrokeCap.round;
+
+    final firstStart = center.translate(-half, -half);
+    final firstEnd = center.translate(half, half);
+    final secondStart = center.translate(-half, half);
+    final secondEnd = center.translate(half, -half);
+    canvas
+      ..drawLine(firstStart, firstEnd, shadow)
+      ..drawLine(secondStart, secondEnd, shadow)
+      ..drawLine(firstStart, firstEnd, paint)
+      ..drawLine(secondStart, secondEnd, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _CrossMarkerPainter oldDelegate) =>
+      oldDelegate.color != color;
 }
 
 class _RobotOverlay extends StatelessWidget {

@@ -1,4 +1,4 @@
-/// Wire snapshot of marco_msgs/msg/RobotStatus at f677bd5.
+/// Wire snapshot of marco_msgs/msg/RobotStatus used by the production GUI.
 /// Missing/wrong-typed data remains unknown; it never grants command authority.
 class RobotStatus {
   final Map<String, dynamic> raw;
@@ -60,6 +60,10 @@ class RobotStatus {
   double get lastQrConfidence => _number('last_qr_confidence');
   String get lastQrCameraFrame => _string('last_qr_camera_frame');
   double get lastQrAgeS => _number('last_qr_age_s');
+  bool get qrTriggerArmed => _bool('qr_trigger_armed');
+  String get expectedQrId => _string('expected_qr_id');
+  String get qrTargetStation => _string('qr_target_station');
+  String get lastQrRejectReason => _string('last_qr_reject_reason');
   bool get plcConnected => _bool('plc_connected');
   bool get gatePermissionGranted => _bool('gate_permission_granted');
   String get gateEntryNode => _string('gate_entry_node');
