@@ -807,6 +807,7 @@ class RosBridgeClient {
       RosMappingTopics.localizationStart,
       RosMappingTypes.startLocalizationSrv,
       {'field_name': fieldName.trim()},
+      const Duration(seconds: 30),
     );
   }
 

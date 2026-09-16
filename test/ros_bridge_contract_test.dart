@@ -677,6 +677,7 @@ void main() {
       const extendedTimeoutServices = {
         '/mapping/stop',
         '/fields/list',
+        '/localization/start',
         '/localization/stop',
       };
       if (!extendedTimeoutServices.contains(service.name)) {
@@ -720,6 +721,10 @@ void main() {
     await client.connect('ws://127.0.0.1:${server.port}');
 
     expect((await client.stopMapping())['success'], isTrue);
+    expect(
+      (await client.startLocalization(fieldName: 'saha_01'))['success'],
+      isTrue,
+    );
     expect((await client.stopLocalization())['success'], isTrue);
     expect((await client.listFields())['success'], isTrue);
     expect((await client.validateField('saha_01'))['success'], isTrue);
