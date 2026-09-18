@@ -318,6 +318,16 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
       existingNodeIds: graph.nodes.map((node) => node.nodeId).toSet(),
     );
     if (edited == null || !mounted || !graph.canEdit) return;
+    final semanticIdentityChanged = edited.role != node.role ||
+        edited.stationId.trim().toUpperCase() !=
+            node.stationId.trim().toUpperCase();
+    if (semanticIdentityChanged &&
+        graph.connectedEdges(node.nodeId).isNotEmpty) {
+      _toast(
+        'Rol veya Station ID değişmeden önce düğümün bağlı bağlantılarını silin.',
+      );
+      return;
+    }
     try {
       final result = await graph.saveNode(edited, currentPose: false);
       if (mounted) _toast(result.message);
@@ -547,7 +557,7 @@ class _NodeTeachPageState extends State<NodeTeachPage> {
     final graph = context.read<GcsFieldGraphModel>();
     if (!graph.canEdit || graph.busy) return;
 
-    final plan = _CompetitionEdgePlan.build(
+    final plan = CompetitionEdgePlan.build(
       nodes: graph.nodes,
       existingEdges: graph.edges,
     );
@@ -1970,62 +1980,97 @@ Widget _detail(String label, String value) => Padding(
       ),
     );
 
-class _CompetitionEdgePlanItem {
-  const _CompetitionEdgePlanItem({required this.label, required this.edge});
+@visibleForTesting
+class CompetitionEdgePlanItem {
+  const CompetitionEdgePlanItem({required this.label, required this.edge});
 
   final String label;
   final FieldEdge edge;
 }
 
-class _CompetitionEdgePlan {
-  const _CompetitionEdgePlan({
+@visibleForTesting
+class CompetitionEdgePlan {
+  const CompetitionEdgePlan({
     required this.edges,
     required this.existingCount,
     required this.issues,
   });
 
-  final List<_CompetitionEdgePlanItem> edges;
+  final List<CompetitionEdgePlanItem> edges;
   final int existingCount;
   final List<String> issues;
 
-  static _CompetitionEdgePlan build({
+  static CompetitionEdgePlan build({
     required List<FieldNode> nodes,
     required List<FieldEdge> existingEdges,
   }) {
     final issues = <String>[];
-    final resolved = <String, FieldNode>{};
+    final stationPairs =
+        <({String stationId, FieldNode approach, FieldNode dock})>[];
+    final resolvedGates = <String, FieldNode>{};
 
-    void resolveStation(
-      String stationId,
-      FieldNodeRole role, {
-      String? key,
-    }) {
-      final matches = nodes
-          .where(
-            (node) =>
-                node.stationId.trim().toUpperCase() == stationId &&
-                node.role == role,
-          )
-          .toList(growable: false);
-      final targetKey = key ?? stationId;
-      if (matches.length == 1) {
-        resolved[targetKey] = matches.single;
-      } else if (matches.isEmpty) {
-        issues.add(
-          '$stationId için ${role.operatorLabel} rolünde düğüm bulunamadı.',
-        );
-      } else {
-        issues.add(
-          '$stationId için ${role.operatorLabel} rolünde birden fazla düğüm var.',
-        );
+    void resolveStationPairs(
+      FieldNodeRole approachRole,
+      FieldNodeRole dockRole,
+    ) {
+      final stationIds = nodes
+          .where((node) => node.role == approachRole || node.role == dockRole)
+          .map((node) => node.stationId.trim().toUpperCase())
+          .toSet()
+          .toList()
+        ..sort();
+      for (final stationId in stationIds) {
+        if (stationId.isEmpty) {
+          issues.add(
+            '${approachRole.operatorLabel}/${dockRole.operatorLabel} düğümlerinde Station ID boş olamaz.',
+          );
+          continue;
+        }
+        final approaches = nodes
+            .where(
+              (node) =>
+                  node.stationId.trim().toUpperCase() == stationId &&
+                  node.role == approachRole,
+            )
+            .toList(growable: false);
+        final docks = nodes
+            .where(
+              (node) =>
+                  node.stationId.trim().toUpperCase() == stationId &&
+                  node.role == dockRole,
+            )
+            .toList(growable: false);
+        if (approaches.length != 1) {
+          issues.add(
+            approaches.isEmpty
+                ? '$stationId için ${approachRole.operatorLabel} rolünde düğüm bulunamadı.'
+                : '$stationId için ${approachRole.operatorLabel} rolünde birden fazla düğüm var.',
+          );
+        }
+        if (docks.length != 1) {
+          issues.add(
+            docks.isEmpty
+                ? '$stationId için ${dockRole.operatorLabel} rolünde düğüm bulunamadı.'
+                : '$stationId için ${dockRole.operatorLabel} rolünde birden fazla düğüm var.',
+          );
+        }
+        if (approaches.length == 1 && docks.length == 1) {
+          stationPairs.add(
+            (
+              stationId: stationId,
+              approach: approaches.single,
+              dock: docks.single,
+            ),
+          );
+        }
       }
     }
 
-    void resolveRole(String key, FieldNodeRole role) {
+    void resolveGate(String key, FieldNodeRole role) {
       final matches =
           nodes.where((node) => node.role == role).toList(growable: false);
       if (matches.length == 1) {
-        resolved[key] = matches.single;
+        resolvedGates[key] = matches.single;
       } else if (matches.isEmpty) {
         issues.add('${role.operatorLabel} rolünde düğüm bulunamadı.');
       } else {
@@ -2033,88 +2078,35 @@ class _CompetitionEdgePlan {
       }
     }
 
-    resolveStation('WAIT', FieldNodeRole.wait);
-    for (var index = 1; index <= 6; index++) {
-      resolveStation('D$index', FieldNodeRole.transit);
-    }
-    resolveRole('Q5', FieldNodeRole.gateQ5);
-    resolveRole('Q6', FieldNodeRole.gateQ6);
-    for (var index = 1; index <= 3; index++) {
-      final station = 'A$index';
-      final stationExists = nodes.any(
-        (node) => node.stationId.trim().toUpperCase() == station,
-      );
-      if (!stationExists) continue;
-      resolveStation(
-        station,
-        FieldNodeRole.pickupApproach,
-        key: '${station}_APPROACH',
-      );
-      resolveStation(station, FieldNodeRole.pickupDock);
-    }
-    for (var index = 1; index <= 3; index++) {
-      final station = 'B$index';
-      final stationExists = nodes.any(
-        (node) => node.stationId.trim().toUpperCase() == station,
-      );
-      if (!stationExists) continue;
-      resolveStation(
-        station,
-        FieldNodeRole.dropoffApproach,
-        key: '${station}_APPROACH',
-      );
-      resolveStation(station, FieldNodeRole.dropoffDock);
-    }
+    resolveStationPairs(FieldNodeRole.pickupApproach, FieldNodeRole.pickupDock);
+    resolveStationPairs(
+      FieldNodeRole.dropoffApproach,
+      FieldNodeRole.dropoffDock,
+    );
+    resolveGate('Q5', FieldNodeRole.gateQ5);
+    resolveGate('Q6', FieldNodeRole.gateQ6);
 
     if (issues.isNotEmpty) {
-      return _CompetitionEdgePlan(
+      return CompetitionEdgePlan(
         edges: const [],
         existingCount: 0,
         issues: issues,
       );
     }
 
-    const bidirectionalLinks = <(String, String)>[
-      ('WAIT', 'D1'),
-      ('D1', 'D2'),
-      ('D2', 'D3'),
-      ('D3', 'Q5'),
-      ('Q6', 'D4'),
-      ('D4', 'D5'),
-      ('D4', 'D6'),
-      ('D1', 'A1_APPROACH'),
-      ('A1_APPROACH', 'A1'),
-      ('D2', 'A2_APPROACH'),
-      ('A2_APPROACH', 'A2'),
-      ('D3', 'A3_APPROACH'),
-      ('A3_APPROACH', 'A3'),
-      ('D5', 'B1_APPROACH'),
-      ('B1_APPROACH', 'B1'),
-      ('D4', 'B2_APPROACH'),
-      ('B2_APPROACH', 'B2'),
-      ('D6', 'B3_APPROACH'),
-      ('B3_APPROACH', 'B3'),
-    ];
-    const directedGateLinks = <(String, String, String)>[
-      ('Q5', 'Q6', 'q5_outbound'),
-      ('Q6', 'Q5', 'q6_return'),
-    ];
-
-    final planned = <_CompetitionEdgePlanItem>[];
+    final planned = <CompetitionEdgePlanItem>[];
     var existingCount = 0;
 
-    void addLink(
-      String startKey,
-      String endKey, {
-      required bool bidirectional,
+    void addDirectedLink(
+      FieldNode start,
+      FieldNode end, {
+      required String label,
+      required FieldMovementDirection movementDirection,
       String gateEvent = '',
     }) {
-      final start = resolved[startKey]!;
-      final end = resolved[endKey]!;
       final dx = start.pose.x - end.pose.x;
       final dy = start.pose.y - end.pose.y;
       final distance = math.sqrt(dx * dx + dy * dy);
-      final label = '$startKey ${bidirectional ? '↔' : '→'} $endKey';
       if (distance <= 0 || !distance.isFinite) {
         issues.add('$label oluşturulamadı: düğümlerin konumları aynı.');
         return;
@@ -2127,25 +2119,23 @@ class _CompetitionEdgePlan {
             edge.startNodeId == end.nodeId && edge.endNodeId == start.nodeId;
         return sameDirection || reverseDirection;
       }).toList(growable: false);
-      final alreadyExists = betweenEndpoints.any((edge) {
-        if (bidirectional) return edge.bidirectional;
-        return !edge.bidirectional &&
+      final alreadyExists = betweenEndpoints.any(
+        (edge) =>
+            !edge.bidirectional &&
             edge.startNodeId == start.nodeId &&
             edge.endNodeId == end.nodeId &&
-            edge.gateEvent == gateEvent;
-      });
+            edge.gateEvent == gateEvent &&
+            edge.movementDirection == movementDirection,
+      );
       if (alreadyExists) {
         existingCount++;
         return;
       }
-      final hasConflict = bidirectional
-          ? betweenEndpoints.isNotEmpty
-          : betweenEndpoints.any(
-              (edge) =>
-                  edge.bidirectional ||
-                  (edge.startNodeId == start.nodeId &&
-                      edge.endNodeId == end.nodeId),
-            );
+      final hasConflict = betweenEndpoints.any(
+        (edge) =>
+            edge.bidirectional ||
+            (edge.startNodeId == start.nodeId && edge.endNodeId == end.nodeId),
+      );
       if (hasConflict) {
         issues.add(
           '$label arasında farklı ayarlı bir bağlantı zaten var; '
@@ -2155,39 +2145,53 @@ class _CompetitionEdgePlan {
       }
 
       planned.add(
-        _CompetitionEdgePlanItem(
+        CompetitionEdgePlanItem(
           label: label,
           edge: FieldEdge(
             edgeId: FieldGraphId.next(),
             startNodeId: start.nodeId,
             endNodeId: end.nodeId,
-            bidirectional: bidirectional,
+            bidirectional: false,
             cost: distance,
             maxSpeed: 0.20,
             loadRule: FieldLoadRule.any,
-            movementDirection: FieldMovementDirection.forward,
+            movementDirection: movementDirection,
             gateEvent: gateEvent,
           ),
         ),
       );
     }
 
-    for (final link in bidirectionalLinks) {
-      if (!resolved.containsKey(link.$1) || !resolved.containsKey(link.$2)) {
-        continue;
-      }
-      addLink(link.$1, link.$2, bidirectional: true);
-    }
-    for (final link in directedGateLinks) {
-      addLink(
-        link.$1,
-        link.$2,
-        bidirectional: false,
-        gateEvent: link.$3,
+    for (final pair in stationPairs) {
+      addDirectedLink(
+        pair.approach,
+        pair.dock,
+        label: '${pair.stationId}_APPROACH → ${pair.stationId}',
+        movementDirection: FieldMovementDirection.reverse,
+      );
+      addDirectedLink(
+        pair.dock,
+        pair.approach,
+        label: '${pair.stationId} → ${pair.stationId}_APPROACH',
+        movementDirection: FieldMovementDirection.forward,
       );
     }
+    addDirectedLink(
+      resolvedGates['Q5']!,
+      resolvedGates['Q6']!,
+      label: 'Q5 → Q6',
+      movementDirection: FieldMovementDirection.forward,
+      gateEvent: 'q5_outbound',
+    );
+    addDirectedLink(
+      resolvedGates['Q6']!,
+      resolvedGates['Q5']!,
+      label: 'Q6 → Q5',
+      movementDirection: FieldMovementDirection.forward,
+      gateEvent: 'q6_return',
+    );
 
-    return _CompetitionEdgePlan(
+    return CompetitionEdgePlan(
       edges: List.unmodifiable(planned),
       existingCount: existingCount,
       issues: List.unmodifiable(issues),
