@@ -47,6 +47,7 @@ class RobotStatus {
   double get batteryTemperature => _number('battery_temperature');
   String get taskId => _string('task_id');
   String get taskSource => _string('task_source');
+  bool get missionResumable => _bool('mission_resumable');
   String get pickupNode => _string('pickup_node');
   String get dropoffNode => _string('dropoff_node');
   List<String> get routeNodes => raw['route_nodes'] is List

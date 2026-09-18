@@ -14,6 +14,8 @@ class AgvService {
 
   static Future<Map<String, dynamic>> startMission() => ros.startMission();
 
+  static Future<Map<String, dynamic>> resumeMission() => ros.resumeMission();
+
   static Future<Map<String, dynamic>> submitManualTask({
     required String taskId,
     required String pickupNode,

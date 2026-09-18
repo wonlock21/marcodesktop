@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:liftant_v2_bitirme/route_edit_page.dart';
+import 'package:liftant_v2_bitirme/controller_page.dart';
 import 'package:liftant_v2_bitirme/models/gcs_mapping_model.dart';
 import 'package:liftant_v2_bitirme/services/ros_mapping_contract.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -15,10 +16,14 @@ import 'package:liftant_v2_bitirme/models/agv_sensor_model.dart';
 import 'package:liftant_v2_bitirme/models/gcs_field_graph_model.dart';
 import 'package:liftant_v2_bitirme/models/gcs_mission_model.dart';
 import 'package:liftant_v2_bitirme/models/gcs_event_log_model.dart';
+import 'package:liftant_v2_bitirme/models/gcs_alarm_model.dart';
+import 'package:liftant_v2_bitirme/models/gcs_connection_model.dart';
+import 'package:liftant_v2_bitirme/models/gcs_node_model.dart';
 import 'package:liftant_v2_bitirme/models/robot_status.dart';
 import 'package:liftant_v2_bitirme/production_mission_page.dart';
 import 'package:liftant_v2_bitirme/scenerio_page.dart';
 import 'package:liftant_v2_bitirme/data_model.dart';
+import 'package:liftant_v2_bitirme/parameter_model.dart';
 import 'package:liftant_v2_bitirme/services/field_graph_repository.dart';
 import 'package:liftant_v2_bitirme/services/ros_bridge_client.dart';
 
@@ -38,11 +43,17 @@ const dockB = FieldNode(
     pose: FieldPose2D.zero,
     loadRule: FieldLoadRule.loaded,
     approachMode: FieldApproachMode.dock);
-Map<String, dynamic> status({int state = 0, String task = ''}) => {
+Map<String, dynamic> status({
+  int state = 0,
+  String task = '',
+  bool resumable = false,
+}) =>
+    {
       'mission_state': state,
       'linear_speed': 0.0,
       'task_id': task,
       'task_source': 'gui',
+      'mission_resumable': resumable,
       'estop_active': false,
       'obstacle_detected': false,
       'localization_valid': true,
@@ -52,6 +63,11 @@ Map<String, dynamic> status({int state = 0, String task = ''}) => {
       'active_field_version': 'v2',
       'mission_elapsed_s': 0.0,
       'status_detail': state == 1 ? 'gorev kabul edildi' : '',
+      'pickup_node': 'custom_pickup',
+      'dropoff_node': 'custom_dropoff',
+      'route_nodes': ['custom_pickup', 'custom_dropoff'],
+      'current_stop_index': 1,
+      'return_home': true,
     };
 FieldPackageStatus package(
         {FieldPackageState state = FieldPackageState.active,
@@ -92,6 +108,12 @@ class Client extends RosBridgeClient {
   final List<String> calls = [];
   Map<String, dynamic>? submitted;
   Completer<Map<String, dynamic>>? waiting;
+  Completer<Map<String, dynamic>>? resumeWaiting;
+  Map<String, dynamic> resumeResponse = const {
+    'accepted': true,
+    'message': 'gorev guvenli checkpointten devam ettirildi',
+  };
+  Object? resumeError;
   @override
   Future<Map<String, dynamic>> submitMission(
       {required String taskId,
@@ -112,6 +134,13 @@ class Client extends RosBridgeClient {
   Future<Map<String, dynamic>> startMission() async {
     calls.add('start');
     return {'accepted': true, 'message': 'başladı'};
+  }
+
+  @override
+  Future<Map<String, dynamic>> resumeMission() async {
+    calls.add('resume');
+    if (resumeError case final error?) return Future.error(error);
+    return resumeWaiting?.future ?? resumeResponse;
   }
 }
 
@@ -152,7 +181,8 @@ void main() {
             as Map<String, dynamic>;
     final robot = RobotStatus.fromRosJson(fixture);
     expect(robot.valid, true);
-    expect(robot.raw.length, 56);
+    expect(robot.raw.length, 57);
+    expect(robot.missionResumable, true);
     expect(robot.selectedRouteEdges, [812, 999]);
     expect(robot.gateEntryNode, 'custom_gate_return');
     expect(robot.taskSourceLabel, 'GUI');
@@ -179,6 +209,13 @@ void main() {
     expect(empty.expectedQrId, isEmpty);
     expect(empty.qrTargetStation, isEmpty);
     expect(empty.lastQrRejectReason, isEmpty);
+    expect(empty.missionResumable, false);
+
+    expect(
+      RobotStatus.fromRosJson(const {'mission_resumable': 'true'})
+          .missionResumable,
+      false,
+    );
 
     final plcGate = RobotStatus.fromRosJson({
       'mission_state': 4,
@@ -289,6 +326,105 @@ void main() {
     expect(model.readyToStart, false);
     model.dispose();
     graph.dispose();
+    await client.dispose();
+  });
+  test('resume authority is only fresh connected mission_resumable telemetry',
+      () {
+    final model = GcsMissionModel();
+    model.applyConnection(true);
+    model.applyStatus(status(state: 6, task: 'gui_1'));
+    expect(model.canResume, false);
+
+    model.applyStatus(status(state: 6, task: 'gui_1', resumable: true));
+    expect(model.canResume, true);
+
+    model.applyStatus({});
+    expect(model.canResume, false);
+    model.applyStatus(status(state: 6, task: 'gui_1', resumable: true));
+    model.applyConnection(false);
+    expect(model.canResume, false);
+    model.applyConnection(true);
+    expect(model.canResume, false);
+    model.applyStatus(status(state: 6, task: 'gui_1', resumable: true));
+    expect(model.canResume, true);
+    model.dispose();
+  });
+  test('resume accepts once and preserves current mission context', () async {
+    final client = Client();
+    final model = GcsMissionModel(client: client)
+      ..applyConnection(true)
+      ..applyStatus(status(state: 6, task: 'gui_1', resumable: true));
+    final before = model.robotStatus!;
+
+    await model.resume();
+
+    expect(client.calls, ['resume']);
+    expect(model.commandPending, false);
+    expect(model.commandMessage, contains('checkpointten'));
+    expect(identical(model.robotStatus, before), true);
+    expect(model.robotStatus!.taskId, 'gui_1');
+    expect(model.robotStatus!.routeNodes, ['custom_pickup', 'custom_dropoff']);
+    expect(model.robotStatus!.currentStopIndex, 1);
+    expect(model.robotStatus!.pickupNode, 'custom_pickup');
+    expect(model.robotStatus!.dropoffNode, 'custom_dropoff');
+    expect(client.calls, isNot(contains('start')));
+    expect(client.calls, isNot(contains('submit')));
+    model.dispose();
+    await client.dispose();
+  });
+  test('resume rejection and timeout remain failures and clear pending',
+      () async {
+    final rejectedClient = Client()
+      ..resumeResponse = const {
+        'accepted': false,
+        'message': 'e-stop/safety kilidi aktif; operator reset gerekli',
+      };
+    final rejected = GcsMissionModel(client: rejectedClient)
+      ..applyConnection(true)
+      ..applyStatus(status(state: 6, task: 'gui_1', resumable: true));
+    await expectLater(
+      rejected.resume(),
+      throwsA(predicate(
+          (error) => error.toString().contains('operator reset gerekli'))),
+    );
+    expect(rejected.commandPending, false);
+    expect(rejected.commandMessage, contains('operator reset gerekli'));
+    expect(rejectedClient.calls, ['resume']);
+
+    final timeoutClient = Client()
+      ..resumeError = TimeoutException('resume timeout');
+    final timedOut = GcsMissionModel(client: timeoutClient)
+      ..applyConnection(true)
+      ..applyStatus(status(state: 6, task: 'gui_2', resumable: true));
+    await expectLater(timedOut.resume(), throwsStateError);
+    expect(timedOut.commandPending, false);
+    expect(timedOut.commandMessage, 'Göreve devam servisine ulaşılamadı.');
+    expect(timedOut.robotStatus!.taskId, 'gui_2');
+
+    rejected.dispose();
+    timedOut.dispose();
+    await rejectedClient.dispose();
+    await timeoutClient.dispose();
+  });
+  test('parallel resume attempts produce only one service request', () async {
+    final client = Client()..resumeWaiting = Completer<Map<String, dynamic>>();
+    final model = GcsMissionModel(client: client)
+      ..applyConnection(true)
+      ..applyStatus(status(state: 6, task: 'gui_1', resumable: true));
+
+    final first = model.resume();
+    expect(model.commandPending, true);
+    expect(model.canResume, false);
+    await expectLater(model.resume(), throwsStateError);
+    expect(client.calls, ['resume']);
+    client.resumeWaiting!.complete({
+      'accepted': true,
+      'message': 'devam',
+    });
+    await first;
+    expect(model.commandPending, false);
+
+    model.dispose();
     await client.dispose();
   });
   test('active field editing is locked; reconnect awaits graph reload',
@@ -620,6 +756,87 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     mission.dispose();
     graph.dispose();
+    events.dispose();
+    await client.dispose();
+  });
+  testWidgets(
+      'controller resume button follows authority, coalesces clicks and does not overflow',
+      (tester) async {
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final data = DataModel();
+    final parameters = ParameterModel();
+    final sensors = AgvSensorModel();
+    final connection = GcsConnectionModel();
+    final mapping = GcsMappingModel();
+    final graph = GcsFieldGraphModel();
+    final nodes = GcsNodeModel();
+    final client = Client()..resumeWaiting = Completer<Map<String, dynamic>>();
+    final mission = GcsMissionModel(client: client);
+    final alarms = GcsAlarmModel();
+    final events = GcsEventLogModel();
+
+    await tester.pumpWidget(MultiProvider(
+      providers: [
+        ChangeNotifierProvider.value(value: data),
+        ChangeNotifierProvider.value(value: parameters),
+        ChangeNotifierProvider.value(value: sensors),
+        ChangeNotifierProvider.value(value: connection),
+        ChangeNotifierProvider.value(value: mapping),
+        ChangeNotifierProvider.value(value: graph),
+        ChangeNotifierProvider.value(value: nodes),
+        ChangeNotifierProvider.value(value: mission),
+        ChangeNotifierProvider.value(value: alarms),
+        ChangeNotifierProvider.value(value: events),
+      ],
+      child: ScreenUtilInit(
+        designSize: const Size(390, 844),
+        builder: (_, __) => const MaterialApp(home: ControllerPage()),
+      ),
+    ));
+    await tester.pump();
+
+    OutlinedButton resumeButton() => tester
+        .widget<OutlinedButton>(find.byKey(const Key('main-mission-resume')));
+    expect(resumeButton().onPressed, isNull);
+
+    mission
+      ..applyConnection(true)
+      ..applyStatus(status(state: 6, task: 'gui_1', resumable: true));
+    await tester.pump();
+    expect(resumeButton().onPressed, isNotNull);
+
+    resumeButton().onPressed!();
+    await tester.pump();
+    expect(client.calls, ['resume']);
+    expect(resumeButton().onPressed, isNull);
+    expect(tester.takeException(), isNull);
+
+    tester.view.physicalSize = const Size(1280, 720);
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox());
+    client.resumeWaiting!.complete({
+      'accepted': true,
+      'message': 'gorev guvenli checkpointten devam ettirildi',
+    });
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    expect(client.calls, ['resume']);
+
+    data.dispose();
+    parameters.dispose();
+    sensors.dispose();
+    connection.dispose();
+    mapping.dispose();
+    graph.dispose();
+    nodes.dispose();
+    mission.dispose();
+    alarms.dispose();
     events.dispose();
     await client.dispose();
   });

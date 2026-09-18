@@ -559,6 +559,13 @@ void main() {
         check: RosServiceResponse.localizationStopSucceeded,
       ),
       (
+        name: '/mission/resume',
+        type: 'marco_msgs/srv/ResumeMission',
+        key: 'accepted',
+        call: client.resumeMission,
+        check: RosServiceResponse.missionAccepted,
+      ),
+      (
         name: '/buzzer/set_enabled',
         type: RosHardwareTypes.setBoolSrv,
         key: 'success',
@@ -633,6 +640,21 @@ void main() {
       if (service.name == '/demo/route/clear') {
         expect(received.last['args'], {'target_name': 'B'});
         expect(received.last['id'], startsWith('clear_demo_route_B_'));
+      }
+      if (service.name == '/mission/resume') {
+        expect(received.last['args'], <String, dynamic>{});
+        expect(received.last['id'], startsWith('mission_resume_'));
+        for (final forbidden in const [
+          'task_id',
+          'route_nodes',
+          'pickup',
+          'dropoff',
+          'current_stop_index',
+          'return_home',
+          'loaded',
+        ]) {
+          expect(received.last['args'], isNot(contains(forbidden)));
+        }
       }
       const demoIds = {
         '/demo/start_saved': 'demo_start',

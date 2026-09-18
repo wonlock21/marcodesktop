@@ -929,6 +929,13 @@ class _ControllerPageState extends State<ControllerPage>
 
   Future<void> _missionBaslat() =>
       _runMissionCommand(() => context.read<GcsMissionModel>().start());
+  Future<void> _missionDevamEt() => _runMissionCommand(() async {
+        final mission = context.read<GcsMissionModel>();
+        await mission.resume();
+        if (mounted && mission.commandMessage.trim().isNotEmpty) {
+          _onMissionEvent(mission.commandMessage.trim());
+        }
+      });
   Future<void> _missionIptal() =>
       _runMissionCommand(() => context.read<GcsMissionModel>().cancel());
   Future<void> _resetSafety() =>
@@ -2714,6 +2721,13 @@ class _ControllerPageState extends State<ControllerPage>
                 ),
               ),
             ],
+          ),
+          SizedBox(height: 0.5.h),
+          OutlinedButton(
+            key: const Key('main-mission-resume'),
+            onPressed:
+                mission.canResume ? () => unawaited(_missionDevamEt()) : null,
+            child: const Text('Göreve Devam Et'),
           ),
         ],
       ),

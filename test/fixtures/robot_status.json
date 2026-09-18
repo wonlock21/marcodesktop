@@ -25,6 +25,7 @@
   "battery_temperature": 0.0,
   "task_id": "test-mission",
   "task_source": "gui",
+  "mission_resumable": true,
   "pickup_node": "",
   "dropoff_node": "",
   "route_nodes": [],

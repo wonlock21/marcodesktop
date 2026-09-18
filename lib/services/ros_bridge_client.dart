@@ -545,6 +545,14 @@ class RosBridgeClient {
         true,
       );
 
+  Future<Map<String, dynamic>> resumeMission() => callService(
+        '/mission/resume',
+        'marco_msgs/srv/ResumeMission',
+        const {},
+        null,
+        'mission_resume',
+      );
+
   Future<Map<String, dynamic>> submitManualTask({
     required String taskId,
     required String pickupNode,

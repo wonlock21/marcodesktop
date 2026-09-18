@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import '../services/agv_service.dart';
@@ -204,6 +205,11 @@ class GcsMissionModel extends ChangeNotifier {
   StationTurnRuntimeStatus? stationTurnStatus;
 
   bool get commandPending => pendingCommand != null;
+  bool get canResume =>
+      connected &&
+      statusFresh &&
+      !commandPending &&
+      robotStatus?.missionResumable == true;
   bool get canSubmit =>
       connected &&
       statusFresh &&
@@ -412,6 +418,19 @@ class GcsMissionModel extends ChangeNotifier {
       _startedTaskId = task;
       _preparedTaskId = null;
     });
+  }
+
+  Future<void> resume() async {
+    if (!canResume) {
+      throw StateError('Görev şu anda devam ettirilemez');
+    }
+    try {
+      await _command('resume', _client.resumeMission);
+    } on TimeoutException {
+      commandMessage = 'Göreve devam servisine ulaşılamadı.';
+      notifyListeners();
+      throw StateError(commandMessage);
+    }
   }
 
   Future<void> cancel() => _command('cancel', _client.cancelMission);
